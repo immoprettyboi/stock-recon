@@ -1,0 +1,5 @@
+sync/config.ini
+sync/sync_log.txt
+sync/exports/
+sync/debug/
+__pycache__/

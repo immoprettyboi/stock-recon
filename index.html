@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stock Recon</title>
+<meta name="theme-color" content="#1f4fd1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+html,body{height:100%;margin:0}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+[hidden]{display:none!important}
+
+/* Layout: warehouse ledger — sticky header with tabs, summary tiles over dense tables; cards on phones */
+:root{
+  --bg:#f3f4f6; --surface:#ffffff; --sunk:#e9ebef; --line:#d6d9e0; --fg:#141821; --muted:#5d6472;
+  --accent:#1f4fd1; --accent-ink:#ffffff; --accent-soft:#e3eaff;
+  --ok:#1d7a3e; --ok-soft:#dcf2e3; --warn:#9a6400; --warn-soft:#fbefd2;
+  --orange:#b8520a; --orange-soft:#fde5d2; --bad:#b42323; --bad-soft:#fbdcdc;
+  --stock:#3e4a5e; --stock-soft:#e4e8ef;
+  --display:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --body:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --r:6px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1218; --surface:#171b23; --sunk:#1e232d; --line:#2c3340; --fg:#e7eaf0; --muted:#98a0ae;
+  --accent:#7d9cff; --accent-ink:#0f1218; --accent-soft:#1d2a4d;
+  --ok:#5fd08a; --ok-soft:#163323; --warn:#e8b64c; --warn-soft:#3a2d10;
+  --orange:#f59a52; --orange-soft:#3e2513; --bad:#f07a7a; --bad-soft:#3d1a1a;
+  --stock:#b4bfd3; --stock-soft:#252c39; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1218; --surface:#171b23; --sunk:#1e232d; --line:#2c3340; --fg:#e7eaf0; --muted:#98a0ae;
+  --accent:#7d9cff; --accent-ink:#0f1218; --accent-soft:#1d2a4d;
+  --ok:#5fd08a; --ok-soft:#163323; --warn:#e8b64c; --warn-soft:#3a2d10;
+  --orange:#f59a52; --orange-soft:#3e2513; --bad:#f07a7a; --bad-soft:#3d1a1a;
+  --stock:#b4bfd3; --stock-soft:#252c39; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.wrap{max-width:1280px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-block:12px 0}
+.brand{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:-.01em;display:flex;align-items:baseline;gap:8px}
+.brand small{font-family:var(--mono);font-weight:400;font-size:11px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.spacer{flex:1}
+.who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.who img{width:24px;height:24px;border-radius:50%}
+select,input,textarea{font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:7px 9px;min-width:0}
+textarea{resize:vertical}
+select:focus-visible,input:focus-visible,textarea:focus-visible,button:focus-visible,.tab:focus-visible,tr[tabindex]:focus-visible,.card[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+nav.tabs{display:flex;gap:4px;overflow-x:auto;padding-top:8px}
+.tab{appearance:none;border:0;background:none;font:600 14px var(--body);color:var(--muted);padding:9px 12px 10px;border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.tab .n{font-family:var(--mono);font-weight:400;font-size:12px;margin-left:4px}
+main{padding-block:20px 48px;display:grid;gap:20px}
+h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:balance}
+.sec-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.sec-head p{margin:0;color:var(--muted);font-size:13px}
+.btn{appearance:none;font:600 14px var(--body);border-radius:var(--r);padding:8px 14px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.danger.solid{background:var(--bad);color:var(--surface)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
+.tile .lbl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tile .val{font-family:var(--display);font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.tile .sub{font-size:12px;color:var(--muted)}
+.tile.hero .val{color:var(--ok)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:grid;gap:12px;min-width:0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}
+.tscroll{overflow-x:auto;min-width:0}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--surface)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.num,th.num{text-align:right;white-space:nowrap}
+td.mono{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+td.prod{min-width:220px}
+tfoot td{font-weight:700;border-top:2px solid var(--fg);border-bottom:0}
+tbody tr[tabindex]{cursor:pointer}
+tbody tr[tabindex]:hover{background:var(--sunk)}
+.neg{color:var(--bad)}
+.pos{color:var(--ok)}
+.muted{color:var(--muted)}
+
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:2px 9px 2px 7px;border-radius:999px;white-space:nowrap}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.s-in_stock{background:var(--stock-soft);color:var(--stock)}
+.s-awaiting_fees{background:var(--warn-soft);color:var(--warn)}
+.s-settled{background:var(--ok-soft);color:var(--ok)}
+.s-return_takealot{background:var(--orange-soft);color:var(--orange)}
+.s-return_me{background:var(--bad-soft);color:var(--bad)}
+tr.row-s-settled td:first-child{box-shadow:inset 3px 0 var(--ok)}
+tr.row-s-awaiting_fees td:first-child{box-shadow:inset 3px 0 var(--warn)}
+tr.row-s-return_takealot td:first-child{box-shadow:inset 3px 0 var(--orange)}
+tr.row-s-return_me td:first-child{box-shadow:inset 3px 0 var(--bad)}
+.flag{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;color:var(--warn)}
+
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.filters input[type=search]{flex:1 1 220px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{appearance:none;font:600 12.5px var(--body);border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:5px 11px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.chip .n{font-family:var(--mono);font-weight:400;margin-left:4px}
+
+.attn{display:grid;gap:8px}
+.attn-item{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);cursor:pointer;background:var(--surface);text-align:left;font:inherit;color:inherit;width:100%}
+.attn-item:hover{background:var(--sunk)}
+.attn-item .t{font-weight:600}
+.attn-item .d{font-size:12.5px;color:var(--muted)}
+
+.sync{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;border:1px dashed var(--line);border-radius:var(--r);padding:14px 16px;background:var(--surface)}
+.sync .dot{width:10px;height:10px;border-radius:50%;background:var(--muted);margin-top:5px}
+.sync p{margin:4px 0 0;color:var(--muted);font-size:13px;max-width:70ch}
+
+/* cards for phones */
+.cards{display:none;gap:8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px;display:grid;gap:6px;cursor:pointer}
+.card .r1{display:flex;justify-content:space-between;gap:8px;align-items:start}
+.card .p{font-weight:600}
+.card .meta{font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px}
+.card .money{display:flex;gap:14px;font-variant-numeric:tabular-nums;font-size:13px;flex-wrap:wrap}
+@media (max-width:760px){
+  .big-table{display:none}
+  .cards{display:grid}
+  .tile .val{font-size:20px}
+}
+
+/* forms */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px 16px}
+.field{display:grid;gap:5px;min-width:0}
+.field label{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.03em}
+.field .hint{font-size:12px;color:var(--muted)}
+.field.wide{grid-column:1/-1}
+.form-actions{grid-column:1/-1;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.note{font-size:13px;color:var(--muted)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:var(--r);font-weight:600;z-index:30;max-width:calc(100% - 32px)}
+
+dialog{border:1px solid var(--line);border-radius:10px;padding:0;background:var(--surface);color:var(--fg);width:min(720px,calc(100% - 24px));max-height:calc(100% - 40px)}
+dialog::backdrop{background:rgb(10 12 18 / .55)}
+.dlg-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:1}
+.dlg-body{padding:16px 18px;display:grid;gap:14px}
+.calc{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.calc div{background:var(--sunk);padding:8px 10px;display:grid;gap:2px}
+.calc span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.calc b{font-variant-numeric:tabular-nums}
+.confirm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--bad-soft);padding:10px 12px;border-radius:var(--r)}
+.empty{padding:28px 16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--r);background:var(--surface)}
+@media (prefers-reduced-motion:no-preference){.tab,.chip,.btn{transition:background .15s,color .15s,border-color .15s}}
+
+
+
+.stack{display:grid;gap:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px 16px}
+.btn.small{padding:5px 10px;font-size:13px}
+.inline{display:flex;gap:6px;align-items:center}
+.nw{white-space:nowrap}
+.mono{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.mono-s{font-family:var(--mono);font-size:11.5px}
+.badge:not(:empty){background:var(--bad);color:var(--surface);border-radius:999px;padding:0 6px;font-weight:600}
+.warn-t{color:var(--warn)}
+.match-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.match-item .t{font-weight:600}.match-item .d{font-size:12.5px;color:var(--muted)}
+.match-item .actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+#login{min-height:100%;display:grid;place-items:center;padding-block:40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.login-card{width:min(380px,100%);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:24px;display:grid;gap:12px}
+.field-stack{display:grid;gap:12px}
+.form-actions .spacer{flex:1}
+.panel{align-content:start}
+#onhand td:first-child,#byProduct td:first-child,#bySupplier td:first-child,#pickTable td:first-child{min-width:170px}
+@media (max-width:760px){.sync{grid-template-columns:auto 1fr}.sync .btn{grid-column:1/-1}.match-item{grid-template-columns:1fr}.match-item .actions{justify-content:flex-start}}
+
+</style>
+</head>
+<body>
+<!-- LOGIN -->
+<section id="login" hidden>
+  <div class="login-card">
+    <div class="brand" style="font-size:24px">Stock Recon</div>
+    <p class="note">Sign in with the email and password set up in Supabase.</p>
+    <form id="loginForm" class="field-stack" autocomplete="on">
+      <div class="field"><label for="l-email">Email</label><input id="l-email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="l-pass">Password</label><input id="l-pass" type="password" autocomplete="current-password" required></div>
+      <button class="btn primary" type="submit" id="l-btn">Sign in</button>
+      <p class="note" id="l-msg" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app" hidden>
+<header class="top">
+  <div class="wrap">
+    <div class="bar">
+      <div class="brand">Stock Recon <small>Takealot</small></div>
+      <div class="spacer"></div>
+      <label class="muted" for="month" style="font-size:12px">Sales month</label>
+      <select id="month" aria-label="Sales month"></select>
+      <button class="btn small" type="button" id="signOut">Sign out</button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-view="overview">Overview</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="stock">Stock &amp; sales <span class="n" id="cntAll"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="match">Needs matching <span class="n badge" id="cntMatch"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+<main>
+  <!-- OVERVIEW -->
+  <section id="view-overview" class="stack">
+    <div class="sync" id="syncCard">
+      <div class="dot" id="syncDot" aria-hidden="true"></div>
+      <div style="min-width:0">
+        <h2 id="syncTitle">Takealot sync</h2>
+        <p id="syncMsg">Checking…</p>
+      </div>
+      <button class="btn" type="button" id="syncNow">Sync now</button>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div class="cols">
+      <div class="panel">
+        <div class="sec-head"><h2>Needs attention</h2><p id="attnSub"></p></div>
+        <div class="attn" id="attn"></div>
+      </div>
+      <div class="panel">
+        <div class="sec-head"><h2>Stock on hand</h2><p>Units not yet sold, by where they are</p></div>
+        <div class="tscroll"><table id="onhand"></table></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Profit by product</h2><p id="ppSub"></p></div>
+      <div class="tscroll"><table id="byProduct"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Profit by supplier</h2><p id="psSub"></p></div>
+      <div class="tscroll"><table id="bySupplier"></table></div>
+    </div>
+  </section>
+
+  <!-- STOCK -->
+  <section id="view-stock" class="stack" hidden>
+    <div class="filters">
+      <input type="search" id="q" placeholder="Search product, order ID, PO, serial…" aria-label="Search">
+      <select id="fLoc" aria-label="Location"><option value="">All locations</option></select>
+      <select id="fSup" aria-label="Supplier"><option value="">All suppliers</option></select>
+      <label class="note inline"><input type="checkbox" id="fMonth"> Only sales in selected month</label>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="panel big-table" style="padding:0">
+      <div class="tscroll"><table id="ledger"></table></div>
+    </div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <!-- MATCH -->
+  <section id="view-match" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Sales the sync couldn't place</h2><p>Pick the unit that was sold, or ignore the sale if you don't track that stock.</p></div>
+      <div id="matchList" class="attn"></div>
+    </div>
+  </section>
+
+  <!-- ADD -->
+  <section id="view-add" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Add stock you've bought</h2><p>One row is created per unit. Add 5 of the same item at once by setting the quantity.</p></div>
+      <form class="grid" id="addForm" autocomplete="off">
+        <div class="field wide"><label for="a-product">Product</label><input id="a-product" list="dl-products" required placeholder="e.g. Playstation 5 Slim Digital"></div>
+        <div class="field"><label for="a-qty">Quantity</label><input id="a-qty" type="number" min="1" max="200" value="1" required></div>
+        <div class="field"><label for="a-cost">Cost per unit (R)</label><input id="a-cost" type="number" min="0" step="0.01" required placeholder="11500"></div>
+        <div class="field"><label for="a-supplier">Supplier</label><input id="a-supplier" list="dl-suppliers" required></div>
+        <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
+        <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
+        <div class="field"><label for="a-type">Type of stock</label><select id="a-type"><option>ICASA</option><option>TDRA</option></select></div>
+        <div class="field"><label for="a-po">Takealot PO number</label><input id="a-po" inputmode="numeric" placeholder="Blank if not sent in yet"></div>
+        <div class="field wide"><label for="a-sn">IMEI / serial numbers</label><textarea id="a-sn" rows="3" placeholder="Optional. One per line, in the same order as the units."></textarea><span class="hint" id="snHint"></span></div>
+        <div class="form-actions"><button class="btn primary" type="submit" id="addBtn">Add to stock</button><span class="note" id="addMsg"></span></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- PRODUCTS -->
+  <section id="view-products" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Takealot products</h2><p>Each Takealot SKU is linked once to your own product name. The sync uses this to match sales to stock.</p></div>
+      <div class="tscroll"><table id="prodTable"></table></div>
+    </div>
+  </section>
+</main>
+</div>
+</div>
+
+<datalist id="dl-products"></datalist>
+<datalist id="dl-suppliers"></datalist>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <div class="dlg-head"><h2 id="dlgTitle">Unit</h2><div class="spacer"></div><button class="btn" id="dlgClose" type="button">Close</button></div>
+  <form class="dlg-body" id="editForm" autocomplete="off">
+    <div class="calc" id="eCalc"></div>
+    <div class="grid">
+      <div class="field wide"><label for="e-product">Product</label><input id="e-product" list="dl-products" required></div>
+      <div class="field"><label for="e-status">Status</label><select id="e-status"></select></div>
+      <div class="field"><label for="e-location">Location</label><select id="e-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
+      <div class="field"><label for="e-supplier">Supplier</label><input id="e-supplier" list="dl-suppliers"></div>
+      <div class="field"><label for="e-type">Type of stock</label><select id="e-type"><option>ICASA</option><option>TDRA</option></select></div>
+      <div class="field"><label for="e-received">Date received</label><input id="e-received" type="date"></div>
+      <div class="field"><label for="e-po">PO number</label><input id="e-po" inputmode="numeric"></div>
+      <div class="field"><label for="e-sn">IMEI / serial</label><input id="e-sn"></div>
+      <div class="field"><label for="e-cost">Cost (R)</label><input id="e-cost" type="number" step="0.01" min="0"></div>
+      <div class="field"><label for="e-order">Order ID</label><input id="e-order" inputmode="numeric"></div>
+      <div class="field"><label for="e-sold">Sold date</label><input id="e-sold" type="date"></div>
+      <div class="field"><label for="e-gross">Gross sale (R)</label><input id="e-gross" type="number" step="0.01" min="0"></div>
+      <div class="field"><label for="e-fees">Takealot fees (R)</label><input id="e-fees" type="number" step="0.01" min="0"><span class="hint">Positive amount</span></div>
+      <div class="field"><label for="e-return">Return date</label><input id="e-return" type="date"></div>
+      <div class="field wide"><label for="e-comment">Comment</label><textarea id="e-comment" rows="2"></textarea></div>
+      <label class="note inline wide"><input type="checkbox" id="e-flag"> Keep on the "Needs attention" list</label>
+    </div>
+    <div class="note" id="eAudit"></div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit" id="eSave">Save changes</button>
+      <div class="spacer"></div>
+      <button class="btn danger" type="button" id="eDel">Delete unit</button>
+    </div>
+    <div class="confirm" id="eConfirm" hidden>
+      <span>Delete this unit for good? This can't be undone.</span>
+      <button class="btn danger solid" type="button" id="eDelYes">Delete</button>
+      <button class="btn" type="button" id="eDelNo">Keep it</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="pick" aria-labelledby="pickTitle">
+  <div class="dlg-head"><h2 id="pickTitle">Choose the unit that was sold</h2><div class="spacer"></div><button class="btn" id="pickClose" type="button">Close</button></div>
+  <div class="dlg-body">
+    <div class="note" id="pickInfo"></div>
+    <div class="filters"><input type="search" id="pickQ" placeholder="Filter by product, supplier, PO…" aria-label="Filter units"><label class="note inline"><input type="checkbox" id="pickAll"> Show all unsold products</label></div>
+    <div class="tscroll"><table id="pickTable"></table></div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://dycpqdoqsbjvtzomvwzi.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5Y3BxZG9xc2JqdnR6b212d3ppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5ODgzNjcsImV4cCI6MjEwODU2NDM2N30.yscmk2jsOuHzNrJizhr34rRtFjxNLHXpkx2kBVjdYN8";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+
+const STATUS = {
+  in_stock:        {label:"In stock",                 short:"In stock"},
+  awaiting_fees:   {label:"Sold, awaiting fees",      short:"Awaiting fees"},
+  settled:         {label:"Sold & settled",           short:"Settled"},
+  return_takealot: {label:"Return to Takealot stock", short:"Return: Takealot"},
+  return_me:       {label:"Return to me",             short:"Return: me"},
+};
+const SOLD = new Set(["awaiting_fees","settled"]);
+const LOCS = ["JHB","CPT","DBN","HOME"];
+const IGNORE = "__ignore__";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtR = new Intl.NumberFormat("en-ZA",{style:"currency",currency:"ZAR",minimumFractionDigits:2});
+const R = v => v==null || v==="" ? "" : fmtR.format(v);
+const R0 = v => fmtR.format(Math.round(v)).replace(/,00$/,"");
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const MONL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const fd = d => { if(!d) return ""; const [y,m,dd]=String(d).slice(0,10).split("-"); return `${dd} ${MON[+m-1]} ${y}`; };
+const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))/60000); if(m<1) return "just now"; if(m<60) return `${m} min ago`; const h=Math.round(m/60); if(h<24) return `${h} h ago`; return fd(t); };
+const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
+const today = () => new Date().toISOString().slice(0,10);
+
+let units=[], sales=[], products=[], lastRun=null, me=null;
+let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
+let loaded=false;
+
+function profit(u){ if(!SOLD.has(u.status)) return null; return (u.gross||0) - (u.fees||0) - (u.cost||0); }
+function inMonth(u){ return state.month==="all" || (u.sold_date||"").slice(0,7)===state.month; }
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true,2800); }
+function errMsg(e){ return (e && e.message) ? e.message : "Something went wrong. Check your connection and try again."; }
+
+/* ---------------- auth ---------------- */
+$("#loginForm").addEventListener("submit", async e=>{
+  e.preventDefault(); $("#l-btn").disabled=true; $("#l-msg").textContent="";
+  const { error } = await sb.auth.signInWithPassword({ email:$("#l-email").value.trim(), password:$("#l-pass").value });
+  $("#l-btn").disabled=false;
+  if(error) $("#l-msg").textContent = error.message.includes("Invalid") ? "Email or password is wrong." : error.message;
+});
+$("#signOut").addEventListener("click", ()=>sb.auth.signOut());
+sb.auth.onAuthStateChange((_ev, session)=>{ session ? start(session) : showLogin(); });
+function showLogin(){ $("#app").hidden=true; $("#login").hidden=false; me=null; }
+
+/* ---------------- data ---------------- */
+let channel=null;
+async function start(session){
+  if(me && me.id===session.user.id) return;
+  me=session.user; $("#login").hidden=true; $("#app").hidden=false;
+  try{ const v=localStorage.getItem("sr-view"); if(v) setView(v); }catch(e){}
+  await loadAll();
+  if(channel) sb.removeChannel(channel);
+  channel = sb.channel("live")
+    .on("postgres_changes",{event:"*",schema:"public",table:"units"},()=>debounceLoad())
+    .on("postgres_changes",{event:"*",schema:"public",table:"sync_runs"},()=>debounceLoad())
+    .subscribe();
+  clearInterval(start._t); start._t=setInterval(loadAll, 5*60*1000);
+}
+let _dl; function debounceLoad(){ clearTimeout(_dl); _dl=setTimeout(loadAll,600); }
+async function selectAll(table, q="*"){
+  let out=[], from=0;
+  for(;;){ const {data,error}=await sb.from(table).select(q).range(from,from+999); if(error) throw error; out=out.concat(data); if(data.length<1000) return out; from+=1000; }
+}
+async function loadAll(){
+  try{
+    const [u,s,p,r] = await Promise.all([
+      selectAll("units"),
+      sb.from("takealot_sales").select("*").eq("match_status","unmatched").order("order_date",{ascending:false}).then(x=>{if(x.error) throw x.error; return x.data;}),
+      selectAll("products"),
+      sb.from("sync_runs").select("*").eq("requested",false).order("id",{ascending:false}).limit(1).then(x=>{if(x.error) throw x.error; return x.data;})
+    ]);
+    units=u.map(x=>({...x, gross:num(x.gross), fees:num(x.fees), cost:num(x.cost)||0}));
+    sales=s; products=p; lastRun=r[0]||null; loaded=true;
+    buildMonths(); render();
+  }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
+}
+
+/* ---------------- month + tabs ---------------- */
+function buildMonths(){
+  const sel=$("#month"); const set=new Set([today().slice(0,7)]);
+  units.forEach(u=>u.sold_date && set.add(u.sold_date.slice(0,7)));
+  const keys=[...set].sort().reverse();
+  if(!state.month) state.month=keys[0];
+  sel.innerHTML = keys.map(k=>`<option value="${k}">${MONL[+k.slice(5)-1]} ${k.slice(0,4)}</option>`).join("")+`<option value="all">All time</option>`;
+  sel.value=state.month;
+}
+$("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
+document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
+function setView(v){
+  if(!$("#view-"+v)) v="overview";
+  state.view=v;
+  document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
+  ["overview","stock","match","add","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  try{ localStorage.setItem("sr-view",v); }catch(e){}
+  if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
+}
+
+/* ---------------- sync card ---------------- */
+function renderSync(){
+  const dot=$("#syncDot");
+  if(!lastRun){ $("#syncTitle").textContent="Takealot sync: not run yet"; $("#syncMsg").textContent="Install the sync on the PC and run it once. Sales, fees and returns will then fill in every 30 minutes."; dot.style.background="var(--muted)"; return; }
+  const when = lastRun.finished_at || lastRun.started_at;
+  const stale = Date.now()-new Date(when) > 75*60*1000;
+  if(!lastRun.finished_at){ $("#syncTitle").textContent="Takealot sync: running now"; dot.style.background="var(--accent)"; }
+  else if(lastRun.ok===false){ $("#syncTitle").textContent="Takealot sync: needs you"; dot.style.background="var(--bad)"; }
+  else if(stale){ $("#syncTitle").textContent="Takealot sync: hasn't run lately"; dot.style.background="var(--warn)"; }
+  else { $("#syncTitle").textContent="Takealot sync: up to date"; dot.style.background="var(--ok)"; }
+  $("#syncMsg").textContent = `Last run ${ago(when)}. ${lastRun.message||""}` + (stale && lastRun.ok!==false ? " Check that the PC is on and the sync is running." : "");
+}
+$("#syncNow").addEventListener("click", async ()=>{
+  $("#syncNow").disabled=true;
+  const { error } = await sb.from("sync_runs").insert({ requested:true, message:"Requested from the app" });
+  $("#syncNow").disabled=false;
+  toast(error ? "Couldn't ask the PC to sync: "+errMsg(error) : "Sync requested. The PC picks it up within a minute.");
+});
+
+/* ---------------- overview ---------------- */
+function renderOverview(){
+  const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
+  const G=sold.reduce((s,u)=>s+(u.gross||0),0), F=sold.reduce((s,u)=>s+(u.fees||0),0), C=sold.reduce((s,u)=>s+(u.cost||0),0), P=G-F-C;
+  const awaiting=sold.filter(u=>u.status==="awaiting_fees").length;
+  const stock=units.filter(u=>u.status==="in_stock"), stockV=stock.reduce((s,u)=>s+(u.cost||0),0);
+  const rets=units.filter(u=>u.status==="return_takealot"||u.status==="return_me");
+  const mLabel = state.month==="all" ? "all time" : ($("#month").selectedOptions[0]?.textContent||"");
+  const margin = G ? (P/G*100).toFixed(1) : "0.0";
+  $("#tiles").innerHTML = `
+    <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
+    <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
+    <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P)}</span><span class="sub">${margin}% of gross${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
+    <div class="tile"><span class="lbl">Returns open</span><span class="val">${rets.length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you</span></div>`;
+
+  const items=[];
+  if(sales.length) items.push({match:true, s:"awaiting_fees", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
+  const unlinked=products.filter(p=>!p.product).length;
+  if(unlinked) items.push({prod:true, s:"awaiting_fees", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
+  units.filter(u=>u.flag).forEach(u=>items.push({u, s:u.status, t:`Check · ${u.product}`, d:u.comment||""}));
+  units.filter(u=>u.status==="return_me" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Coming back to you · ${u.product}`, d:`Order ${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`}));
+  units.filter(u=>u.status==="awaiting_fees" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Fees not in yet · ${u.product}`, d:`Order ${u.order_id} · sold ${fd(u.sold_date)} · ${R(u.gross)}`}));
+  $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
+  $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
+    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.match?'data-go="match"':'data-go="products"'}>
+      <span class="pill s-${i.s}">${i.u?STATUS[i.s].short:"Sync"}</span>
+      <span><div class="t">${esc(i.t)}</div><div class="d">${esc(i.d)}</div></span>
+      <span class="muted" aria-hidden="true">›</span>
+    </button>`).join("") + (items.length>14?`<p class="note">and ${items.length-14} more in Stock &amp; sales</p>`:"")
+    : `<div class="empty">Nothing waiting. Fees, returns and sales to match show up here.</div>`;
+
+  const prods=[...new Set(stock.map(u=>u.product))].sort();
+  $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l}</th>`).join("")}<th class="num">Total</th><th class="num">At cost</th></tr></thead>
+    <tbody>${prods.map(p=>{const tot=stock.filter(u=>u.product===p);return `<tr><td>${esc(p)}</td>${LOCS.map(l=>{const n=tot.filter(u=>u.location===l).length;return `<td class="num ${n?"":"muted"}">${n||"·"}</td>`}).join("")}<td class="num"><b>${tot.length}</b></td><td class="num">${R0(tot.reduce((s,u)=>s+u.cost,0))}</td></tr>`}).join("")}</tbody>
+    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="num">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="num">${stock.length}</td><td class="num">${R0(stockV)}</td></tr></tfoot>`
+    : `<tbody><tr><td class="muted">No unsold stock.</td></tr></tbody>`;
+
+  const group=key=>{const m=new Map(); sold.forEach(u=>{const k=u[key]||"–"; const g=m.get(k)||{n:0,G:0,F:0,C:0}; g.n++; g.G+=u.gross||0; g.F+=u.fees||0; g.C+=u.cost||0; m.set(k,g);}); return [...m.entries()].map(([k,g])=>({k,...g,P:g.G-g.F-g.C})).sort((a,b)=>b.P-a.P);};
+  const tbl=(rows,label)=>rows.length ? `<thead><tr><th>${label}</th><th class="num">Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th><th class="num">Avg / unit</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${R(r.G)}</td><td class="num">${R(r.F)}</td><td class="num">${R(r.C)}</td><td class="num ${r.P<0?"neg":""}"><b>${R(r.P)}</b></td><td class="num">${R(r.P/r.n)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td><td class="num">${sold.length}</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td><td class="num">${sold.length?R(P/sold.length):""}</td></tr></tfoot>`
+    : `<tbody><tr><td class="muted">No sales in ${esc(mLabel)}.</td></tr></tbody>`;
+  $("#byProduct").innerHTML=tbl(group("product"),"Product");
+  $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
+  $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}`;
+}
+$("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
+
+/* ---------------- ledger ---------------- */
+function filtered(){
+  const q=state.q.trim().toLowerCase();
+  return units.filter(u=>{
+    if(state.status && u.status!==state.status) return false;
+    if(state.loc && u.location!==state.loc) return false;
+    if(state.sup && u.supplier!==state.sup) return false;
+    if(state.onlyMonth && !(SOLD.has(u.status) && inMonth(u))) return false;
+    if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  }).sort((a,b)=>{
+    const sa=a.order_id?0:1, sb2=b.order_id?0:1;
+    if(sa!==sb2) return sa-sb2;
+    if(sa===0) return (b.sold_date||"").localeCompare(a.sold_date||"") || (b.order_id||"").localeCompare(a.order_id||"");
+    return (a.received||"").localeCompare(b.received||"") || a.product.localeCompare(b.product);
+  });
+}
+function renderLedger(){
+  const counts={"":units.length}; Object.keys(STATUS).forEach(k=>counts[k]=units.filter(u=>u.status===k).length);
+  $("#chips").innerHTML=[["","All"],...Object.entries(STATUS).map(([k,v])=>[k,v.label])].map(([k,l])=>`<button class="chip" type="button" data-s="${k}" aria-pressed="${state.status===k}">${esc(l)}<span class="n">${counts[k]}</span></button>`).join("");
+  const rows=filtered();
+  const G=rows.reduce((s,u)=>s+(SOLD.has(u.status)?(u.gross||0):0),0), F=rows.reduce((s,u)=>s+(SOLD.has(u.status)?(u.fees||0):0),0), C=rows.reduce((s,u)=>s+(u.cost||0),0), P=rows.reduce((s,u)=>s+(profit(u)||0),0);
+  $("#ledger").innerHTML=`<thead><tr><th>Product</th><th>Status</th><th>Supplier</th><th>Loc</th><th>Received</th><th>PO</th><th>Order ID</th><th>Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
+  <tbody>${rows.map(u=>{const p=profit(u);return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}">
+    <td class="prod">${esc(u.product)}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
+    <td><span class="pill s-${u.status}">${STATUS[u.status]?.short||esc(u.status)}</span></td>
+    <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}</td>
+    <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${fd(u.sold_date)}</td>
+    <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):(u.status==="awaiting_fees"?'<span class="muted">pending</span>':"")}</td>
+    <td class="num">${R(u.cost)}</td><td class="num ${p<0?"neg":""}">${p==null?"":`<b>${R(p)}</b>`}</td></tr>`}).join("")}</tbody>
+  <tfoot><tr><td colspan="8">${rows.length} unit${rows.length===1?"":"s"} shown</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td></tr></tfoot>`;
+  $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
+    <div class="r1"><span class="p">${esc(u.product)}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${STATUS[u.status]?.short}</span></div>
+    <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
+    <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
+  $("#cntAll").textContent=units.length;
+}
+$("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.status=c.dataset.s; renderLedger();});
+$("#q").addEventListener("input",e=>{state.q=e.target.value; renderLedger();});
+$("#fLoc").addEventListener("change",e=>{state.loc=e.target.value; renderLedger();});
+$("#fSup").addEventListener("change",e=>{state.sup=e.target.value; renderLedger();});
+$("#fMonth").addEventListener("change",e=>{state.onlyMonth=e.target.checked; renderLedger();});
+for(const el of [$("#ledger"),$("#cards")]){
+  el.addEventListener("click",e=>{const r=e.target.closest("[data-id]"); if(r) openEdit(r.dataset.id);});
+  el.addEventListener("keydown",e=>{ if(e.key==="Enter"){const r=e.target.closest("[data-id]"); if(r) openEdit(r.dataset.id);} });
+}
+
+/* ---------------- needs matching ---------------- */
+function productFor(sku){ const p=products.find(x=>x.sku===sku); return p && p.product && p.product!==IGNORE ? p.product : null; }
+function renderMatch(){
+  $("#cntMatch").textContent = sales.length || "";
+  $("#matchList").innerHTML = sales.length ? sales.map(s=>`
+    <div class="match-item">
+      <div><div class="t">${esc(s.product_title)}</div>
+        <div class="d">Order <span class="mono">${esc(s.order_id)}</span> · ${fd(s.order_date)} · ${esc(s.sale_status)} · ${esc(s.fulfilment_dc)}${s.po?` · PO ${esc(s.po)}`:""} · ${R(s.gross)}${s.qty>1?` · qty ${s.qty}`:""}</div>
+        <div class="d warn-t">${esc(s.match_note||"")}</div></div>
+      <div class="actions"><button class="btn primary small" type="button" data-pick="${esc(s.order_id)}|${esc(s.sku)}">Choose unit</button><button class="btn small" type="button" data-ignore="${esc(s.order_id)}|${esc(s.sku)}">Ignore</button></div>
+    </div>`).join("") : `<div class="empty">Every Takealot sale is matched to a unit.</div>`;
+}
+let picking=null;
+$("#matchList").addEventListener("click", async e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.pick){ const [o,k]=b.dataset.pick.split("|"); picking=sales.find(s=>s.order_id===o && s.sku===k); openPick(); }
+  if(b.dataset.ignore){ const [o,k]=b.dataset.ignore.split("|");
+    const {error}=await sb.from("takealot_sales").update({user_ignored:true, match_status:"ignored", match_note:"ignored by you"}).eq("order_id",o).eq("sku",k);
+    if(error) toast(errMsg(error)); else { toast("Sale ignored"); loadAll(); } }
+});
+function openPick(){
+  const s=picking; const prod=productFor(s.sku);
+  $("#pickInfo").textContent = `Order ${s.order_id} · ${s.product_title} · ${s.fulfilment_dc} · ${R(s.gross)}${prod?` · your product: ${prod}`:" · this SKU isn't linked to a product yet"}`;
+  $("#pickAll").checked = !prod; $("#pickQ").value=""; renderPick(); $("#pick").showModal();
+}
+function renderPick(){
+  const s=picking; const prod=productFor(s.sku); const q=$("#pickQ").value.trim().toLowerCase();
+  let pool=units.filter(u=>u.status==="in_stock" && !u.order_id);
+  if(!$("#pickAll").checked && prod) pool=pool.filter(u=>u.product===prod);
+  if(q) pool=pool.filter(u=>[u.product,u.supplier,u.po,u.location,u.sn].join(" ").toLowerCase().includes(q));
+  pool.sort((a,b)=>(a.location===s.fulfilment_dc?0:1)-(b.location===s.fulfilment_dc?0:1) || (a.received||"").localeCompare(b.received||""));
+  $("#pickTable").innerHTML = pool.length ? `<thead><tr><th>Product</th><th>Supplier</th><th>Loc</th><th>Received</th><th>PO</th><th class="num">Cost</th><th></th></tr></thead><tbody>${pool.slice(0,200).map(u=>`<tr>
+    <td>${esc(u.product)}</td><td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}</td><td class="mono">${esc(u.po)}</td><td class="num">${R(u.cost)}</td>
+    <td><button class="btn primary small" type="button" data-unit="${esc(u.id)}">This one</button></td></tr>`).join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No unsold units fit. Tick "Show all unsold products", or add the stock first.</td></tr></tbody>`;
+}
+$("#pickQ").addEventListener("input",renderPick); $("#pickAll").addEventListener("change",renderPick);
+$("#pickClose").addEventListener("click",()=>$("#pick").close());
+$("#pickTable").addEventListener("click", async e=>{
+  const b=e.target.closest("[data-unit]"); if(!b||!picking) return;
+  const s=picking, u=units.find(x=>x.id===b.dataset.unit); const qty=Math.max(1,s.qty||1);
+  const fees = s.fees!=null ? Math.round(s.fees/qty*100)/100 : null;
+  b.disabled=true;
+  const {error}=await sb.from("units").update({ order_id:s.order_id, sold_date:(s.order_date||"").slice(0,10)||null,
+    gross: s.gross!=null?Math.round(s.gross/qty*100)/100:null, fees, status: fees!=null?"settled":"awaiting_fees",
+    sku:s.sku, match_method:"manual", location: u.location==="HOME" ? (s.fulfilment_dc||u.location) : u.location, po: u.po || s.po || "" }).eq("id",u.id);
+  if(error){ toast(errMsg(error)); b.disabled=false; return; }
+  const rest = qty>1 ? "matched" : "matched";
+  await sb.from("takealot_sales").update({ unit_id:u.id, match_status:rest, match_note:"matched by you" }).eq("order_id",s.order_id).eq("sku",s.sku);
+  const p=products.find(x=>x.sku===s.sku);
+  if(p && !p.product) await sb.from("products").update({product:u.product}).eq("sku",s.sku);
+  $("#pick").close(); toast(qty>1?`Matched 1 of ${qty} units. Edit the rest from Stock & sales.`:"Sale matched"); loadAll();
+});
+
+/* ---------------- products ---------------- */
+function renderProducts(){
+  const names=[...new Set(units.map(u=>u.product))].sort();
+  const list=[...products].sort((a,b)=>(a.product?1:0)-(b.product?1:0) || (a.takealot_title||"").localeCompare(b.takealot_title||""));
+  $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr>
+    <td>${esc(p.takealot_title)}</td><td class="mono">${esc(p.sku)}</td>
+    <td><select data-sku="${esc(p.sku)}" aria-label="Your product for ${esc(p.takealot_title)}">
+      <option value="">Not linked yet</option>
+      <option value="${IGNORE}" ${p.product===IGNORE?"selected":""}>Don't track this product</option>
+      ${names.map(n=>`<option ${n===p.product?"selected":""}>${esc(n)}</option>`).join("")}
+    </select></td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">Products appear here after the first sync.</td></tr></tbody>`;
+}
+$("#prodTable").addEventListener("change", async e=>{
+  const s=e.target.closest("select[data-sku]"); if(!s) return;
+  const {error}=await sb.from("products").update({product:s.value||null}).eq("sku",s.dataset.sku);
+  toast(error?errMsg(error):"Saved. The next sync uses this link."); loadAll();
+});
+
+/* ---------------- lists + render ---------------- */
+function renderLists(){
+  const prods=[...new Set(units.map(u=>u.product))].sort(), sups=[...new Set(units.map(u=>u.supplier).filter(Boolean))].sort();
+  $("#dl-products").innerHTML=prods.map(p=>`<option value="${esc(p)}">`).join("");
+  $("#dl-suppliers").innerHTML=sups.map(p=>`<option value="${esc(p)}">`).join("");
+  const kl=$("#fLoc").value, ks=$("#fSup").value;
+  $("#fLoc").innerHTML=`<option value="">All locations</option>`+LOCS.map(l=>`<option>${l}</option>`).join("");
+  $("#fSup").innerHTML=`<option value="">All suppliers</option>`+sups.map(s=>`<option>${esc(s)}</option>`).join("");
+  $("#fLoc").value=kl; $("#fSup").value=ks;
+}
+function render(){
+  if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderProducts();
+}
+
+/* ---------------- edit dialog ---------------- */
+let editing=null;
+$("#e-status").innerHTML=Object.entries(STATUS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join("");
+function calcBox(){
+  const g=num($("#e-gross").value), f=num($("#e-fees").value), c=num($("#e-cost").value)||0, st=$("#e-status").value;
+  const net=g!=null?g-(f||0):null, p=SOLD.has(st)&&g!=null?net-c:null;
+  $("#eCalc").innerHTML=`<div><span>Net sale</span><b>${net==null?"–":R(net)}</b></div><div><span>Cost</span><b>${R(c)}</b></div><div><span>Profit</span><b class="${p<0?"neg":"pos"}">${p==null?"–":R(p)}</b></div>`;
+}
+["e-gross","e-fees","e-cost","e-status"].forEach(id=>$("#"+id).addEventListener("input",calcBox));
+function openEdit(id){
+  const u=units.find(x=>x.id===id); if(!u) return; editing=u;
+  $("#dlgTitle").textContent=u.product;
+  const set=(id,v)=>$("#"+id).value=v??"";
+  set("e-product",u.product); set("e-status",u.status); set("e-location",u.location||"HOME"); set("e-supplier",u.supplier); set("e-type",u.stock_type||"ICASA");
+  set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
+  set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-comment",u.comment); $("#e-flag").checked=!!u.flag;
+  $("#eConfirm").hidden=true;
+  const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
+  $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
+  calcBox(); $("#dlg").showModal();
+}
+$("#dlgClose").addEventListener("click",()=>$("#dlg").close());
+$("#e-order").addEventListener("change",()=>{ if($("#e-order").value && $("#e-status").value==="in_stock"){ $("#e-status").value=$("#e-fees").value?"settled":"awaiting_fees"; calcBox(); }});
+$("#e-fees").addEventListener("change",()=>{ if($("#e-fees").value && $("#e-status").value==="awaiting_fees"){ $("#e-status").value="settled"; calcBox(); }});
+$("#e-status").addEventListener("change",()=>{ if($("#e-status").value.startsWith("return") && !$("#e-return").value) $("#e-return").value=today(); });
+$("#editForm").addEventListener("submit", async e=>{
+  e.preventDefault(); if(!editing) return;
+  const body={ product:$("#e-product").value.trim(), status:$("#e-status").value, location:$("#e-location").value, supplier:$("#e-supplier").value.trim(),
+    stock_type:$("#e-type").value, received:$("#e-received").value||null, po:$("#e-po").value.trim(), sn:$("#e-sn").value.trim(),
+    cost:num($("#e-cost").value)||0, order_id:$("#e-order").value.trim(), sold_date:$("#e-sold").value||null,
+    gross:num($("#e-gross").value), fees:num($("#e-fees").value), return_date:$("#e-return").value||null,
+    comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
+  if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
+  $("#eSave").disabled=true;
+  const {error}=await sb.from("units").update(body).eq("id",editing.id);
+  $("#eSave").disabled=false;
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#dlg").close(); toast("Saved"); loadAll(); }
+});
+$("#eDel").addEventListener("click",()=>$("#eConfirm").hidden=false);
+$("#eDelNo").addEventListener("click",()=>$("#eConfirm").hidden=true);
+$("#eDelYes").addEventListener("click", async ()=>{
+  const {error}=await sb.from("units").delete().eq("id",editing.id);
+  if(error) toast("Couldn't delete: "+errMsg(error)); else { $("#dlg").close(); toast("Unit deleted"); loadAll(); }
+});
+
+/* ---------------- add stock ---------------- */
+function snHint(){ const n=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean).length, q=+$("#a-qty").value||0;
+  $("#snHint").textContent = n ? (n===q?`${n} serial numbers, one per unit.`:`${n} serial numbers for ${q} units. ${n<q?"The rest stay blank.":"Extra lines are ignored."}`) : ""; }
+$("#a-sn").addEventListener("input",snHint); $("#a-qty").addEventListener("input",snHint);
+$("#addForm").addEventListener("submit", async e=>{
+  e.preventDefault();
+  const qty=Math.min(200,Math.max(1,+$("#a-qty").value||1)), sns=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const base={ product:$("#a-product").value.trim(), supplier:$("#a-supplier").value.trim(), location:$("#a-location").value, stock_type:$("#a-type").value,
+    received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app" };
+  const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
+  $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
+  const {error}=await sb.from("units").insert(rows);
+  $("#addBtn").disabled=false; $("#addMsg").textContent="";
+  if(error){ $("#addMsg").textContent="Couldn't save: "+errMsg(error); return; }
+  toast(`Added ${qty} × ${base.product}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
+});
+
+/* ---------------- boot ---------------- */
+render();
+sb.auth.getSession().then(({data})=>{ data.session ? start(data.session) : showLogin(); });
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+
+</script>
+</body>
+</html>
