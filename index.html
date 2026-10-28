@@ -540,9 +540,7 @@ function renderOverview(){
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
-  ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<45*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
-  const arrears=ships.find(x=>/arrear/i.test(x.note||""));
-  if(arrears) items.push({go:"ship", tag:"Courier", t:"The Courier Guy says your account is in arrears", d:cleanNote(arrears.note).replace(/^.*?(Please note that your account)/i,"$1").slice(0,160)});
+  ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
     <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:`data-go="${i.go}"`}>
@@ -702,7 +700,7 @@ const SHIP_BAD=new Set(["returned-to-sender","collection-exception","delivery-ex
 const shipLabel=st=>{ const t=String(st||"").replace(/-/g," "); return t.charAt(0).toUpperCase()+t.slice(1); };
 const shipPill=st=>SHIP_BAD.has(st)?"s-return_me":st==="delivered"?"s-settled":st==="cancelled"?"s-in_stock":"s-awaiting_fees";
 const poOf=x=>(String(x.reference||"").match(/\d{6,}/)||[""])[0];
-const cleanNote=t=>String(t||"").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();
+const cleanNote=t=>String(t||"").replace(/&nbsp;/g," ").replace(/Please note that your account[^|]*?arrears[^|]*/gi,"").replace(/\s*\|\s*(\|\s*)+/g," | ").replace(/^\s*\|\s*|\s*\|\s*$/g,"").replace(/\s+/g," ").trim();
 function shipUnits(x){
   if(x.direction==="to_takealot"){ const po=poOf(x); return po?units.filter(u=>u.po===po):[]; }
   if(x.direction==="from_takealot" && !SHIP_DONE.has(x.status)) return units.filter(u=>u.status==="return_me" && u.location===x.takealot_dc);
