@@ -24,6 +24,7 @@ FEE_COLS = ["Success Fee", "Fulfilment Fee", "Courier Collection Fee", "Stock Tr
 SOLD_STATES = {"Shipped to Customer", "Confirmed Shipment", "Preparing for Customer",
                "Accepted", "New Lead Time Order", "Inbound", "Ready for Collection"}
 IGNORE_PRODUCT = "__ignore__"
+_LAST_SALES: list = []   # the sales seen by the last match() call, used by apply_returns
 
 
 def _num(s):
@@ -132,6 +133,8 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
     Returns (unit_updates: {unit_id: {field: value}}, sale_results: [ {order_id, sku, unit_ids, match_status, reason} ])
     Units are updated in place as well, so later sales in the same run see earlier decisions.
     """
+    global _LAST_SALES
+    _LAST_SALES = sales
     updates: dict[str, dict] = {}
     results = []
     by_order: dict[str, list[dict]] = {}
@@ -290,32 +293,49 @@ def _text(v):
     return str(v or "").strip()
 
 
+WAREHOUSES = {3: "JHB"}   # Takealot warehouse ids seen so far; others are learned from the sale
+
+
 def parse_returns(items: list[dict]) -> list[dict]:
-    """Parse rows from the portal's View Returns feed. Tolerant of field names."""
+    """Parse rows from the portal's View Returns feed (seller-api /v2/returns)."""
     out = []
     for r in items:
         oid = _pick(r, "order_id", "orderid")
         if not oid:
             continue
-        outcome = _text(_pick(r, "stock_outcome", "outcome", contains=("outcome", "disposition", "stock_status")))
-        rd = _text(_pick(r, "return_date", "date_returned", "created_at", contains=("return_date",)))
+        # the current state is the latest entry in return_outcomes (e.g. pending_sellable_stock);
+        # seller_return_outcome is only Takealot's first evaluation
+        outcome = ""
+        hist = r.get("return_outcomes") or []
+        if isinstance(hist, list) and hist:
+            last = sorted(hist, key=lambda h: h.get("id") or 0)[-1]
+            outcome = str(last.get("status") or "").replace("_", " ")
+        if not outcome:
+            outcome = _text(_pick(r, "seller_return_outcome", "stock_outcome", "outcome"))
+        rd = _pick(r, "return_date", "date_returned", "created_at")
         rdate = None
-        for cand in (rd, rd[:19], rd[:11].strip(), rd[:10]):
-            for fmt in ("%d %b %Y %H:%M:%S", "%d %b %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
-                try:
-                    rdate = datetime.strptime(cand, fmt).date().isoformat()
+        if isinstance(rd, (int, float)) or (isinstance(rd, str) and rd.isdigit()):
+            rdate = datetime.fromtimestamp(int(rd)).date().isoformat()
+        elif rd:
+            rd = str(rd)
+            for cand in (rd, rd[:19], rd[:11].strip(), rd[:10]):
+                for fmt in ("%d %b %Y %H:%M:%S", "%d %b %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        rdate = datetime.strptime(cand, fmt).date().isoformat()
+                        break
+                    except ValueError:
+                        continue
+                if rdate:
                     break
-                except ValueError:
-                    continue
-            if rdate:
-                break
+        wid = r.get("warehouse_id")
+        dc = WAREHOUSES.get(wid) if isinstance(wid, int) else None
         out.append({
             "order_id": str(oid),
             "sku": str(_pick(r, "sku") or ""),
-            "title": _text(_pick(r, "product_title", "title")),
-            "qty": int(_pick(r, "quantity", "qty") or 1),
-            "dc": _text(_pick(r, "dc", "return_region", "region", "warehouse", contains=("region",))),
-            "reason": _text(_pick(r, "return_reason", "reason", contains=("reason",))),
+            "title": _text(_pick(r, "title", "product_title")),
+            "qty": int(_pick(r, "qty", "quantity") or 1),
+            "dc": dc or _text(_pick(r, "dc", "return_region", "region")),
+            "reason": _text(_pick(r, "seller_return_reason", "return_reason", "reason")),
             "outcome": outcome,
             "return_date": rdate,
         })
@@ -324,16 +344,16 @@ def parse_returns(items: list[dict]) -> list[dict]:
 
 def outcome_kind(outcome: str) -> str:
     o = outcome.lower()
-    if "pending" in o:
-        return "pending"
     if any(w in o for w in ("removal", "return to seller", "returned to seller", "unsellable", "collect", "dispos")):
         return "removal"
+    if "pending" in o:
+        return "pending"
     if "sellable" in o:
         return "sellable"
     return "unknown"
 
 
-def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str]):
+def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str], sales: list[dict] | None = None):
     """
     Pending sellable stock      -> Return: Takealot (orange)
     Sellable stock              -> sale reversed, unit back In stock at that warehouse
@@ -352,9 +372,25 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
             u.update(ch)
             updates.setdefault(u["id"], {}).update(ch)
 
+    sale_of = {x["order_id"]: x for x in (sales if sales is not None else _LAST_SALES)}
+    for r in returns:
+        if not r["dc"] and r["order_id"] in sale_of:
+            r["dc"] = sale_of[r["order_id"]].get("fulfilment_dc") or ""
     for r in returns:
         k = outcome_kind(r["outcome"])
         linked = by_order.get(r["order_id"], [])
+        # repair: a unit wrongly put back in stock for a return that is still pending
+        if k == "pending" and not linked:
+            tag = f"Customer return (order {r['order_id']},"
+            for u in units:
+                c = u.get("comment") or ""
+                if u.get("status") == "in_stock" and not u.get("order_id") and c.startswith(tag) and "Sale reversed." in c:
+                    s0 = sale_of.get(r["order_id"], {})
+                    upd(u, order_id=r["order_id"], status="return_takealot", sold_date=s0.get("sold_date") or u.get("sold_date"),
+                        match_method="import", comment=c.split("Sale reversed.", 1)[1].strip())
+                    by_order.setdefault(r["order_id"], []).append(u)
+                    notes.append(f"Repaired: order {r['order_id']} put back as Return: Takealot (still pending)")
+            linked = by_order.get(r["order_id"], [])
         when = r["return_date"] or ""
         if k == "unknown":
             notes.append(f"Return {r['order_id']}: outcome '{r['outcome']}' not recognised, left alone")
@@ -384,6 +420,8 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                         comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: pending sellable "
                                  f"stock at Takealot {r['dc']}. " + (u.get("comment") or "")).strip())
             elif k == "removal":
+                if u.get("status") == "return_me" and u.get("match_method") == "return" and u.get("location") == "HOME" and r["dc"]:
+                    upd(u, location=r["dc"])
                 if u["status"] != "return_me" and not (u["status"] == "in_stock" and u.get("location") == "HOME"):
                     upd(u, status="return_me", return_date=r["return_date"], location=r["dc"] or u.get("location"),
                         flag=True, comment=(f"Removal order: Takealot is sending this back to you (order {r['order_id']}, "
