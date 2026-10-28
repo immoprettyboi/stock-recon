@@ -901,7 +901,13 @@ $("#addForm").addEventListener("submit", async e=>{
 /* ---------------- boot ---------------- */
 render();
 sb.auth.getSession().then(({data})=>{ data.session ? start(data.session) : showLogin(); });
-if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+if("serviceWorker" in navigator){
+  navigator.serviceWorker.register("sw.js").then(reg=>{
+    document.addEventListener("visibilitychange",()=>{ if(!document.hidden) reg.update().catch(()=>{}); });
+  }).catch(()=>{});
+  let reloaded=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(!reloaded && navigator.serviceWorker.controller){ reloaded=true; location.reload(); } });
+}
 
 </script>
 </body>
