@@ -261,6 +261,10 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="tscroll"><table id="expTable"></table></div>
     </div>
     <div class="panel">
+      <div class="sec-head"><h2>Returns</h2><p id="retSub">From Takealot's View Returns, by return date</p></div>
+      <div class="tscroll"><table id="retTable"></table></div>
+    </div>
+    <div class="panel">
       <div class="sec-head"><h2>Stock on hand</h2><p>Units not yet sold, by where they are</p></div>
       <div class="tscroll"><table id="onhand"></table></div>
     </div>
@@ -462,7 +466,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -520,6 +524,8 @@ async function loadAll(){
     { const since=new Date(Date.now()-60*864e5).toISOString();
       const {data,error}=await sb.from("courier_shipments").select("*").gte("created_at",since).order("created_at",{ascending:false});
       ships = error ? [] : data; }
+    { const {data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date").order("return_date",{ascending:false});
+      rets = error ? [] : data; }
     { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items").order("due_date",{ascending:false});
       pos = error ? [] : data; }
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
@@ -586,9 +592,11 @@ function renderOverview(){
   const G=sold.reduce((s,u)=>s+(u.gross||0),0), F=sold.reduce((s,u)=>s+(u.fees||0),0), C=sold.reduce((s,u)=>s+(u.cost||0),0), P=G-F-C;
   const awaiting=sold.filter(u=>u.status==="awaiting_fees").length;
   const stock=units.filter(u=>u.status==="in_stock"), stockV=stock.reduce((s,u)=>s+(u.cost||0),0);
-  const rets=units.filter(u=>u.status==="return_takealot"||u.status==="return_me");
   const mLabel = state.month==="all" ? "all time" : ($("#month").selectedOptions[0]?.textContent||"");
   const margin = G ? (P/G*100).toFixed(1) : "0.0";
+  const monthRets = rets.filter(r=>state.month==="all" || String(r.return_date).slice(0,7)===state.month);
+  const rKind = o => { o=String(o||"").toLowerCase(); return /removal|return to seller|unsellable|collect|dispos/.test(o)?"removal":/pending/.test(o)?"pending":/sellable/.test(o)?"sellable":"other"; };
+  const rk = {sellable:0,pending:0,removal:0,other:0}; monthRets.forEach(r=>rk[rKind(r.outcome)]+=(r.qty||1));
   const monthExp = expenses.filter(e=>e.category!=="adam_balance" && e.category!=="delivery_other" && (state.month==="all" || String(e.date).slice(0,7)===state.month));
   const X = monthExp.reduce((a,e)=>a+e.amount,0);
   $("#tiles").innerHTML = `
@@ -597,7 +605,7 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
-    <div class="tile"><span class="lbl">Returns &amp; queries</span><span class="val">${rets.length+units.filter(u=>u.status==="missing_query").length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you · ${units.filter(u=>u.status==="missing_query").length} query open</span></div>`;
+    <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
 
   // ---- Needs you: only things that need an action from you
   const items=[];
@@ -659,9 +667,18 @@ function renderOverview(){
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
   $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}, before courier top-ups`;
   renderAdam();
+  const outLabel=o=>({sellable:"Back in Takealot stock",pending:"Pending at Takealot",removal:"Coming back to you",other:String(o||"")})[rKind(o)];
+  $("#retTable").innerHTML = monthRets.length ? `<thead><tr><th>Returned</th><th>Product</th><th>Order</th><th>Reason</th><th>Outcome</th><th>In the app</th></tr></thead><tbody>${monthRets.map(r=>{
+      const u=units.find(x=>x.order_id===r.order_id), k=rKind(r.outcome);
+      const pill=k==="sellable"?"s-in_stock":k==="pending"?"s-return_takealot":k==="removal"?"s-return_me":"s-awaiting_fees";
+      const app = u ? `<button class="btn small" type="button" data-id="${esc(u.id)}">${esc(STATUS[u.status]?.short||u.status)}</button>`
+                    : `<span class="muted">${k==="sellable"?"unit back in stock / resold":"no unit linked"}</span>`;
+      return `<tr><td class="nw">${fd(r.return_date)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.order_id)}</td><td>${esc(r.reason)}</td><td><span class="pill ${pill}">${esc(outLabel(r.outcome))}</span></td><td>${app}</td></tr>`; }).join("")}</tbody>`
+    : `<tbody><tr><td class="muted">${rets.length?`No returns in ${esc(mLabel)}.`:"Returns appear here after the next sync (run 8_database_update.sql in Supabase first)."}</td></tr></tbody>`;
   $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No delivery costs in ${esc(mLabel)}.</td></tr></tbody>`;
 }
+$("#retTable").addEventListener("click",e=>{const b=e.target.closest("[data-id]"); if(b) openEdit(b.dataset.id);});
 $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.adampo) openAdam(b.dataset.adampo); else if(b.dataset.go) setView(b.dataset.go);});
 $("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
   state.only=null; state.status=b.dataset.status; state.loc=""; state.sup=""; state.q=""; $("#q").value=""; $("#fLoc").value=""; $("#fSup").value="";

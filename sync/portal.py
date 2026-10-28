@@ -221,6 +221,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                         "url": url, "count": len(returns), "keys": sorted(returns[0].keys()) if returns else [],
                         "sample": [{k: v for k, v in x.items() if "customer" not in k.lower()} for x in returns[:3]],
                         "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
+                    save_returns(cfg, returns, log)
                 else:
                     log("Returns page: no returns data found.")
             except NeedsLogin:
@@ -560,3 +561,24 @@ def fetch_takealot_pos(ctx, cfg, auth, log):
                 else "Takealot shipments couldn't be saved: " + str(e)[:150])
             return
     log(f"Takealot shipments: {len(rows)} PO(s) saved ({len(ships)} read).")
+
+
+
+def save_returns(cfg, returns, log):
+    """Keep every return (from View Returns) in takealot_returns, so the app can count returns per month."""
+    if not returns:
+        return
+    import matcher, stockrecon_sync as S
+    parsed = matcher.parse_returns(returns)
+    rows = []
+    for raw, r in zip([x for x in returns if (x.get("order_id") or x.get("orderId"))], parsed):
+        rid = str(raw.get("seller_return_id") or raw.get("rrn") or f"{r['order_id']}-{r['sku']}")
+        rows.append({"return_id": rid, "rrn": raw.get("rrn"), "order_id": r["order_id"], "sku": r["sku"], "title": r["title"],
+                     "qty": r["qty"], "dc": r["dc"], "reason": r["reason"], "outcome": r["outcome"], "return_date": r["return_date"],
+                     "raw": {k: v for k, v in raw.items() if "customer" not in k.lower()},
+                     "updated_at": datetime.utcnow().isoformat() + "Z"})
+    try:
+        S.DB(cfg["url"], cfg["key"]).insert("takealot_returns", rows, upsert_on="return_id")
+    except RuntimeError as e:
+        log("Returns history: run 8_database_update.sql in Supabase to switch this on." if "takealot_returns" in str(e)
+            else "Returns history couldn't be saved: " + str(e)[:150])
