@@ -21,7 +21,7 @@ html,body{height:100%;margin:0}
   --accent:#1f4fd1; --accent-ink:#ffffff; --accent-soft:#e3eaff;
   --ok:#1d7a3e; --ok-soft:#dcf2e3; --warn:#9a6400; --warn-soft:#fbefd2;
   --orange:#b8520a; --orange-soft:#fde5d2; --bad:#b42323; --bad-soft:#fbdcdc;
-  --stock:#3e4a5e; --stock-soft:#e4e8ef;
+  --stock:#3e4a5e; --stock-soft:#e4e8ef; --query:#6a3d9a; --query-soft:#ece3f6;
   --display:"Archivo","Arial Narrow",system-ui,sans-serif;
   --body:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
@@ -32,13 +32,13 @@ html,body{height:100%;margin:0}
   --accent:#7d9cff; --accent-ink:#0f1218; --accent-soft:#1d2a4d;
   --ok:#5fd08a; --ok-soft:#163323; --warn:#e8b64c; --warn-soft:#3a2d10;
   --orange:#f59a52; --orange-soft:#3e2513; --bad:#f07a7a; --bad-soft:#3d1a1a;
-  --stock:#b4bfd3; --stock-soft:#252c39; color-scheme:dark}}
+  --stock:#b4bfd3; --stock-soft:#252c39; --query:#c7a6ef; --query-soft:#2d2240; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0f1218; --surface:#171b23; --sunk:#1e232d; --line:#2c3340; --fg:#e7eaf0; --muted:#98a0ae;
   --accent:#7d9cff; --accent-ink:#0f1218; --accent-soft:#1d2a4d;
   --ok:#5fd08a; --ok-soft:#163323; --warn:#e8b64c; --warn-soft:#3a2d10;
   --orange:#f59a52; --orange-soft:#3e2513; --bad:#f07a7a; --bad-soft:#3d1a1a;
-  --stock:#b4bfd3; --stock-soft:#252c39; color-scheme:dark}
+  --stock:#b4bfd3; --stock-soft:#252c39; --query:#c7a6ef; --query-soft:#2d2240; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
@@ -98,6 +98,8 @@ tbody tr[tabindex]:hover{background:var(--sunk)}
 .s-settled{background:var(--ok-soft);color:var(--ok)}
 .s-return_takealot{background:var(--orange-soft);color:var(--orange)}
 .s-return_me{background:var(--bad-soft);color:var(--bad)}
+.s-missing_query{background:var(--query-soft);color:var(--query)}
+tr.row-s-missing_query td:first-child{box-shadow:inset 3px 0 var(--query)}
 tr.row-s-settled td:first-child{box-shadow:inset 3px 0 var(--ok)}
 tr.row-s-awaiting_fees td:first-child{box-shadow:inset 3px 0 var(--warn)}
 tr.row-s-return_takealot td:first-child{box-shadow:inset 3px 0 var(--orange)}
@@ -334,6 +336,8 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="field"><label for="e-gross">Gross sale (R)</label><input id="e-gross" type="number" step="0.01" min="0"></div>
       <div class="field"><label for="e-fees">Takealot fees (R)</label><input id="e-fees" type="number" step="0.01" min="0"><span class="hint">Positive amount</span></div>
       <div class="field"><label for="e-return">Return date</label><input id="e-return" type="date"></div>
+      <div class="field"><label for="e-qdate">Query sent to Takealot</label><input id="e-qdate" type="date"></div>
+      <div class="field"><label for="e-qref">Query / ticket number</label><input id="e-qref" placeholder="e.g. ticket number"></div>
       <div class="field wide"><label for="e-comment">Comment</label><textarea id="e-comment" rows="2"></textarea></div>
       <label class="note inline wide"><input type="checkbox" id="e-flag"> Keep on the "Needs attention" list</label>
     </div>
@@ -374,6 +378,7 @@ const STATUS = {
   settled:         {label:"Sold & settled",           short:"Settled"},
   return_takealot: {label:"Return to Takealot stock", short:"Return: Takealot"},
   return_me:       {label:"Return to me",             short:"Return: me"},
+  missing_query:   {label:"Missing: query with Takealot", short:"Query open"},
 };
 const SOLD = new Set(["awaiting_fees","settled"]);
 const LOCS = ["JHB","CPT","DBN","HOME"];
@@ -500,13 +505,14 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P)}</span><span class="sub">${margin}% of gross${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
-    <div class="tile"><span class="lbl">Returns open</span><span class="val">${rets.length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you</span></div>`;
+    <div class="tile"><span class="lbl">Returns &amp; queries</span><span class="val">${rets.length+units.filter(u=>u.status==="missing_query").length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you · ${units.filter(u=>u.status==="missing_query").length} query open</span></div>`;
 
   const items=[];
   if(sales.length) items.push({match:true, s:"awaiting_fees", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
   const unlinked=products.filter(p=>!p.product).length;
   if(unlinked) items.push({prod:true, s:"awaiting_fees", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   units.filter(u=>u.flag).forEach(u=>items.push({u, s:u.status, t:`Check · ${u.product}`, d:u.comment||""}));
+  units.filter(u=>u.status==="missing_query" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Query with Takealot · ${u.product}`, d:`Missing at ${u.location}${u.query_date?` · query sent ${fd(u.query_date)}`:""}${u.query_ref?` · ref ${u.query_ref}`:""}`}));
   units.filter(u=>u.status==="return_me" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Coming back to you · ${u.product}`, d:`Order ${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`}));
   units.filter(u=>u.status==="awaiting_fees" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Fees not in yet · ${u.product}`, d:`Order ${u.order_id} · sold ${fd(u.sold_date)} · ${R(u.gross)}`}));
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
@@ -649,6 +655,7 @@ function renderCheck(){
   for(const p of live){ const g=G[p.product]=G[p.product]||{tal:{},way:{},app:{}};
     for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); } }
   units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
+  units.filter(u=>u.status==="missing_query" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g){ g.q=g.q||{}; g.q[u.location]=(g.q[u.location]||0)+1; } });
   // units sold on lead-time orders and sent in: Takealot still counts them as on the way / being received
   const skuGroup={}; products.forEach(p=>skuGroup[p.sku]=p.product);
   pipeline.forEach(x=>{ const g=G[skuGroup[x.sku]]; if(g && DCS.includes(x.fulfilment_dc)){ g.lead=g.lead||{}; g.lead[x.fulfilment_dc]=(g.lead[x.fulfilment_dc]||0)+(x.qty||1); } });
@@ -657,12 +664,13 @@ function renderCheck(){
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
       let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;
       if(!d && leadNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${leadNote} sold on a lead-time order, on its way</div></td>`;
+      const Q=(g.q||{})[dc]||0, qNote=Q?`<div class="muted" style="font-size:12px">${Q} under query with Takealot</div>`:"";
       if(d) issues++;
-      if(!a&&!t&&!w) return `<td class="num muted">·</td>`;
+      if(!a&&!t&&!w&&!Q) return `<td class="num muted">·</td>`;
       return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div>${d?`<span class="pill ${d>0?"s-return_me":"s-awaiting_fees"}">${d>0?`${d} more in app`:`${-d} more at Takealot`}</span>
         <div class="check-act">${d<0?`<button class="btn primary small" type="button" data-add="${esc(n)}" data-dc="${dc}" data-qty="${-d}">Add to stock</button>`
                                    :`<button class="btn small" type="button" data-show="${esc(n)}" data-dc="${dc}">Show units</button>`}</div>`
-        :`<span class="pill s-settled">matches</span>`}</td>`; }).join("");
+        :`<span class="pill s-settled">matches</span>`}${qNote}</td>`; }).join("");
     return `<tr><td>${esc(n)}</td>${cells}</tr>`; }).join("");
   const when=live.reduce((m,p)=>p.stock_updated_at>m?p.stock_updated_at:m,"");
   $("#checkSub").textContent=`Takealot figures from ${ago(when)}`;
@@ -735,7 +743,7 @@ function openEdit(id){
   const set=(id,v)=>$("#"+id).value=v??"";
   set("e-product",u.product); set("e-status",u.status); set("e-location",u.location||"HOME"); set("e-supplier",u.supplier); set("e-type",u.stock_type||"ICASA");
   set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
-  set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-comment",u.comment); $("#e-flag").checked=!!u.flag;
+  set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); $("#e-flag").checked=!!u.flag;
   $("#eConfirm").hidden=true;
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
   $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
@@ -744,7 +752,9 @@ function openEdit(id){
 $("#dlgClose").addEventListener("click",()=>$("#dlg").close());
 $("#e-order").addEventListener("change",()=>{ if($("#e-order").value && $("#e-status").value==="in_stock"){ $("#e-status").value=$("#e-fees").value?"settled":"awaiting_fees"; calcBox(); }});
 $("#e-fees").addEventListener("change",()=>{ if($("#e-fees").value && $("#e-status").value==="awaiting_fees"){ $("#e-status").value="settled"; calcBox(); }});
-$("#e-status").addEventListener("change",()=>{ if($("#e-status").value.startsWith("return") && !$("#e-return").value) $("#e-return").value=today(); });
+$("#e-status").addEventListener("change",()=>{ const v=$("#e-status").value;
+  if(v.startsWith("return") && !$("#e-return").value) $("#e-return").value=today();
+  if(v==="missing_query" && !$("#e-qdate").value) $("#e-qdate").value=today(); });
 $("#editForm").addEventListener("submit", async e=>{
   e.preventDefault(); if(!editing) return;
   const body={ product:$("#e-product").value.trim(), status:$("#e-status").value, location:$("#e-location").value, supplier:$("#e-supplier").value.trim(),
@@ -752,6 +762,7 @@ $("#editForm").addEventListener("submit", async e=>{
     cost:num($("#e-cost").value)||0, order_id:$("#e-order").value.trim(), sold_date:$("#e-sold").value||null,
     gross:num($("#e-gross").value), fees:num($("#e-fees").value), return_date:$("#e-return").value||null,
     comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
+  if(units.some(x=>"query_date" in x)){ body.query_date=$("#e-qdate").value||null; body.query_ref=$("#e-qref").value.trim(); }
   if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
   $("#eSave").disabled=true;
   const {error}=await sb.from("units").update(body).eq("id",editing.id);

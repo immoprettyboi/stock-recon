@@ -153,6 +153,39 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     break
                 pg += 1
 
+            # ---- one-off history request (a history_request.txt file with a start date, e.g. 2026-08-01)
+            try:
+                req = HERE / "history_request.txt"
+                if req.exists():
+                    since = date.fromisoformat(req.read_text(encoding="utf-8").strip()[:10])
+                    hist, a = [], since
+                    while a <= date.today():
+                        b = min(a + timedelta(days=29), date.today())
+                        pg = 1
+                        while True:
+                            url = f"{SALES_API}?filters=start_date%3A{a}%2Cend_date%3A{b}&page_size=100&page_number={pg}"
+                            r = ctx.request.get(url, headers=auth, timeout=60_000)
+                            if not r.ok:
+                                break
+                            batch = r.json().get("sales") or []
+                            hist += [{k: v for k, v in x.items() if k != "customer"} for x in batch]
+                            if len(batch) < 100:
+                                break
+                            pg += 1
+                        a = b + timedelta(days=1)
+                    rets = []
+                    rr = ctx.request.get(f"https://{API_HOST}/v2/returns?page_number=1&page_size=100&date_start={since}&date_end={date.today()}",
+                                         headers=auth, timeout=60_000)
+                    if rr.ok:
+                        rets = _find_rows(rr.json()) or []
+                    DEBUG_DIR.mkdir(exist_ok=True)
+                    (DEBUG_DIR / "sales_history.json").write_text(json.dumps({"since": str(since), "sales": hist, "returns": rets,
+                        "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
+                    req.unlink()
+                    log(f"History: saved {len(hist)} sale lines and {len(rets)} return(s) since {since}.")
+            except Exception as e:
+                log("History request failed: " + repr(e)[:200])
+
             # ---- returns (best effort: a problem here never stops the sales sync)
             returns = []
             try:
