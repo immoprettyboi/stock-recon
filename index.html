@@ -302,7 +302,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 
   <!-- SHIPMENTS -->
   <section id="view-ship" class="stack" hidden>
-    <div class="filters"><label class="note inline"><input type="checkbox" id="shipAll"> Show delivered and cancelled too</label></div>
+    <div class="filters"><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
     <div class="panel">
       <div class="sec-head"><h2>Coming from Takealot</h2><p>Returns and removal orders the courier is bringing to you</p></div>
       <div class="tscroll"><table id="shipFrom"></table></div>
@@ -697,7 +697,7 @@ $("#pickTable").addEventListener("click", async e=>{
 
 /* ---------------- products ---------------- */
 /* ---------------- shipments ---------------- */
-const SHIP_DONE=new Set(["delivered","cancelled"]);
+const SHIP_DONE=new Set(["delivered","cancelled","returned-to-sender"]);   // finished: hidden unless "show delivered" is ticked
 const SHIP_BAD=new Set(["returned-to-sender","collection-exception","delivery-exception","damaged","under-query","collection-failed-attempt","delivery-failed-attempt","collection-rejected","delivery-rejected"]);
 const shipLabel=st=>{ const t=String(st||"").replace(/-/g," "); return t.charAt(0).toUpperCase()+t.slice(1); };
 const shipPill=st=>SHIP_BAD.has(st)?"s-return_me":st==="delivered"?"s-settled":st==="cancelled"?"s-in_stock":"s-awaiting_fees";
