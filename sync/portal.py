@@ -16,6 +16,8 @@ HERE = Path(__file__).resolve().parent
 DEBUG_DIR = HERE / "debug"
 SALES_URL = "https://sellers.takealot.com/sales"
 RETURNS_URL = "https://sellers.takealot.com/returns"
+OFFERS_URL = "https://sellers.takealot.com/existing-offers/manage-offers"
+LAST_OFFERS: list = []   # offers read on the last run (also saved to debug/offers.json)
 API_HOST = "seller-api.takealot.com"
 SALES_API = "https://seller-api.takealot.com/v2/sales"
 
@@ -50,6 +52,24 @@ def _find_rows(obj):
     return None
 
 
+def _find_list(obj, key):
+    """Find the first list of records that have the given field (or all of a tuple of fields)."""
+    keys = key if isinstance(key, tuple) else (key,)
+    if isinstance(obj, list):
+        if obj and isinstance(obj[0], dict) and all(k in obj[0] for k in keys):
+            return obj
+        for x in obj:
+            r = _find_list(x, key)
+            if r is not None:
+                return r
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            r = _find_list(v, key)
+            if r is not None:
+                return r
+    return None
+
+
 def _total(obj):
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -78,6 +98,8 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
     from playwright.sync_api import sync_playwright
     auth = {}
     returns_calls = []   # (url, json)
+    offer_calls = []     # (url, json)
+    phase = {"now": "sales"}
 
     def on_request(req):
         if API_HOST in req.url and not auth:
@@ -88,9 +110,11 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
     def on_response(r):
         try:
-            if API_HOST in r.url and "return" in r.url.lower() and r.request.method == "GET" \
-                    and "json" in (r.headers.get("content-type") or ""):
-                returns_calls.append((r.url, r.json()))
+            if API_HOST in r.url and r.request.method == "GET" and "json" in (r.headers.get("content-type") or ""):
+                if phase["now"] == "offers":
+                    offer_calls.append((r.url, r.json()))
+                elif "return" in r.url.lower():
+                    returns_calls.append((r.url, r.json()))
         except Exception:
             pass
 
@@ -169,6 +193,29 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 raise
             except Exception as e:
                 log("Returns page couldn't be read: " + repr(e)[:200])
+            # ---- offers (best effort, saved for reference: names, SKUs, stock at Takealot)
+            try:
+                global LAST_OFFERS
+                offers, n = [], 1
+                while n <= 50:
+                    url = (f"https://{API_HOST}/v2/offers/detailed?page_number={n}&page_size=100"
+                           f"&sort_key=date_added&sort_dir=asc&status_ids=1&status_ids=2&status_ids=3")
+                    rr = ctx.request.get(url, headers=auth, timeout=60_000)
+                    if not rr.ok:
+                        log(f"Offers feed answered {rr.status}")
+                        break
+                    got = (rr.json() or {}).get("offers") or []
+                    offers += got
+                    if len(got) < 100:
+                        break
+                    n += 1
+                LAST_OFFERS = offers
+                DEBUG_DIR.mkdir(exist_ok=True)
+                (DEBUG_DIR / "offers.json").write_text(json.dumps({"count": len(offers), "offers": offers,
+                    "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
+                log(f"Read {len(offers)} offer(s) from Takealot.")
+            except Exception as e:
+                log("Offers couldn't be read: " + repr(e)[:200])
             return sales, returns
         finally:
             ctx.close()

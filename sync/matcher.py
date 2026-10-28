@@ -141,6 +141,14 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
     for u in units:
         if u.get("order_id"):
             by_order.setdefault(u["order_id"], []).append(u)
+    # Several Takealot listings can be the same physical product. sku_map gives each SKU's product
+    # group; units are named after the listing they sold on, so map listing titles back to groups.
+    title_group = {}
+    for s0 in sales:
+        g = sku_map.get(s0["sku"])
+        if g and g != IGNORE_PRODUCT and s0.get("product_title"):
+            title_group[s0["product_title"]] = g
+    group = lambda name: title_group.get(name, name)
 
     def upd(u, **fields):
         changed = {k: v for k, v in fields.items() if u.get(k) != v}
@@ -192,6 +200,8 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
                     fields["status"] = "settled" if (per_fees if per_fees is not None else u.get("fees")) is not None else "awaiting_fees"
                 if s["sku"] and not u.get("sku"):
                     fields["sku"] = s["sku"]
+                if s.get("product_title") and sku_map.get(s["sku"]) not in (None, IGNORE_PRODUCT):
+                    fields["product"] = s["product_title"]      # named after the listing it sold on
                 if s["po"] and not u.get("po"):          # PO appears once the unit is sent in
                     fields["po"] = s["po"]
                     if u.get("location") == "HOME" and s["fulfilment_dc"]:
@@ -215,7 +225,7 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
         method = None
         for _ in range(qty):
             pool = [u for u in units if u["status"] == "in_stock" and not u.get("order_id")
-                    and u["product"] == product and u not in picked]
+                    and group(u["product"]) == product and u not in picked]
             cand = []
             if s["po"]:
                 cand = [u for u in pool if u.get("po") == s["po"]]
@@ -243,6 +253,7 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
 
         for u in picked:
             fields = dict(order_id=s["order_id"], sold_date=s["sold_date"], gross=per_gross, fees=per_fees,
+                          product=s.get("product_title") or u["product"],
                           status="settled" if per_fees is not None else "awaiting_fees",
                           sku=s["sku"], match_method=method)
             if method == "po-home":
@@ -293,7 +304,7 @@ def _text(v):
     return str(v or "").strip()
 
 
-WAREHOUSES = {3: "JHB"}   # Takealot warehouse ids seen so far; others are learned from the sale
+WAREHOUSES = {1: "CPT", 3: "JHB", 6: "DBN"}   # Takealot warehouse ids (from the offers stock columns)
 
 
 def parse_returns(items: list[dict]) -> list[dict]:
@@ -401,7 +412,7 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                 if product == IGNORE_PRODUCT:
                     continue
                 for _ in range(max(1, r["qty"])):
-                    nu = {"product": product or r["title"] or f"SKU {r['sku']}", "sku": r["sku"] or None,
+                    nu = {"product": r["title"] or product or f"SKU {r['sku']}", "sku": r["sku"] or None,
                           "status": "return_me", "location": r["dc"] or "HOME", "order_id": r["order_id"],
                           "return_date": r["return_date"], "cost": 0, "supplier": "", "flag": True,
                           "match_method": "return", "source": "sync",
