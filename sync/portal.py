@@ -436,6 +436,44 @@ def fetch_courier(ctx, cfg, log):
                 log(f"Courier Guy: recorded the details view of {pick['waybill']}.")
     except Exception as e:
         log("Courier Guy details discovery: " + repr(e)[:150])
+    # billing: Courier Guy top-ups (payments into the account) -> expenses
+    try:
+        acct = next((sh.get("account", {}).get("id") for sh in shipments if sh.get("account")), None)
+        base = f"{COURIER_API}/billing/transactions?active_only=false&limit=100&provider_id=7" + (f"&account_id={acct}" if acct else "")
+        txns, off = [], 0
+        while off < 20000:
+            rb = ctx.request.get(f"{base}&offset={off}", headers=auth, timeout=60_000)
+            if not rb.ok:
+                log(f"Courier Guy billing answered {rb.status}")
+                break
+            got = (rb.json() or {}).get("transactions") or []
+            txns += got
+            if len(got) < 100:
+                break
+            off += 100
+        since = cfg.get("since") or "2026-10-01"
+        exp = []
+        for t in txns:
+            if t.get("type") != "payment" or t.get("has_been_reversed"):
+                continue
+            day = str(t.get("transaction_date") or t.get("effective_date") or "")[:10]
+            if day < since:
+                continue
+            exp.append({"id": f"courier-{t['id']}", "date": day, "category": "courier_topup",
+                        "amount": round(float(t.get("amount") or 0), 2),
+                        "description": "Courier Guy top-up" + (f" ({t['sub_type']})" if t.get("sub_type") else ""),
+                        "source": "sync", "raw": t})
+        if exp:
+            import stockrecon_sync as S
+            try:
+                S.DB(cfg["url"], cfg["key"]).insert("expenses", exp, upsert_on="id")
+            except RuntimeError as e:
+                log("Courier top-ups: run 6_database_update.sql in Supabase to switch this on." if "expenses" in str(e)
+                    else "Courier top-ups couldn't be saved: " + str(e)[:150])
+                exp = []
+        log(f"Courier Guy: {len(exp)} top-up(s) since {since} saved ({len(txns)} billing lines read).")
+    except Exception as e:
+        log("Courier Guy billing couldn't be read: " + repr(e)[:150])
     page.close()
     if rows:
         import stockrecon_sync as S

@@ -256,6 +256,10 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="sec-head"><h2>Profit by supplier</h2><p id="psSub"></p></div>
       <div class="tscroll"><table id="bySupplier"></table></div>
     </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Courier top-ups</h2><p id="expSub">Read from your Courier Guy account; taken off the month's profit</p></div>
+      <div class="tscroll"><table id="expTable"></table></div>
+    </div>
   </section>
 
   <!-- STOCK -->
@@ -414,7 +418,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -446,6 +450,7 @@ async function start(session){
     .on("postgres_changes",{event:"*",schema:"public",table:"units"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"sync_runs"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"courier_shipments"},()=>debounceLoad())
+    .on("postgres_changes",{event:"*",schema:"public",table:"expenses"},()=>debounceLoad())
     .subscribe();
   clearInterval(start._t); start._t=setInterval(loadAll, 5*60*1000);
 }
@@ -470,6 +475,8 @@ async function loadAll(){
     { const since=new Date(Date.now()-60*864e5).toISOString();
       const {data,error}=await sb.from("courier_shipments").select("*").gte("created_at",since).order("created_at",{ascending:false});
       ships = error ? [] : data; }
+    { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source").order("date",{ascending:false});
+      expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
     buildMonths(); render();
   }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
 }
@@ -522,11 +529,13 @@ function renderOverview(){
   const rets=units.filter(u=>u.status==="return_takealot"||u.status==="return_me");
   const mLabel = state.month==="all" ? "all time" : ($("#month").selectedOptions[0]?.textContent||"");
   const margin = G ? (P/G*100).toFixed(1) : "0.0";
+  const monthExp = expenses.filter(e=>state.month==="all" || String(e.date).slice(0,7)===state.month);
+  const X = monthExp.reduce((a,e)=>a+e.amount,0);
   $("#tiles").innerHTML = `
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
     <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P)}</span><span class="sub">${margin}% of gross${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} courier top-ups`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
     <div class="tile"><span class="lbl">Returns &amp; queries</span><span class="val">${rets.length+units.filter(u=>u.status==="missing_query").length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you · ${units.filter(u=>u.status==="missing_query").length} query open</span></div>`;
 
@@ -586,7 +595,9 @@ function renderOverview(){
     : `<tbody><tr><td class="muted">No sales in ${esc(mLabel)}.</td></tr></tbody>`;
   $("#byProduct").innerHTML=tbl(group("product"),"Product");
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
-  $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}`;
+  $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}, before courier top-ups`;
+  $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(e.description)}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
+    : `<tbody><tr><td class="muted">No courier top-ups in ${esc(mLabel)}.</td></tr></tbody>`;
 }
 $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
 $("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
