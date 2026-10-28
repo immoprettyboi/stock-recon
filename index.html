@@ -174,6 +174,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 .login-card{width:min(380px,100%);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:24px;display:grid;gap:12px}
 .field-stack{display:grid;gap:12px}
 .form-actions .spacer{flex:1}
+.check-act{margin-top:6px}
 .panel{align-content:start}
 #onhand td:first-child,#byProduct td:first-child,#bySupplier td:first-child,#pickTable td:first-child{min-width:170px}
 @media (max-width:760px){.sync{grid-template-columns:auto 1fr}.sync .btn{grid-column:1/-1}.match-item{grid-template-columns:1fr}.match-item .actions{justify-content:flex-start}}
@@ -535,6 +536,7 @@ $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!
 function filtered(){
   const q=state.q.trim().toLowerCase();
   return units.filter(u=>{
+    if(state.only && !state.only.has(u.product)) return false;
     if(state.status && u.status!==state.status) return false;
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
@@ -568,10 +570,10 @@ function renderLedger(){
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
 }
-$("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.status=c.dataset.s; renderLedger();});
-$("#q").addEventListener("input",e=>{state.q=e.target.value; renderLedger();});
-$("#fLoc").addEventListener("change",e=>{state.loc=e.target.value; renderLedger();});
-$("#fSup").addEventListener("change",e=>{state.sup=e.target.value; renderLedger();});
+$("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.only=null; state.status=c.dataset.s; renderLedger();});
+$("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; renderLedger();});
+$("#fLoc").addEventListener("change",e=>{state.only=null; state.loc=e.target.value; renderLedger();});
+$("#fSup").addEventListener("change",e=>{state.only=null; state.sup=e.target.value; renderLedger();});
 $("#fMonth").addEventListener("change",e=>{state.onlyMonth=e.target.checked; renderLedger();});
 for(const el of [$("#ledger"),$("#cards")]){
   el.addEventListener("click",e=>{const r=e.target.closest("[data-id]"); if(r) openEdit(r.dataset.id);});
@@ -649,13 +651,34 @@ function renderCheck(){
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, d=a-(t+w);
       if(d) issues++;
       if(!a&&!t&&!w) return `<td class="num muted">·</td>`;
-      return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div>${d?`<span class="pill ${d>0?"s-return_me":"s-awaiting_fees"}">${d>0?`${d} more in app`:`${-d} more at Takealot`}</span>`:`<span class="pill s-settled">matches</span>`}</td>`; }).join("");
+      return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div>${d?`<span class="pill ${d>0?"s-return_me":"s-awaiting_fees"}">${d>0?`${d} more in app`:`${-d} more at Takealot`}</span>
+        <div class="check-act">${d<0?`<button class="btn primary small" type="button" data-add="${esc(n)}" data-dc="${dc}" data-qty="${-d}">Add to stock</button>`
+                                   :`<button class="btn small" type="button" data-show="${esc(n)}" data-dc="${dc}">Show units</button>`}</div>`
+        :`<span class="pill s-settled">matches</span>`}</td>`; }).join("");
     return `<tr><td>${esc(n)}</td>${cells}</tr>`; }).join("");
   const when=live.reduce((m,p)=>p.stock_updated_at>m?p.stock_updated_at:m,"");
   $("#checkSub").textContent=`Takealot figures from ${ago(when)}`;
   $("#cntCheck").textContent=issues||"";
   $("#checkTable").innerHTML=`<thead><tr><th>Product</th>${DCS.map(d=>`<th class="num">${d}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td class="muted" colspan="4">No stock at Takealot's warehouses.</td></tr>`}</tbody>`;
 }
+
+$("#checkTable").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.add){
+    setView("add");
+    $("#a-product").value=b.dataset.add; $("#a-qty").value=b.dataset.qty; $("#a-location").value=b.dataset.dc;
+    $("#a-supplier").value=""; $("#a-cost").value=""; $("#a-po").value=""; $("#a-received").value=today(); snHint();
+    $("#addMsg").textContent=`From the stock check: Takealot holds ${b.dataset.qty} more at ${b.dataset.dc}. Fill in the supplier and cost, then Add to stock.`;
+    $("#a-supplier").focus(); window.scrollTo({top:0});
+  }
+  if(b.dataset.show){
+    const titles=new Set([b.dataset.show, ...products.filter(p=>p.product===b.dataset.show).map(p=>p.takealot_title)]);
+    state.status="in_stock"; state.loc=b.dataset.dc; state.sup=""; state.onlyMonth=false;
+    state.q=""; $("#q").value=""; $("#fLoc").value=b.dataset.dc; $("#fSup").value=""; $("#fMonth").checked=false;
+    state.only=titles; setView("stock"); renderLedger(); window.scrollTo({top:0});
+    toast(`Showing ${b.dataset.show} in stock at ${b.dataset.dc}. Open one to fix it.`);
+  }
+});
 
 function renderProducts(){
   const names=[...new Set(units.map(u=>u.product))].sort();
