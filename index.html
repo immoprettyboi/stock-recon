@@ -312,8 +312,12 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="tscroll"><table id="shipFrom"></table></div>
     </div>
     <div class="panel">
-      <div class="sec-head"><h2>Going to Takealot</h2><p>Stock you've sent in, linked to units by the PO number in the courier reference</p></div>
+      <div class="sec-head"><h2>Going to Takealot</h2><p>Courier shipments to Takealot, matched to the Takealot PO in the courier reference</p></div>
       <div class="tscroll"><table id="shipTo"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Takealot POs</h2><p>Every shipment you've made to Takealot: what was in it, sent vs received, and what the courier charged</p></div>
+      <div class="tscroll"><table id="poTable"></table></div>
     </div>
   </section>
 
@@ -418,7 +422,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -451,6 +455,7 @@ async function start(session){
     .on("postgres_changes",{event:"*",schema:"public",table:"sync_runs"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"courier_shipments"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"expenses"},()=>debounceLoad())
+    .on("postgres_changes",{event:"*",schema:"public",table:"takealot_pos"},()=>debounceLoad())
     .subscribe();
   clearInterval(start._t); start._t=setInterval(loadAll, 5*60*1000);
 }
@@ -475,6 +480,8 @@ async function loadAll(){
     { const since=new Date(Date.now()-60*864e5).toISOString();
       const {data,error}=await sb.from("courier_shipments").select("*").gte("created_at",since).order("created_at",{ascending:false});
       ships = error ? [] : data; }
+    { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items").order("due_date",{ascending:false});
+      pos = error ? [] : data; }
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
     buildMonths(); render();
@@ -726,19 +733,44 @@ function shipFor(u){
   return null;
 }
 const shipWhen=x=>{ const c=x.expected_collection?`collect ${fd(x.expected_collection)}`:""; const d=x.expected_delivery_from?`deliver ${fd(x.expected_delivery_from)}${x.expected_delivery_to&&x.expected_delivery_to!==x.expected_delivery_from?`–${fd(x.expected_delivery_to)}`:""}`:""; return [c,d].filter(Boolean).join(" · "); };
+const poRow=po=>pos.find(p=>p.po===po);
+const contents=p=>p&&Array.isArray(p.items)&&p.items.length ? p.items.map(i=>`${i.qty} × ${i.title}`).join("; ") : "";
+const courierFor=po=>ships.find(x=>x.direction==="to_takealot" && poOf(x)===po);
+function renderPOs(){
+  const all=$("#shipAll").checked;
+  const L=pos.filter(p=>all || !/received|closed|cancel/i.test(p.status||"") || (Date.now()-new Date(p.due_date))<21*864e5);
+  if(!pos.length){ $("#poTable").innerHTML=`<tbody><tr><td class="muted">Takealot POs appear here after the next sync (run 7_database_update.sql in Supabase first).</td></tr></tbody>`; return; }
+  let tot=0;
+  $("#poTable").innerHTML=`<thead><tr><th>PO</th><th>To</th><th>Due</th><th>Status</th><th>Contents</th><th class="num">Sent</th><th class="num">Received</th><th>Courier</th><th class="num">Courier cost</th><th>Units</th></tr></thead><tbody>${L.map(p=>{
+    const x=courierFor(p.po), cost=x&&x.cost!=null?Number(x.cost):null; if(cost) tot+=cost;
+    const us=units.filter(u=>u.po===p.po).length;
+    const rec=p.qty_received!=null?`${p.qty_received}${p.qty_damaged?` <span class="neg">(${p.qty_damaged} damaged)</span>`:""}`:'<span class="muted">–</span>';
+    return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${esc(p.status||"")}</td>
+      <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
+      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:'<span class="muted">no courier found</span>'}</td>
+      <td class="num">${cost!=null?R(cost):""}</td>
+      <td>${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}</td></tr>`; }).join("")}</tbody>
+    <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
+}
+$("#poTable").addEventListener("click",e=>{ const b=e.target.closest("[data-poq]"); if(!b) return;
+  state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value=""; state.q=b.dataset.poq; $("#q").value=state.q;
+  setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 function renderShips(){
   const all=$("#shipAll").checked;
   const list=ships.filter(x=>all||!SHIP_DONE.has(x.status));
   const table=(rows,dir)=>{ const L=rows.filter(x=>x.direction===dir);
     if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
-    return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
+    return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th>${dir==="to_takealot"?"<th>Contents (Takealot PO)</th>":""}<th class="num">Cost</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
       return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
       <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(shipWhen(x))}</td>
+      ${dir==="to_takealot"?`<td style="min-width:220px">${esc(contents(poRow(poOf(x))))||'<span class="muted">–</span>'}</td>`:""}
+      <td class="num">${x.cost!=null?R(Number(x.cost)):""}</td>
       <td>${us.length?`<button class="btn small" type="button" data-shipunits="${esc(x.id)}">${us.length} unit${us.length>1?"s":""}</button>`:'<span class="muted">–</span>'}</td>
       <td style="min-width:260px">${esc(cleanNote(x.note)).slice(0,220)}</td></tr>`; }).join("")}</tbody>`; };
   $("#shipFrom").innerHTML=table(list,"from_takealot");
   $("#shipTo").innerHTML=table(list,"to_takealot");
   $("#cntShip").textContent=ships.filter(x=>!SHIP_DONE.has(x.status)).length||"";
+  renderPOs();
 }
 $("#shipAll").addEventListener("change",renderShips);
 for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const b=e.target.closest("[data-shipunits]"); if(!b) return;

@@ -251,6 +251,12 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
+            # ---- Takealot shipments (POs) and what was in each
+            try:
+                fetch_takealot_pos(ctx, cfg, auth, log)
+            except Exception as e:
+                log("Takealot shipments couldn't be read: " + repr(e)[:200])
+
             # ---- Courier Guy shipments (best effort; needs COURIER_LOGIN.bat once)
             try:
                 fetch_courier(ctx, cfg, log)
@@ -451,6 +457,13 @@ def fetch_courier(ctx, cfg, log):
             if len(got) < 100:
                 break
             off += 100
+        cost_by_ship = {}
+        for t in txns:
+            if t.get("shipment_id"):
+                cost_by_ship[str(t["shipment_id"])] = cost_by_ship.get(str(t["shipment_id"]), 0) - float(t.get("amount") or 0)
+        for row in rows:
+            if row["id"] in cost_by_ship:
+                row["cost"] = round(cost_by_ship[row["id"]], 2)
         since = cfg.get("since") or "2026-10-01"
         exp = []
         for t in txns:
@@ -477,5 +490,73 @@ def fetch_courier(ctx, cfg, log):
     page.close()
     if rows:
         import stockrecon_sync as S
-        S.DB(cfg["url"], cfg["key"]).insert("courier_shipments", rows, upsert_on="id")
+        db = S.DB(cfg["url"], cfg["key"])
+        keys = set().union(*(r.keys() for r in rows))
+        rows = [{k: r.get(k) for k in keys} for r in rows]          # same columns on every row
+        try:
+            db.insert("courier_shipments", rows, upsert_on="id")
+        except RuntimeError as e:
+            if "cost" in str(e):
+                log("Courier costs: run 7_database_update.sql in Supabase to switch this on.")
+                db.insert("courier_shipments", [{k: v for k, v in r.items() if k != "cost"} for r in rows], upsert_on="id")
+            else:
+                raise
     log(f"Courier Guy: {len(rows)} Takealot shipment(s) saved ({len(shipments)} read).")
+
+
+
+def fetch_takealot_pos(ctx, cfg, auth, log):
+    """Takealot shipments (POs) due from ~6 weeks before the start date, with their product lines."""
+    from datetime import date as _d, timedelta as _td
+    cutoff = (_d.fromisoformat(cfg.get("since") or "2026-10-01") - _td(days=45)).isoformat()
+    ships, pg = [], 1
+    while pg <= 100:
+        r = ctx.request.get(f"https://{API_HOST}/v2/shipments?page_number={pg}&page_size=100", headers=auth, timeout=60_000)
+        if not r.ok:
+            log(f"Takealot shipments feed answered {r.status}")
+            break
+        j = r.json() or {}
+        got = j.get("shipments") or []
+        ships += got
+        total = (j.get("page_summary") or {}).get("total") or 0
+        if not got or len(ships) >= total:
+            break
+        pg += 1
+    def due(sh):
+        ts = ((sh.get("due_date") or {}).get("timestamp"))
+        return datetime.fromtimestamp(ts).date().isoformat() if ts else None
+    recent = [sh for sh in ships if (due(sh) or "") >= cutoff and sh.get("instruction_id")]
+    rows = []
+    for sh in recent:
+        items, po_data = [], sh.get("purchase_order_data") or {}
+        for state in ("", "&shipment_state=3", "&shipment_state=2", "&shipment_state=1"):
+            ri = ctx.request.get(f"https://{API_HOST}/v1/shipment/{sh['shipment_id']}/shipment_items?page_number=1&page_size=100"
+                                 f"&get_instruction_data=true&get_po_data=true{state}", headers=auth, timeout=60_000)
+            if ri.ok:
+                j = ri.json() or {}
+                po_data = ((j.get("shipment") or {}).get("purchase_order_data")) or po_data
+                for it in j.get("shipment_items") or []:
+                    sl = it.get("seller_listing") or {}
+                    q = it.get("quantity") or {}
+                    items.append({"sku": str(sl.get("seller_sku") or ""), "title": sl.get("title") or "",
+                                  "qty": q.get("sending") or q.get("required") or 0,
+                                  "received": (it.get("purchase_order_data") or {}).get("received")})
+                if items:
+                    break
+        qty = sh.get("quantity") or {}
+        num = lambda v: v if isinstance(v, int) and v >= 0 else None
+        rows.append({"po": str(sh["instruction_id"]), "shipment_id": str(sh["shipment_id"]), "reference": sh.get("reference"),
+                     "warehouse": (sh.get("warehouse") or {}).get("name"), "facility": (sh.get("facility") or {}).get("code"),
+                     "due_date": due(sh), "status": po_data.get("status") or ("Shipped" if sh.get("shipped") else "Not shipped"),
+                     "leadtime": sh.get("shipment_type_id") == 1, "qty_sending": qty.get("sending"),
+                     "qty_received": num(po_data.get("received")), "qty_damaged": num(po_data.get("damaged")),
+                     "items": items, "raw": sh, "updated_at": datetime.utcnow().isoformat() + "Z"})
+    if rows:
+        import stockrecon_sync as S
+        try:
+            S.DB(cfg["url"], cfg["key"]).insert("takealot_pos", rows, upsert_on="po")
+        except RuntimeError as e:
+            log("Takealot shipments: run 7_database_update.sql in Supabase to switch this on." if "takealot_pos" in str(e)
+                else "Takealot shipments couldn't be saved: " + str(e)[:150])
+            return
+    log(f"Takealot shipments: {len(rows)} PO(s) saved ({len(ships)} read).")
