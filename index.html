@@ -177,6 +177,9 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 .field-stack{display:grid;gap:12px}
 .form-actions .spacer{flex:1}
 .check-act{margin-top:6px}
+.adam-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
+.adam-bal{font-family:var(--display);font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.lbl-s{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .wait-lines{margin-top:4px;display:grid;gap:1px;font-variant-numeric:tabular-nums}
 .panel{align-content:start}
 #onhand td:first-child,#byProduct td:first-child,#bySupplier td:first-child,#pickTable td:first-child{min-width:170px}
@@ -257,7 +260,13 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="tscroll"><table id="bySupplier"></table></div>
     </div>
     <div class="panel">
-      <div class="sec-head"><h2>Courier top-ups</h2><p id="expSub">Read from your Courier Guy account; taken off the month's profit</p></div>
+      <div class="sec-head"><h2>Delivery costs</h2><p id="expSub">Courier Guy top-ups (read from your account) and Adam's deliveries; taken off the month's profit</p></div>
+      <div class="adam-bar">
+        <div><div class="lbl-s">Adam owes you</div><div class="adam-bal" id="adamBal">–</div><div class="note" id="adamSub"></div></div>
+        <div class="spacer"></div>
+        <button class="btn primary small" type="button" id="adamAdd">Add Adam delivery</button>
+        <button class="btn small" type="button" id="adamSet">Update balance</button>
+      </div>
       <div class="tscroll"><table id="expTable"></table></div>
     </div>
   </section>
@@ -391,6 +400,34 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
   </div>
 </dialog>
 
+<dialog id="adamDlg" aria-labelledby="adamTitle">
+  <div class="dlg-head"><h2 id="adamTitle">Add Adam delivery</h2><div class="spacer"></div><button class="btn" id="adamClose" type="button">Close</button></div>
+  <form class="dlg-body" id="adamForm" autocomplete="off">
+    <div class="grid">
+      <div class="field wide"><label for="ad-po">Takealot PO he delivered</label><select id="ad-po"></select></div>
+      <div class="field"><label for="ad-date">Date</label><input id="ad-date" type="date" required></div>
+      <div class="field"><label for="ad-wrap">Units wrapped</label><input id="ad-wrap" type="number" min="0" step="1" required></div>
+      <div class="field"><label for="ad-fee">Delivery fee (R)</label><input id="ad-fee" type="number" min="0" step="0.01"></div>
+      <div class="field"><label for="ad-rate">Wrapping per unit (R)</label><input id="ad-rate" type="number" min="0" step="0.01"></div>
+      <div class="field wide"><label for="ad-note">Note</label><input id="ad-note" placeholder="Optional"></div>
+    </div>
+    <p class="note" style="margin:0">Total: <b id="ad-total"></b></p>
+    <div class="form-actions"><button class="btn primary" type="submit">Save delivery</button></div>
+  </form>
+</dialog>
+
+<dialog id="balDlg" aria-labelledby="balTitle">
+  <div class="dlg-head"><h2 id="balTitle">Adam's balance</h2><div class="spacer"></div><button class="btn" id="balClose" type="button">Close</button></div>
+  <form class="dlg-body" id="balForm" autocomplete="off">
+    <p class="note" style="margin:0">What Adam owes you right now for the PS5. Deliveries you add after this are taken off it.</p>
+    <div class="grid">
+      <div class="field"><label for="ab-amt">Balance owing (R)</label><input id="ab-amt" type="number" step="0.01" required></div>
+      <div class="field wide"><label for="ab-note">Note</label><input id="ab-note" placeholder="e.g. paid R500 cash"></div>
+    </div>
+    <div class="form-actions"><button class="btn primary" type="submit">Save balance</button></div>
+  </form>
+</dialog>
+
 <div class="toast" id="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -482,7 +519,7 @@ async function loadAll(){
       ships = error ? [] : data; }
     { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items").order("due_date",{ascending:false});
       pos = error ? [] : data; }
-    { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source").order("date",{ascending:false});
+    { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
     buildMonths(); render();
   }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
@@ -536,13 +573,13 @@ function renderOverview(){
   const rets=units.filter(u=>u.status==="return_takealot"||u.status==="return_me");
   const mLabel = state.month==="all" ? "all time" : ($("#month").selectedOptions[0]?.textContent||"");
   const margin = G ? (P/G*100).toFixed(1) : "0.0";
-  const monthExp = expenses.filter(e=>state.month==="all" || String(e.date).slice(0,7)===state.month);
+  const monthExp = expenses.filter(e=>e.category!=="adam_balance" && (state.month==="all" || String(e.date).slice(0,7)===state.month));
   const X = monthExp.reduce((a,e)=>a+e.amount,0);
   $("#tiles").innerHTML = `
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
     <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} courier top-ups`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
     <div class="tile"><span class="lbl">Returns &amp; queries</span><span class="val">${rets.length+units.filter(u=>u.status==="missing_query").length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you · ${units.filter(u=>u.status==="missing_query").length} query open</span></div>`;
 
@@ -603,8 +640,9 @@ function renderOverview(){
   $("#byProduct").innerHTML=tbl(group("product"),"Product");
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
   $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}, before courier top-ups`;
+  renderAdam();
   $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
-    : `<tbody><tr><td class="muted">No courier top-ups in ${esc(mLabel)}.</td></tr></tbody>`;
+    : `<tbody><tr><td class="muted">No delivery costs in ${esc(mLabel)}.</td></tr></tbody>`;
 }
 $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
 $("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
@@ -714,6 +752,46 @@ $("#pickTable").addEventListener("click", async e=>{
 });
 
 /* ---------------- products ---------------- */
+/* ---------------- Adam (delivery driver paying off a PS5) ---------------- */
+const ADAM_FEE=650, ADAM_WRAP=14;
+function adamBalance(){
+  const anchor=expenses.find(e=>e.id==="adam-balance");
+  if(!anchor) return null;
+  const after=expenses.filter(e=>e.category==="adam_delivery" && e.created_at>anchor.created_at).reduce((a,e)=>a+e.amount,0);
+  return {balance:Number((anchor.raw||{}).balance||0)-after, asOf:anchor.date, deliveries:expenses.filter(e=>e.category==="adam_delivery").length};
+}
+function renderAdam(){
+  const b=adamBalance();
+  $("#adamBal").textContent = b ? R(b.balance) : "–";
+  $("#adamBal").className = "adam-bal" + (b && b.balance<0 ? " neg" : "");
+  $("#adamSub").textContent = b ? (b.balance<0 ? `You now owe Adam ${R(-b.balance)}` : `Balance set ${fd(b.asOf)}; each delivery is taken off`) : "Set his balance to start tracking";
+}
+$("#adamAdd").addEventListener("click",()=>{
+  const sel=$("#ad-po"); const recent=pos.filter(p=>!courierFor(p.po)).slice(0,30);
+  sel.innerHTML=`<option value="">No PO / other delivery</option>`+recent.map(p=>`<option value="${esc(p.po)}">${esc(p.po)} · ${esc(p.facility||p.warehouse||"")} · ${fd(p.due_date)} · ${p.qty_sending??"?"} units</option>`).join("");
+  $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value=""; adamCalc();
+  $("#adamDlg").showModal();
+});
+$("#ad-po").addEventListener("change",()=>{ const p=poRow($("#ad-po").value); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; adamCalc(); });
+function adamCalc(){ const t=(Number($("#ad-fee").value)||0)+(Number($("#ad-wrap").value)||0)*(Number($("#ad-rate").value)||0);
+  const b=adamBalance(); $("#ad-total").textContent=`${R(t)}${b?` · Adam's balance goes from ${R(b.balance)} to ${R(b.balance-t)}`:""}`; return t; }
+["ad-fee","ad-wrap","ad-rate"].forEach(id=>$("#"+id).addEventListener("input",adamCalc));
+$("#adamClose").addEventListener("click",()=>$("#adamDlg").close());
+$("#adamForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const po=$("#ad-po").value, wrap=Number($("#ad-wrap").value)||0, fee=Number($("#ad-fee").value)||0, rate=Number($("#ad-rate").value)||0, total=adamCalc();
+  const row={ id:`adam-${po||Date.now()}-${Date.now()}`, date:$("#ad-date").value||today(), category:"adam_delivery", amount:total, source:"app",
+    description:`Adam delivery${po?` · PO ${po}`:""} · ${wrap} unit${wrap===1?"":"s"} wrapped`+($("#ad-note").value.trim()?` · ${$("#ad-note").value.trim()}`:""),
+    raw:{po, wrapped:wrap, delivery_fee:fee, wrap_rate:rate} };
+  const {error}=await sb.from("expenses").insert(row);
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`Adam delivery saved: ${R(total)}`); loadAll(); } });
+$("#adamSet").addEventListener("click",()=>{ const b=adamBalance(); $("#ab-amt").value=b?b.balance.toFixed(2):""; $("#balDlg").showModal(); });
+$("#balClose").addEventListener("click",()=>$("#balDlg").close());
+$("#balForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const v=Number($("#ab-amt").value); if(isNaN(v)) return;
+  const {error}=await sb.from("expenses").upsert({ id:"adam-balance", date:today(), category:"adam_balance", amount:0, source:"app",
+    description:"Adam's balance owing (PS5)", raw:{balance:v, note:$("#ab-note").value.trim()}, created_at:new Date().toISOString() });
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#balDlg").close(); toast(`Adam's balance set to ${R(v)}`); loadAll(); } });
+
 /* ---------------- shipments ---------------- */
 const SHIP_DONE=new Set(["delivered","cancelled","returned-to-sender"]);   // finished: hidden unless "show delivered" is ticked
 const SHIP_BAD=new Set(["returned-to-sender","collection-exception","delivery-exception","damaged","under-query","collection-failed-attempt","delivery-failed-attempt","collection-rejected","delivery-rejected"]);
@@ -743,13 +821,14 @@ function renderPOs(){
   const L=pos.filter(p=>all || !/received|closed|cancel/i.test(p.status||"") || (Date.now()-new Date(p.due_date))<21*864e5);
   if(!pos.length){ $("#poTable").innerHTML=`<tbody><tr><td class="muted">Takealot POs appear here after the next sync (run 7_database_update.sql in Supabase first).</td></tr></tbody>`; return; }
   let tot=0;
-  $("#poTable").innerHTML=`<thead><tr><th>PO</th><th>To</th><th>Due</th><th>Status</th><th>Contents</th><th class="num">Sent</th><th class="num">Received</th><th>Courier</th><th class="num">Courier cost</th><th>Units</th></tr></thead><tbody>${L.map(p=>{
-    const x=courierFor(p.po), cost=x&&x.cost!=null?Number(x.cost):null; if(cost) tot+=cost;
+  $("#poTable").innerHTML=`<thead><tr><th>PO</th><th>To</th><th>Due</th><th>Status</th><th>Contents</th><th class="num">Sent</th><th class="num">Received</th><th>Courier</th><th class="num">Delivery cost</th><th>Units</th></tr></thead><tbody>${L.map(p=>{
+    const x=courierFor(p.po), ad=expenses.find(e=>e.category==="adam_delivery" && (e.raw||{}).po===p.po);
+    const cost=x&&x.cost!=null?Number(x.cost):(ad?ad.amount:null); if(cost) tot+=cost;
     const us=units.filter(u=>u.po===p.po).length;
     const rec=p.qty_received!=null?`${p.qty_received}${p.qty_damaged?` <span class="neg">(${p.qty_damaged} damaged)</span>`:""}`:'<span class="muted">–</span>';
     return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${esc(p.status||"")}</td>
       <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
-      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:'<span class="muted">no courier found</span>'}</td>
+      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>`:'<span class="muted">no courier found</span>'}</td>
       <td class="num">${cost!=null?R(cost):""}</td>
       <td>${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
