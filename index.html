@@ -596,7 +596,7 @@ function renderOverview(){
   $("#byProduct").innerHTML=tbl(group("product"),"Product");
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
   $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}, before courier top-ups`;
-  $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(e.description)}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
+  $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No courier top-ups in ${esc(mLabel)}.</td></tr></tbody>`;
 }
 $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
