@@ -177,6 +177,8 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 .field-stack{display:grid;gap:12px}
 .form-actions .spacer{flex:1}
 .check-act{margin-top:6px}
+.sync2{display:flex;gap:8px;align-items:baseline;margin-top:8px;font-size:13px}
+.dot2{width:8px;height:8px;border-radius:50%;flex:none;transform:translateY(-1px)}
 .adam-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
 .adam-bal{font-family:var(--display);font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 .lbl-s{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
@@ -233,6 +235,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div style="min-width:0">
         <h2 id="syncTitle">Takealot sync</h2>
         <p id="syncMsg">Checking…</p>
+        <div class="sync2"><span class="dot2" id="cDot" aria-hidden="true"></span><span><b id="cTitle">Courier Guy</b> <span class="muted" id="cMsg"></span></span></div>
       </div>
       <button class="btn" type="button" id="syncNow">Sync now</button>
     </div>
@@ -556,6 +559,19 @@ function renderSync(){
   else if(stale){ $("#syncTitle").textContent="Takealot sync: hasn't run lately"; dot.style.background="var(--warn)"; }
   else { $("#syncTitle").textContent="Takealot sync: up to date"; dot.style.background="var(--ok)"; }
   $("#syncMsg").textContent = `Last run ${ago(when)}. ${lastRun.message||""}` + (stale && lastRun.ok!==false ? " Check that the PC is on and the sync is running." : "");
+  const c=courierHealth();
+  $("#cDot").style.background = c.state==="ok"?"var(--ok)":c.state==="bad"?"var(--bad)":"var(--muted)";
+  $("#cTitle").textContent = c.title; $("#cMsg").textContent = c.msg;
+}
+function courierHealth(){
+  if(!ships.length) return {state:"none", title:"Courier Guy: not read yet", msg:"Shipments appear after the next sync."};
+  const last=ships.reduce((m,x)=>x.updated_at>m?x.updated_at:m,"");
+  const run=lastRun && (lastRun.finished_at||lastRun.started_at);
+  const active=ships.filter(x=>!SHIP_DONE.has(x.status)).length;
+  // the Takealot part ran recently but the courier part didn't update with it: Courier Guy needs a login
+  const behind = run && lastRun.ok!==false && (new Date(run)-new Date(last)) > 40*60*1000;
+  if(behind) return {state:"bad", title:"Courier Guy: needs you", msg:`Last read ${ago(last)}. It has probably logged the sync out: on the PC, double-click COURIER_LOGIN.bat in the Sync folder.`};
+  return {state:"ok", title:"Courier Guy: up to date", msg:`Last read ${ago(last)} · ${active} active shipment${active===1?"":"s"}`};
 }
 $("#syncNow").addEventListener("click", async ()=>{
   $("#syncNow").disabled=true;
@@ -586,6 +602,7 @@ function renderOverview(){
   // ---- Needs you: only things that need an action from you
   const items=[];
   if(lastRun && lastRun.ok===false) items.push({go:"overview", tag:"Sync", t:"Takealot sync needs you", d:lastRun.message||""});
+  { const c=courierHealth(); if(c.state==="bad") items.push({go:"overview", tag:"Sync", t:"Courier Guy sync needs you", d:c.msg}); }
   if(sales.length) items.push({go:"match", tag:"Sync", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
   const unlinked=products.filter(p=>!p.product).length;
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
