@@ -394,7 +394,7 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSe
 const STATUS = {
   in_stock:        {label:"In stock",                 short:"In stock"},
   awaiting_fees:   {label:"Sold, awaiting fees",      short:"Awaiting fees"},
-  settled:         {label:"Sold & settled",           short:"Settled"},
+  settled:         {label:"Shipped to customer",      short:"Shipped to customer"},
   return_takealot: {label:"Return to Takealot stock", short:"Return: Takealot"},
   return_me:       {label:"Return to me",             short:"Return: me"},
   missing_query:   {label:"Missing: query with Takealot", short:"Query open"},
