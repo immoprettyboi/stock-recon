@@ -390,7 +390,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null;
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -439,6 +439,9 @@ async function loadAll(){
     ]);
     units=u.map(x=>({...x, gross:num(x.gross), fees:num(x.fees), cost:num(x.cost)||0}));
     sales=s; products=p; lastRun=r[0]||null; loaded=true;
+    { const {data,error}=await sb.from("takealot_sales").select("order_id,sku,qty,sale_status,fulfilment_dc")
+        .in("sale_status",["Shipped Shipment","Confirmed Shipment","New Lead Time Order","Inbound"]).neq("match_status","ignored");
+      pipeline = error ? [] : data; }
     buildMonths(); render();
   }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
 }
@@ -646,9 +649,14 @@ function renderCheck(){
   for(const p of live){ const g=G[p.product]=G[p.product]||{tal:{},way:{},app:{}};
     for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); } }
   units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
+  // units sold on lead-time orders and sent in: Takealot still counts them as on the way / being received
+  const skuGroup={}; products.forEach(p=>skuGroup[p.sku]=p.product);
+  pipeline.forEach(x=>{ const g=G[skuGroup[x.sku]]; if(g && DCS.includes(x.fulfilment_dc)){ g.lead=g.lead||{}; g.lead[x.fulfilment_dc]=(g.lead[x.fulfilment_dc]||0)+(x.qty||1); } });
   let issues=0;
   const rows=Object.entries(G).filter(([n,g])=>DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
-    const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, d=a-(t+w);
+    const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
+      let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;
+      if(!d && leadNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${leadNote} sold on a lead-time order, on its way</div></td>`;
       if(d) issues++;
       if(!a&&!t&&!w) return `<td class="num muted">·</td>`;
       return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div>${d?`<span class="pill ${d>0?"s-return_me":"s-awaiting_fees"}">${d>0?`${d} more in app`:`${-d} more at Takealot`}</span>
