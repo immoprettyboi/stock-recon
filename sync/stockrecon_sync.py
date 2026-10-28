@@ -262,23 +262,25 @@ class NeedsLogin(Exception):
 
 
 # ---------------------------------------------------------------- sync
-UNIT_FIELDS = "id,product,supplier,sku,location,received,po,order_id,status,gross,fees,sold_date,comment,flag,match_method,cost"
+UNIT_FIELDS = "id,product,supplier,sku,location,received,po,order_id,status,gross,fees,sold_date,return_date,comment,flag,match_method,cost"
 
 
 def run_sync(cfg, csv_text: str | None = None, headless=True):
-    # pick up an updated matcher.py without restarting the background sync
-    global parse_export, parse_api, match, suggest_sku_map
-    import importlib, matcher as _m
+    # matcher.py and portal.py are reloaded every run, so updates apply without a restart
+    import importlib, matcher as _m, portal as _p
     importlib.reload(_m)
-    parse_export, parse_api, match, suggest_sku_map = _m.parse_export, _m.parse_api, _m.match, _m.suggest_sku_map
+    importlib.reload(_p)
     db = DB(cfg["url"], cfg["key"])
     run = db.insert("sync_runs", [{"message": "Running"}], returning=True)[0]
     try:
+        returns = []
         if csv_text is None:
-            sales = parse_api(fetch_sales(cfg, headless=headless))
+            raw_sales, raw_returns = _p.fetch_all(cfg, headless, PROFILE_DIR, DOWNLOADS, log)
+            sales = _m.parse_api(raw_sales)
+            returns = _m.parse_returns(raw_returns)
         else:
-            sales = parse_export(csv_text)
-        log(f"Read {len(sales)} sale lines from Takealot.")
+            sales = _m.parse_export(csv_text)
+        log(f"Read {len(sales)} sale lines and {len(returns)} return(s) from Takealot.")
 
         units = db.select("units", f"select={UNIT_FIELDS}")
         for u in units:
@@ -289,9 +291,8 @@ def run_sync(cfg, csv_text: str | None = None, headless=True):
         sku_map = {p["sku"]: p["product"] for p in products if p.get("product")}
 
         # learn SKUs we haven't seen, and list any new ones so you can link them in the app
-        learned = suggest_sku_map(sales, units)
-        new_rows = []
-        known = {p["sku"] for p in products}
+        learned = _m.suggest_sku_map(sales, units)
+        new_rows, known = [], {p["sku"] for p in products}
         for s in sales:
             if s["sku"] and s["sku"] not in known:
                 known.add(s["sku"])
@@ -306,17 +307,24 @@ def run_sync(cfg, csv_text: str | None = None, headless=True):
         skip = {(r["order_id"], r["sku"]) for r in db.select("takealot_sales", "select=order_id,sku,user_ignored&user_ignored=is.true")}
         todo = [s for s in sales if (s["order_id"], s["sku"]) not in skip]
 
-        updates, results = match(todo, units, sku_map, since=cfg["since"])
+        updates, results = _m.match(todo, units, sku_map, since=cfg["since"])
+        r_updates, new_units, notes = _m.apply_returns(returns, units, sku_map)
+        for uid, f in r_updates.items():
+            updates.setdefault(uid, {}).update(f)
+        for n in notes:
+            log("  " + n)
 
-        unit_by_id = {u["id"]: u for u in units}
+        unit_by_id = {u["id"]: u for u in units if u.get("id")}
         for uid, fields in updates.items():
             u = unit_by_id.get(uid, {})
-            interesting = {k: v for k, v in fields.items() if k not in ("sku",)}
+            interesting = {k: v for k, v in fields.items() if k not in ("sku", "comment")}
             if interesting:
                 log(f"  Unit: {u.get('product','?')} ({u.get('supplier') or ''} {u.get('location','')}, in {u.get('received','')}) "
                     f"<- " + ", ".join(f"{k}={v}" for k, v in interesting.items()))
             fields["updated_at"] = datetime.utcnow().isoformat() + "Z"
             db.patch("units", f"id=eq.{uid}", fields)
+        if new_units:
+            db.insert("units", new_units)
         sale_by_key = {(s["order_id"], s["sku"]): s for s in sales}
         for r in results:
             if r["match_status"] == "unmatched":
@@ -344,17 +352,18 @@ def run_sync(cfg, csv_text: str | None = None, headless=True):
 
         matched = sum(1 for r in results if r["match_status"] == "matched")
         unmatched = sum(1 for r in results if r["match_status"] == "unmatched")
-        msg = f"{len(updates)} unit(s) updated" + (f", {unmatched} sale(s) need matching" if unmatched else "")
+        msg = f"{len(updates)} unit(s) updated" + (f", {len(new_units)} added from returns" if new_units else "") \
+              + (f", {unmatched} sale(s) need matching" if unmatched else "")
         db.patch("sync_runs", f"id=eq.{run['id']}", {"finished_at": now, "ok": True, "message": msg,
                                                      "rows_read": len(sales), "matched": matched, "unmatched": unmatched})
         log("Sync done: " + msg)
         return True
-    except NeedsLogin:
-        msg = "Takealot login needed. On the PC, double-click LOGIN.bat in the Stock Recon Sync folder."
-        db.patch("sync_runs", f"id=eq.{run['id']}", {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": False, "message": msg})
-        log(msg)
-        return False
     except Exception as e:
+        if type(e).__name__ == "NeedsLogin":
+            msg = "Takealot login needed. On the PC, double-click LOGIN.bat in the Stock Recon Sync folder."
+            db.patch("sync_runs", f"id=eq.{run['id']}", {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": False, "message": msg})
+            log(msg)
+            return False
         log("Sync failed: " + repr(e))
         log(traceback.format_exc())
         try:

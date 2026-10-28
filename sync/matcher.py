@@ -269,3 +269,130 @@ def suggest_sku_map(sales, units):
         if s["sku"] not in m and s["product_title"].lower() in names:
             m[s["sku"]] = names[s["product_title"].lower()]
     return m
+
+
+# ------------------------------------------------------------------ returns
+def _pick(d: dict, *names, contains=None):
+    low = {k.lower(): v for k, v in d.items()}
+    for n in names:
+        if n in low and low[n] not in (None, ""):
+            return low[n]
+    if contains:
+        for k, v in low.items():
+            if any(c in k for c in contains) and v not in (None, ""):
+                return v
+    return None
+
+
+def _text(v):
+    if isinstance(v, dict):
+        v = _pick(v, "name", "description", "label", "value", "status") or ""
+    return str(v or "").strip()
+
+
+def parse_returns(items: list[dict]) -> list[dict]:
+    """Parse rows from the portal's View Returns feed. Tolerant of field names."""
+    out = []
+    for r in items:
+        oid = _pick(r, "order_id", "orderid")
+        if not oid:
+            continue
+        outcome = _text(_pick(r, "stock_outcome", "outcome", contains=("outcome", "disposition", "stock_status")))
+        rd = _text(_pick(r, "return_date", "date_returned", "created_at", contains=("return_date",)))
+        rdate = None
+        for cand in (rd, rd[:19], rd[:11].strip(), rd[:10]):
+            for fmt in ("%d %b %Y %H:%M:%S", "%d %b %Y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+                try:
+                    rdate = datetime.strptime(cand, fmt).date().isoformat()
+                    break
+                except ValueError:
+                    continue
+            if rdate:
+                break
+        out.append({
+            "order_id": str(oid),
+            "sku": str(_pick(r, "sku") or ""),
+            "title": _text(_pick(r, "product_title", "title")),
+            "qty": int(_pick(r, "quantity", "qty") or 1),
+            "dc": _text(_pick(r, "dc", "return_region", "region", "warehouse", contains=("region",))),
+            "reason": _text(_pick(r, "return_reason", "reason", contains=("reason",))),
+            "outcome": outcome,
+            "return_date": rdate,
+        })
+    return out
+
+
+def outcome_kind(outcome: str) -> str:
+    o = outcome.lower()
+    if "pending" in o:
+        return "pending"
+    if any(w in o for w in ("removal", "return to seller", "returned to seller", "unsellable", "collect", "dispos")):
+        return "removal"
+    if "sellable" in o:
+        return "sellable"
+    return "unknown"
+
+
+def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str]):
+    """
+    Pending sellable stock      -> Return: Takealot (orange)
+    Sellable stock              -> sale reversed, unit back In stock at that warehouse
+    Removal order / to seller   -> Return: me (red); if the unit isn't in your list, it is added
+    Returns (updates {unit_id: fields}, new_units [dict], notes [str]).
+    """
+    updates, new_units, notes = {}, [], []
+    by_order = {}
+    for u in units:
+        if u.get("order_id"):
+            by_order.setdefault(u["order_id"], []).append(u)
+
+    def upd(u, **f):
+        ch = {k: v for k, v in f.items() if u.get(k) != v}
+        if ch:
+            u.update(ch)
+            updates.setdefault(u["id"], {}).update(ch)
+
+    for r in returns:
+        k = outcome_kind(r["outcome"])
+        linked = by_order.get(r["order_id"], [])
+        when = r["return_date"] or ""
+        if k == "unknown":
+            notes.append(f"Return {r['order_id']}: outcome '{r['outcome']}' not recognised, left alone")
+            continue
+        if not linked:
+            if k == "removal":
+                product = sku_map.get(r["sku"])
+                if product == IGNORE_PRODUCT:
+                    continue
+                for _ in range(max(1, r["qty"])):
+                    nu = {"product": product or r["title"] or f"SKU {r['sku']}", "sku": r["sku"] or None,
+                          "status": "return_me", "location": r["dc"] or "HOME", "order_id": r["order_id"],
+                          "return_date": r["return_date"], "cost": 0, "supplier": "", "flag": True,
+                          "match_method": "return", "source": "sync",
+                          "comment": (f"Removal order: Takealot is sending this back to you (order {r['order_id']}, "
+                                      f"{r['reason'] or 'no reason given'}, returned {when}). It wasn't in your stock "
+                                      f"list, so it was added. Enter its supplier and cost.")}
+                    new_units.append(nu)
+                    units.append(nu)
+                    by_order.setdefault(r["order_id"], []).append(nu)
+                notes.append(f"Removal order {r['order_id']} ({r['title']}): added to your stock as coming back to you")
+            continue
+        for u in linked:
+            if k == "pending":
+                if u["status"] not in ("return_takealot", "return_me"):
+                    upd(u, status="return_takealot", return_date=r["return_date"], flag=False,
+                        comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: pending sellable "
+                                 f"stock at Takealot {r['dc']}. " + (u.get("comment") or "")).strip())
+            elif k == "removal":
+                if u["status"] != "return_me" and not (u["status"] == "in_stock" and u.get("location") == "HOME"):
+                    upd(u, status="return_me", return_date=r["return_date"], location=r["dc"] or u.get("location"),
+                        flag=True, comment=(f"Removal order: Takealot is sending this back to you (order {r['order_id']}, "
+                                            f"{r['reason']}), {when}. When it arrives, set Location HOME and In stock. "
+                                            + (u.get("comment") or "")).strip())
+            elif k == "sellable":
+                if u["status"] != "in_stock" or u.get("order_id"):
+                    upd(u, status="in_stock", location=r["dc"] or u.get("location"), order_id="", sold_date=None,
+                        gross=None, fees=None, return_date=r["return_date"], flag=False, match_method=None,
+                        comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: back in Takealot "
+                                 f"sellable stock at {r['dc']}. Sale reversed. " + (u.get("comment") or "")).strip())
+    return updates, new_units, notes
