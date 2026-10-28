@@ -214,8 +214,50 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 (DEBUG_DIR / "offers.json").write_text(json.dumps({"count": len(offers), "offers": offers,
                     "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
                 log(f"Read {len(offers)} offer(s) from Takealot.")
+                save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
             return sales, returns
         finally:
             ctx.close()
+
+
+WAREHOUSE_NAMES = {1: "CPT", 3: "JHB", 6: "DBN"}
+
+
+def save_offer_stock(cfg, offers, log):
+    """Store what Takealot holds per listing and warehouse in the products table (for the app's Stock check).
+    Only listings that are buyable, hold stock, or are already in the products table are saved."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        known = {p["sku"] for p in db.select("products", "select=sku")}
+    except Exception as e:
+        log("Stock check: couldn't read products: " + repr(e)[:150])
+        return
+    now = datetime.utcnow().isoformat() + "Z"
+    rows = []
+    for o in offers:
+        sku = str(o.get("merchant_sku") or "")
+        if not sku:
+            continue
+        status = ((o.get("status") or {}).get("description") or "")
+        total = (o.get("total_takealot_stock") or 0) + (o.get("total_stock_on_way") or 0) + (o.get("total_stock_in_receiving") or 0)
+        if sku not in known and status != "Buyable" and not total:
+            continue
+        stock = {}
+        for w in ((o.get("stock") or {}).get("takealot_warehouse") or []):
+            name = WAREHOUSE_NAMES.get(w.get("takealot_warehouse_id"), str(w.get("takealot_warehouse_id")))
+            stock[name] = {"qty": w.get("quantity") or 0, "on_way": w.get("stock_on_way") or 0,
+                           "receiving": w.get("stock_in_receiving") or 0, "sold_30d": w.get("quantity_sold_30_days") or 0}
+        row = {"sku": sku, "tsin": str(o.get("tsin_id") or ""), "takealot_title": ((o.get("tsin") or {}).get("title") or ""),
+               "takealot_status": status, "takealot_stock": stock, "stock_updated_at": now}
+        rows.append(row)
+    try:
+        if rows:
+            db.insert("products", rows, upsert_on="sku")
+    except RuntimeError as e:
+        if "takealot_stock" in str(e) or "takealot_status" in str(e) or "column" in str(e):
+            log("Stock check: run 3_database_update.sql in Supabase to switch it on.")
+        else:
+            log("Stock check: couldn't save Takealot stock: " + str(e)[:150])

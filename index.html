@@ -210,6 +210,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <button class="tab" role="tab" aria-selected="false" data-view="stock">Stock &amp; sales <span class="n" id="cntAll"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="match">Needs matching <span class="n badge" id="cntMatch"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
     </nav>
   </div>
@@ -287,6 +288,15 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
         <div class="field wide"><label for="a-sn">IMEI / serial numbers</label><textarea id="a-sn" rows="3" placeholder="Optional. One per line, in the same order as the units."></textarea><span class="hint" id="snHint"></span></div>
         <div class="form-actions"><button class="btn primary" type="submit" id="addBtn">Add to stock</button><span class="note" id="addMsg"></span></div>
       </form>
+    </div>
+  </section>
+
+  <!-- STOCK CHECK -->
+  <section id="view-check" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Stock check: app vs Takealot</h2><p id="checkSub"></p></div>
+      <p class="note" style="margin:0;max-width:80ch">For each product and warehouse: units the app has <b>In stock</b> there, next to what Takealot holds, including stock on its way or being received. A red difference means a unit is missing, sold without being recorded, or sitting in the wrong place.</p>
+      <div class="tscroll"><table id="checkTable"></table></div>
     </div>
   </section>
 
@@ -447,7 +457,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -623,6 +633,30 @@ $("#pickTable").addEventListener("click", async e=>{
 });
 
 /* ---------------- products ---------------- */
+/* ---------------- stock check ---------------- */
+function renderCheck(){
+  const DCS=["JHB","CPT","DBN"];
+  const live=products.filter(p=>p.takealot_stock && p.product && p.product!==IGNORE);
+  if(!live.length){ $("#checkTable").innerHTML=`<tbody><tr><td class="muted">Takealot's stock levels appear here after the next sync (run 3_database_update.sql in Supabase first).</td></tr></tbody>`; $("#checkSub").textContent=""; $("#cntCheck").textContent=""; return; }
+  const titleGroup={}; products.forEach(p=>{ if(p.product && p.product!==IGNORE){ titleGroup[p.takealot_title]=p.product; titleGroup[p.product]=p.product; }});
+  const grp=n=>titleGroup[n]||n;
+  const G={};
+  for(const p of live){ const g=G[p.product]=G[p.product]||{tal:{},way:{},app:{}};
+    for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); } }
+  units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
+  let issues=0;
+  const rows=Object.entries(G).filter(([n,g])=>DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
+    const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, d=a-(t+w);
+      if(d) issues++;
+      if(!a&&!t&&!w) return `<td class="num muted">·</td>`;
+      return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div>${d?`<span class="pill ${d>0?"s-return_me":"s-awaiting_fees"}">${d>0?`${d} more in app`:`${-d} more at Takealot`}</span>`:`<span class="pill s-settled">matches</span>`}</td>`; }).join("");
+    return `<tr><td>${esc(n)}</td>${cells}</tr>`; }).join("");
+  const when=live.reduce((m,p)=>p.stock_updated_at>m?p.stock_updated_at:m,"");
+  $("#checkSub").textContent=`Takealot figures from ${ago(when)}`;
+  $("#cntCheck").textContent=issues||"";
+  $("#checkTable").innerHTML=`<thead><tr><th>Product</th>${DCS.map(d=>`<th class="num">${d}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td class="muted" colspan="4">No stock at Takealot's warehouses.</td></tr>`}</tbody>`;
+}
+
 function renderProducts(){
   const names=[...new Set(units.map(u=>u.product))].sort();
   const list=[...products].sort((a,b)=>(a.product?1:0)-(b.product?1:0) || (a.takealot_title||"").localeCompare(b.takealot_title||""));
@@ -652,7 +686,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderCheck(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */
