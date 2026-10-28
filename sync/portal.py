@@ -17,6 +17,7 @@ DEBUG_DIR = HERE / "debug"
 SALES_URL = "https://sellers.takealot.com/sales"
 RETURNS_URL = "https://sellers.takealot.com/returns"
 OFFERS_URL = "https://sellers.takealot.com/existing-offers/manage-offers"
+COURIER_URL = "https://portal.thecourierguy.co.za/shipments"
 LAST_OFFERS: list = []   # offers read on the last run (also saved to debug/offers.json)
 API_HOST = "seller-api.takealot.com"
 SALES_API = "https://seller-api.takealot.com/v2/sales"
@@ -250,6 +251,11 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
+            # ---- Courier Guy shipments (best effort; needs COURIER_LOGIN.bat once)
+            try:
+                fetch_courier(ctx, cfg, log)
+            except Exception as e:
+                log("Courier Guy couldn't be read: " + repr(e)[:200])
             return sales, returns
         finally:
             ctx.close()
@@ -294,3 +300,144 @@ def save_offer_stock(cfg, offers, log):
             log("Stock check: run 3_database_update.sql in Supabase to switch it on.")
         else:
             log("Stock check: couldn't save Takealot stock: " + str(e)[:150])
+
+
+COURIER_API = "https://api.portal.thecourierguy.co.za"
+
+
+def _dc_of(addr: str) -> str:
+    a = (addr or "").lower()
+    if "takealot" not in a and "tal " not in a:
+        return ""
+    if "cape town" in a or "cpt" in a or "montague" in a:
+        return "CPT"
+    if "durban" in a or "dbn" in a or "kzn" in a:
+        return "DBN"
+    if "jhb" in a or "johannesburg" in a or "witfontein" in a or "gp," in a:
+        return "JHB"
+    return "?"
+
+
+def _first(d, *keys):
+    for k in keys:
+        v = d.get(k) if isinstance(d, dict) else None
+        if v not in (None, "", []):
+            return v
+    return None
+
+
+def fetch_courier(ctx, cfg, log):
+    """Read Courier Guy shipments to/from Takealot warehouses (last 60 days) and save them to courier_shipments."""
+    auth = {}
+    page = ctx.new_page()
+
+    def on_req(r):
+        if COURIER_API in r.url and not auth:
+            h = {k: v for k, v in r.headers.items() if k.lower() == "authorization"}
+            if h:
+                auth.update(h)
+    page.on("request", on_req)
+    page.goto(COURIER_URL, wait_until="domcontentloaded", timeout=90_000)
+    for _ in range(30):
+        if auth:
+            break
+        page.wait_for_timeout(500)
+    if not auth or page.locator("input[type=password]").count() or "login" in page.url.lower():
+        log("Courier Guy login needed: double-click COURIER_LOGIN.bat in the Sync folder.")
+        page.close()
+        return
+    from urllib.parse import quote
+    shipments, off = [], 0
+    while off < 1000:
+        q = (f"{COURIER_API}/shipments?date_filter=time_created&absolute_query={quote('last 60 days')}"
+             f"&offset={off}&limit=100&order_by=time_created&order=DESC&summary=shipment&provider_id=7")
+        r = ctx.request.get(q, headers=auth, timeout=60_000)
+        if not r.ok:
+            log(f"Courier Guy shipments feed answered {r.status}")
+            break
+        got = (r.json() or {}).get("shipments") or []
+        shipments += got
+        if len(got) < 100:
+            break
+        off += 100
+    rows, details_saved = [], False
+    for sh in shipments:
+        col = ((sh.get("collection_address") or {}).get("entered_address") or "")
+        dlv = ((sh.get("delivery_address") or {}).get("entered_address") or "")
+        dc_to, dc_from = _dc_of(dlv), _dc_of(col)
+        if not dc_to and not dc_from:
+            continue                                   # not a Takealot shipment
+        direction = "to_takealot" if dc_to else "from_takealot"
+        detail, notes = {}, []
+        if sh.get("status") not in ("delivered", "cancelled"):
+            try:
+                rd = ctx.request.get(f"{COURIER_API}/shipments?id={sh['id']}&provider_id=7", headers=auth, timeout=60_000)
+                if rd.ok:
+                    j = rd.json() or {}
+                    lst = j.get("shipments") if isinstance(j, dict) else None
+                    detail = (lst[0] if lst else j) if isinstance(j, dict) else {}
+                if sh.get("external_note_count") or sh.get("total_note_count"):
+                    rn = ctx.request.get(f"{COURIER_API}/shipments/notes/external?shipment_id={sh['id']}&offset=0&limit=30&provider_id=7",
+                                         headers=auth, timeout=60_000)
+                    if rn.ok:
+                        notes = (rn.json() or {}).get("shipment_notes") or []
+                if not details_saved:
+                    DEBUG_DIR.mkdir(exist_ok=True)
+                    (DEBUG_DIR / "courier_detail.json").write_text(json.dumps({"detail": detail, "notes": notes},
+                                                                             indent=1, default=str)[:60000], encoding="utf-8")
+                    details_saved = True
+            except Exception as e:
+                log("Courier Guy detail couldn't be read: " + repr(e)[:150])
+        d = {**sh, **detail}
+        note_texts = []
+        for n in notes if isinstance(notes, list) else []:
+            t = _first(n, "message", "note", "content", "text", "body") if isinstance(n, dict) else str(n)
+            if t:
+                import re as _re
+                t = _re.sub(r"<[^>]+>", " ", str(t))
+                t = _re.sub(r"(\d{4})(CONFIRMED|PENDING|RESCHEDULED)", r"\1 \2 ", t)
+                t = _re.sub(r"^(COLLECTION|DELIVERY)(\d)", r"\1 \2", t.strip())
+                note_texts.append(" ".join(t.split()))
+        reason = _first(d, "collection_rescheduled_reason", "reason_for_reschedule", "requested_date_change_reason")
+        if reason:
+            note_texts.insert(0, f"Collection date changed: {reason}")
+        exp_col = _first(d, "collection_min_date", "estimated_collection")
+        exp_from = _first(d, "estimated_delivery_from", "estimated_delivery_date_from")
+        exp_to = _first(d, "estimated_delivery_to", "estimated_delivery_date_to")
+        dmin = _first(d, "delivery_min_date")
+        if not exp_from and dmin and (not exp_col or str(dmin)[:10] >= str(exp_col)[:10]):
+            exp_from = dmin
+        rows.append({
+            "id": str(sh["id"]), "waybill": sh.get("short_tracking_reference"), "reference": sh.get("customer_reference") or "",
+            "status": sh.get("status"), "direction": direction, "takealot_dc": dc_to or dc_from,
+            "collection_name": col.split(",")[0], "delivery_name": dlv.split(",")[0],
+            "service": sh.get("service_level_code"), "parcels": len(sh.get("parcels") or []) or None,
+            "created_at": sh.get("time_created"),
+            "expected_collection": str(exp_col)[:10] if exp_col else None,
+            "expected_delivery_from": str(exp_from)[:10] if exp_from else None,
+            "expected_delivery_to": str(exp_to)[:10] if exp_to else None,
+            "delivered_at": _first(d, "delivered_date", "time_delivered", "delivery_date") if sh.get("status") == "delivered" else None,
+            "note": " | ".join(note_texts + ([sh["latest_tracking_message"]] if sh.get("latest_tracking_message") else []))[:1000],
+            "raw": {k: v for k, v in d.items() if k not in ("rates",)},
+            "updated_at": datetime.utcnow().isoformat() + "Z",
+        })
+    # one-off discovery: open one shipment's details view and record the data calls it makes
+    try:
+        if not (DEBUG_DIR / "courier_click.json").exists():
+            seen = []
+            page.on("response", lambda r: seen.append({"url": r.url, "status": r.status, "body": (r.text()[:6000] if "json" in (r.headers.get("content-type") or "") else "")})
+                    if COURIER_API in r.url else None)
+            pick = next((x for x in rows if x["direction"] == "from_takealot" and x["status"] not in ("delivered", "cancelled")), rows[0] if rows else None)
+            if pick:
+                page.get_by_text(pick["waybill"], exact=True).first.click(timeout=15_000)
+                page.wait_for_timeout(5000)
+                (DEBUG_DIR / "courier_click.json").write_text(json.dumps({"waybill": pick["waybill"], "page": page.url, "calls": seen},
+                                                                        indent=1), encoding="utf-8")
+                log(f"Courier Guy: recorded the details view of {pick['waybill']}.")
+    except Exception as e:
+        log("Courier Guy details discovery: " + repr(e)[:150])
+    page.close()
+    if rows:
+        import stockrecon_sync as S
+        S.DB(cfg["url"], cfg["key"]).insert("courier_shipments", rows, upsert_on="id")
+    log(f"Courier Guy: {len(rows)} Takealot shipment(s) saved ({len(shipments)} read).")

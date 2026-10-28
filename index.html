@@ -214,6 +214,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <button class="tab" role="tab" aria-selected="false" data-view="stock">Stock &amp; sales <span class="n" id="cntAll"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="match">Needs matching <span class="n badge" id="cntMatch"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="ship">Shipments <span class="n" id="cntShip"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
     </nav>
@@ -296,6 +297,19 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
         <div class="field wide"><label for="a-sn">IMEI / serial numbers</label><textarea id="a-sn" rows="3" placeholder="Optional. One per line, in the same order as the units."></textarea><span class="hint" id="snHint"></span></div>
         <div class="form-actions"><button class="btn primary" type="submit" id="addBtn">Add to stock</button><span class="note" id="addMsg"></span></div>
       </form>
+    </div>
+  </section>
+
+  <!-- SHIPMENTS -->
+  <section id="view-ship" class="stack" hidden>
+    <div class="filters"><label class="note inline"><input type="checkbox" id="shipAll"> Show delivered and cancelled too</label></div>
+    <div class="panel">
+      <div class="sec-head"><h2>Coming from Takealot</h2><p>Returns and removal orders the courier is bringing to you</p></div>
+      <div class="tscroll"><table id="shipFrom"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Going to Takealot</h2><p>Stock you've sent in, linked to units by the PO number in the courier reference</p></div>
+      <div class="tscroll"><table id="shipTo"></table></div>
     </div>
   </section>
 
@@ -400,7 +414,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -431,6 +445,7 @@ async function start(session){
   channel = sb.channel("live")
     .on("postgres_changes",{event:"*",schema:"public",table:"units"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"sync_runs"},()=>debounceLoad())
+    .on("postgres_changes",{event:"*",schema:"public",table:"courier_shipments"},()=>debounceLoad())
     .subscribe();
   clearInterval(start._t); start._t=setInterval(loadAll, 5*60*1000);
 }
@@ -452,6 +467,9 @@ async function loadAll(){
     { const {data,error}=await sb.from("takealot_sales").select("order_id,sku,qty,sale_status,fulfilment_dc")
         .in("sale_status",["Shipped Shipment","Confirmed Shipment","New Lead Time Order","Inbound"]).neq("match_status","ignored");
       pipeline = error ? [] : data; }
+    { const since=new Date(Date.now()-60*864e5).toISOString();
+      const {data,error}=await sb.from("courier_shipments").select("*").gte("created_at",since).order("created_at",{ascending:false});
+      ships = error ? [] : data; }
     buildMonths(); render();
   }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
 }
@@ -471,7 +489,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","ship","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -522,6 +540,9 @@ function renderOverview(){
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
+  ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<45*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
+  const arrears=ships.find(x=>/arrear/i.test(x.note||""));
+  if(arrears) items.push({go:"ship", tag:"Courier", t:"The Courier Guy says your account is in arrears", d:cleanNote(arrears.note).replace(/^.*?(Please note that your account)/i,"$1").slice(0,160)});
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
     <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:`data-go="${i.go}"`}>
@@ -540,8 +561,9 @@ function renderOverview(){
       line:u=>`${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`, sum:()=>"Takealot is checking if they're sellable"},
     {s:"missing_query", t:"Queries open with Takealot", list:waitUnits.filter(u=>u.status==="missing_query"),
       line:u=>`${u.location}${u.query_date?` · sent ${fd(u.query_date)}`:""}${u.query_ref?` · ref ${u.query_ref}`:""}`, sum:()=>"Update the unit when Takealot answers"},
-    {s:"return_me", t:"Coming back to you", list:waitUnits.filter(u=>u.status==="return_me"),
-      line:u=>`${u.order_id||"–"} · from ${u.location}`, sum:()=>"Set to HOME and In stock when it arrives"},
+    {s:"return_me", t:"Coming back to you", list:units.filter(u=>u.status==="return_me"),
+      line:u=>{ const x=shipFor(u); return `${u.order_id||"–"} · from ${u.location}${x?` · ${x.waybill} ${shipLabel(x.status).toLowerCase()}${shipWhen(x)?` · ${shipWhen(x)}`:""}`:" · no courier booked yet"}`; },
+      sum:()=>"Set to HOME and In stock when it arrives"},
   ].filter(g=>g.list.length);
   $("#wait").innerHTML = groups.length ? groups.map(g=>`
     <button class="attn-item" type="button" data-status="${g.s}">
@@ -674,6 +696,47 @@ $("#pickTable").addEventListener("click", async e=>{
 });
 
 /* ---------------- products ---------------- */
+/* ---------------- shipments ---------------- */
+const SHIP_DONE=new Set(["delivered","cancelled"]);
+const SHIP_BAD=new Set(["returned-to-sender","collection-exception","delivery-exception","damaged","under-query","collection-failed-attempt","delivery-failed-attempt","collection-rejected","delivery-rejected"]);
+const shipLabel=st=>{ const t=String(st||"").replace(/-/g," "); return t.charAt(0).toUpperCase()+t.slice(1); };
+const shipPill=st=>SHIP_BAD.has(st)?"s-return_me":st==="delivered"?"s-settled":st==="cancelled"?"s-in_stock":"s-awaiting_fees";
+const poOf=x=>(String(x.reference||"").match(/\d{6,}/)||[""])[0];
+const cleanNote=t=>String(t||"").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();
+function shipUnits(x){
+  if(x.direction==="to_takealot"){ const po=poOf(x); return po?units.filter(u=>u.po===po):[]; }
+  if(x.direction==="from_takealot" && !SHIP_DONE.has(x.status)) return units.filter(u=>u.status==="return_me" && u.location===x.takealot_dc);
+  return [];
+}
+function shipFor(u){
+  const live=ships.filter(x=>!SHIP_DONE.has(x.status));
+  if(u.status==="return_me") return live.find(x=>x.direction==="from_takealot" && x.takealot_dc===u.location);
+  if(u.po) return ships.find(x=>x.direction==="to_takealot" && poOf(x)===u.po);
+  return null;
+}
+const shipWhen=x=>{ const c=x.expected_collection?`collect ${fd(x.expected_collection)}`:""; const d=x.expected_delivery_from?`deliver ${fd(x.expected_delivery_from)}${x.expected_delivery_to&&x.expected_delivery_to!==x.expected_delivery_from?`–${fd(x.expected_delivery_to)}`:""}`:""; return [c,d].filter(Boolean).join(" · "); };
+function renderShips(){
+  const all=$("#shipAll").checked;
+  const list=ships.filter(x=>all||!SHIP_DONE.has(x.status));
+  const table=(rows,dir)=>{ const L=rows.filter(x=>x.direction===dir);
+    if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
+    return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
+      return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
+      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(shipWhen(x))}</td>
+      <td>${us.length?`<button class="btn small" type="button" data-shipunits="${esc(x.id)}">${us.length} unit${us.length>1?"s":""}</button>`:'<span class="muted">–</span>'}</td>
+      <td style="min-width:260px">${esc(cleanNote(x.note)).slice(0,220)}</td></tr>`; }).join("")}</tbody>`; };
+  $("#shipFrom").innerHTML=table(list,"from_takealot");
+  $("#shipTo").innerHTML=table(list,"to_takealot");
+  $("#cntShip").textContent=ships.filter(x=>!SHIP_DONE.has(x.status)).length||"";
+}
+$("#shipAll").addEventListener("change",renderShips);
+for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const b=e.target.closest("[data-shipunits]"); if(!b) return;
+  const x=ships.find(s=>s.id===b.dataset.shipunits); const ids=new Set(shipUnits(x).map(u=>u.product));
+  state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value="";
+  const po=poOf(x); state.q = x.direction==="to_takealot" ? po : ""; $("#q").value=state.q;
+  if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
+  setView("stock"); renderLedger(); window.scrollTo({top:0}); });
+
 /* ---------------- stock check ---------------- */
 function renderCheck(){
   const DCS=["JHB","CPT","DBN"];
@@ -755,7 +818,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderCheck(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */
@@ -776,7 +839,8 @@ function openEdit(id){
   set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); $("#e-flag").checked=!!u.flag;
   $("#eConfirm").hidden=true;
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
-  $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
+  const sx=shipFor(u);
+  $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", sx?`Courier Guy ${sx.waybill}: ${shipLabel(sx.status).toLowerCase()}${shipWhen(sx)?`, ${shipWhen(sx)}`:""}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
   calcBox(); $("#dlg").showModal();
 }
 $("#dlgClose").addEventListener("click",()=>$("#dlg").close());
