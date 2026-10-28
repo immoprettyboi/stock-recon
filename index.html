@@ -412,7 +412,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="field wide"><label for="ad-note">Note</label><input id="ad-note" placeholder="Optional"></div>
     </div>
     <p class="note" style="margin:0">Total: <b id="ad-total"></b></p>
-    <div class="form-actions"><button class="btn primary" type="submit">Save delivery</button></div>
+    <div class="form-actions"><button class="btn primary" type="submit">Save delivery</button><div class="spacer"></div><button class="btn" type="button" id="adNotAdam" hidden>Not Adam: someone else delivered it</button></div>
   </form>
 </dialog>
 
@@ -573,7 +573,7 @@ function renderOverview(){
   const rets=units.filter(u=>u.status==="return_takealot"||u.status==="return_me");
   const mLabel = state.month==="all" ? "all time" : ($("#month").selectedOptions[0]?.textContent||"");
   const margin = G ? (P/G*100).toFixed(1) : "0.0";
-  const monthExp = expenses.filter(e=>e.category!=="adam_balance" && (state.month==="all" || String(e.date).slice(0,7)===state.month));
+  const monthExp = expenses.filter(e=>e.category!=="adam_balance" && e.category!=="delivery_other" && (state.month==="all" || String(e.date).slice(0,7)===state.month));
   const X = monthExp.reduce((a,e)=>a+e.amount,0);
   $("#tiles").innerHTML = `
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
@@ -594,10 +594,11 @@ function renderOverview(){
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
+  undeliveredPOs().forEach(p=>items.push({adampo:p.po, tag:"Delivery", t:`Who delivered PO ${p.po}?`, d:`${p.qty_sending??"?"} unit${p.qty_sending===1?"":"s"} to ${p.facility||p.warehouse||""} · ${contents(p)} · no Courier Guy booking found. If Adam took it, record it here.`}));
   ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
-    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:`data-go="${i.go}"`}>
+    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.adampo?`data-adampo="${esc(i.adampo)}"`:`data-go="${i.go}"`}>
       <span class="pill ${i.u?"s-"+i.u.status:"s-awaiting_fees"}">${esc(i.tag)}</span>
       <span><div class="t">${esc(i.t)}</div><div class="d">${esc(i.d)}</div></span>
       <span class="muted" aria-hidden="true">›</span>
@@ -644,7 +645,7 @@ function renderOverview(){
   $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No delivery costs in ${esc(mLabel)}.</td></tr></tbody>`;
 }
-$("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
+$("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.adampo) openAdam(b.dataset.adampo); else if(b.dataset.go) setView(b.dataset.go);});
 $("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
   state.only=null; state.status=b.dataset.status; state.loc=""; state.sup=""; state.q=""; $("#q").value=""; $("#fLoc").value=""; $("#fSup").value="";
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
@@ -766,12 +767,24 @@ function renderAdam(){
   $("#adamBal").className = "adam-bal" + (b && b.balance<0 ? " neg" : "");
   $("#adamSub").textContent = b ? (b.balance<0 ? `You now owe Adam ${R(-b.balance)}` : `Balance set ${fd(b.asOf)}; each delivery is taken off`) : "Set his balance to start tracking";
 }
-$("#adamAdd").addEventListener("click",()=>{
+function undeliveredPOs(){
+  const recorded=new Set(expenses.filter(e=>/^(adam_delivery|delivery_other)$/.test(e.category)).map(e=>(e.raw||{}).po).filter(Boolean));
+  return pos.filter(p=>p.due_date>="2026-10-01" && /ship|receiv/i.test(p.status||"") && !courierFor(p.po) && !recorded.has(p.po));
+}
+$("#adamAdd").addEventListener("click",()=>openAdam(""));
+function openAdam(po){
   const sel=$("#ad-po"); const recent=pos.filter(p=>!courierFor(p.po)).slice(0,30);
   sel.innerHTML=`<option value="">No PO / other delivery</option>`+recent.map(p=>`<option value="${esc(p.po)}">${esc(p.po)} · ${esc(p.facility||p.warehouse||"")} · ${fd(p.due_date)} · ${p.qty_sending??"?"} units</option>`).join("");
-  $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value=""; adamCalc();
+  $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value="";
+  if(po){ sel.value=po; const p=poRow(po); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; }
+  $("#adNotAdam").hidden=!po; adamCalc();
   $("#adamDlg").showModal();
-});
+}
+$("#adNotAdam").addEventListener("click",async()=>{
+  const po=$("#ad-po").value; if(!po) return;
+  const {error}=await sb.from("expenses").insert({ id:`other-${po}`, date:today(), category:"delivery_other", amount:0, source:"app",
+    description:`PO ${po} delivered another way (no cost recorded)`, raw:{po} });
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`PO ${po} marked as not Adam`); loadAll(); } });
 $("#ad-po").addEventListener("change",()=>{ const p=poRow($("#ad-po").value); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; adamCalc(); });
 function adamCalc(){ const t=(Number($("#ad-fee").value)||0)+(Number($("#ad-wrap").value)||0)*(Number($("#ad-rate").value)||0);
   const b=adamBalance(); $("#ad-total").textContent=`${R(t)}${b?` · Adam's balance goes from ${R(b.balance)} to ${R(b.balance-t)}`:""}`; return t; }
