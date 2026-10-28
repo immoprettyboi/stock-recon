@@ -177,6 +177,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 .field-stack{display:grid;gap:12px}
 .form-actions .spacer{flex:1}
 .check-act{margin-top:6px}
+.wait-lines{margin-top:4px;display:grid;gap:1px;font-variant-numeric:tabular-nums}
 .panel{align-content:start}
 #onhand td:first-child,#byProduct td:first-child,#bySupplier td:first-child,#pickTable td:first-child{min-width:170px}
 @media (max-width:760px){.sync{grid-template-columns:auto 1fr}.sync .btn{grid-column:1/-1}.match-item{grid-template-columns:1fr}.match-item .actions{justify-content:flex-start}}
@@ -234,13 +235,17 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
     <div class="tiles" id="tiles"></div>
     <div class="cols">
       <div class="panel">
-        <div class="sec-head"><h2>Needs attention</h2><p id="attnSub"></p></div>
+        <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
         <div class="attn" id="attn"></div>
       </div>
       <div class="panel">
-        <div class="sec-head"><h2>Stock on hand</h2><p>Units not yet sold, by where they are</p></div>
-        <div class="tscroll"><table id="onhand"></table></div>
+        <div class="sec-head"><h2>Waiting on Takealot</h2><p id="waitSub">Nothing for you to do; it updates on its own</p></div>
+        <div class="attn" id="wait"></div>
       </div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Stock on hand</h2><p>Units not yet sold, by where they are</p></div>
+      <div class="tscroll"><table id="onhand"></table></div>
     </div>
     <div class="panel">
       <div class="sec-head"><h2>Profit by product</h2><p id="ppSub"></p></div>
@@ -339,7 +344,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="field"><label for="e-qdate">Query sent to Takealot</label><input id="e-qdate" type="date"></div>
       <div class="field"><label for="e-qref">Query / ticket number</label><input id="e-qref" placeholder="e.g. ticket number"></div>
       <div class="field wide"><label for="e-comment">Comment</label><textarea id="e-comment" rows="2"></textarea></div>
-      <label class="note inline wide"><input type="checkbox" id="e-flag"> Keep on the "Needs attention" list</label>
+      <label class="note inline wide"><input type="checkbox" id="e-flag"> Keep on the "Needs you" list</label>
     </div>
     <div class="note" id="eAudit"></div>
     <div class="form-actions">
@@ -507,22 +512,44 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
     <div class="tile"><span class="lbl">Returns &amp; queries</span><span class="val">${rets.length+units.filter(u=>u.status==="missing_query").length}</span><span class="sub">${rets.filter(u=>u.status==="return_me").length} coming back to you · ${units.filter(u=>u.status==="missing_query").length} query open</span></div>`;
 
+  // ---- Needs you: only things that need an action from you
   const items=[];
-  if(sales.length) items.push({match:true, s:"awaiting_fees", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
+  if(lastRun && lastRun.ok===false) items.push({go:"overview", tag:"Sync", t:"Takealot sync needs you", d:lastRun.message||""});
+  if(sales.length) items.push({go:"match", tag:"Sync", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
   const unlinked=products.filter(p=>!p.product).length;
-  if(unlinked) items.push({prod:true, s:"awaiting_fees", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
-  units.filter(u=>u.flag).forEach(u=>items.push({u, s:u.status, t:`Check · ${u.product}`, d:u.comment||""}));
-  units.filter(u=>u.status==="missing_query" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Query with Takealot · ${u.product}`, d:`Missing at ${u.location}${u.query_date?` · query sent ${fd(u.query_date)}`:""}${u.query_ref?` · ref ${u.query_ref}`:""}`}));
-  units.filter(u=>u.status==="return_me" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Coming back to you · ${u.product}`, d:`Order ${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`}));
-  units.filter(u=>u.status==="awaiting_fees" && !u.flag).forEach(u=>items.push({u, s:u.status, t:`Fees not in yet · ${u.product}`, d:`Order ${u.order_id} · sold ${fd(u.sold_date)} · ${R(u.gross)}`}));
+  if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
+  const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
+  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
+  units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
+  units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
-    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.match?'data-go="match"':'data-go="products"'}>
-      <span class="pill s-${i.s}">${i.u?STATUS[i.s].short:"Sync"}</span>
+    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:`data-go="${i.go}"`}>
+      <span class="pill ${i.u?"s-"+i.u.status:"s-awaiting_fees"}">${esc(i.tag)}</span>
       <span><div class="t">${esc(i.t)}</div><div class="d">${esc(i.d)}</div></span>
       <span class="muted" aria-hidden="true">›</span>
-    </button>`).join("") + (items.length>14?`<p class="note">and ${items.length-14} more in Stock &amp; sales</p>`:"")
-    : `<div class="empty">Nothing waiting. Fees, returns and sales to match show up here.</div>`;
+    </button>`).join("") + (items.length>14?`<p class="note">and ${items.length-14} more</p>`:"")
+    : `<div class="empty">Nothing needs you right now.</div>`;
+
+  // ---- Waiting on Takealot: grouped, no action needed
+  const waitUnits=units.filter(u=>!u.flag && !(u.order_id && toSend.has(u.order_id)));
+  const groups=[
+    {s:"awaiting_fees", t:"Fees not charged yet", list:waitUnits.filter(u=>u.status==="awaiting_fees"),
+      line:u=>`${u.order_id} · ${fd(u.sold_date)} · ${R(u.gross)}`, sum:L=>`${R(L.reduce((a,u)=>a+(u.gross||0),0))} in sales; fees appear once shipped`},
+    {s:"return_takealot", t:"Returns pending at Takealot", list:waitUnits.filter(u=>u.status==="return_takealot"),
+      line:u=>`${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`, sum:()=>"Takealot is checking if they're sellable"},
+    {s:"missing_query", t:"Queries open with Takealot", list:waitUnits.filter(u=>u.status==="missing_query"),
+      line:u=>`${u.location}${u.query_date?` · sent ${fd(u.query_date)}`:""}${u.query_ref?` · ref ${u.query_ref}`:""}`, sum:()=>"Update the unit when Takealot answers"},
+    {s:"return_me", t:"Coming back to you", list:waitUnits.filter(u=>u.status==="return_me"),
+      line:u=>`${u.order_id||"–"} · from ${u.location}`, sum:()=>"Set to HOME and In stock when it arrives"},
+  ].filter(g=>g.list.length);
+  $("#wait").innerHTML = groups.length ? groups.map(g=>`
+    <button class="attn-item" type="button" data-status="${g.s}">
+      <span class="pill s-${g.s}">${g.list.length}</span>
+      <span><div class="t">${esc(g.t)}</div><div class="d">${esc(g.sum(g.list))}</div>
+        <div class="d wait-lines">${g.list.slice(0,4).map(u=>`<div>${esc(u.product.length>42?u.product.slice(0,40)+"…":u.product)} · ${esc(g.line(u))}</div>`).join("")}${g.list.length>4?`<div>+${g.list.length-4} more</div>`:""}</div></span>
+      <span class="muted" aria-hidden="true">›</span>
+    </button>`).join("") : `<div class="empty">Nothing waiting on Takealot.</div>`;
 
   const prods=[...new Set(stock.map(u=>u.product))].sort();
   $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l}</th>`).join("")}<th class="num">Total</th><th class="num">At cost</th></tr></thead>
@@ -540,6 +567,9 @@ function renderOverview(){
   $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}`;
 }
 $("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.go) setView(b.dataset.go);});
+$("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
+  state.only=null; state.status=b.dataset.status; state.loc=""; state.sup=""; state.q=""; $("#q").value=""; $("#fLoc").value=""; $("#fSup").value="";
+  setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
 /* ---------------- ledger ---------------- */
 function filtered(){
