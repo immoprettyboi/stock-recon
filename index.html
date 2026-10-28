@@ -248,6 +248,16 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       </div>
     </div>
     <div class="panel">
+      <div class="sec-head"><h2>Delivery costs</h2><p id="expSub">Courier Guy top-ups (read from your account) and Adam's deliveries; taken off the month's profit</p></div>
+      <div class="adam-bar">
+        <div><div class="lbl-s">Adam owes you</div><div class="adam-bal" id="adamBal">–</div><div class="note" id="adamSub"></div></div>
+        <div class="spacer"></div>
+        <button class="btn primary small" type="button" id="adamAdd">Add Adam delivery</button>
+        <button class="btn small" type="button" id="adamSet">Update balance</button>
+      </div>
+      <div class="tscroll"><table id="expTable"></table></div>
+    </div>
+    <div class="panel">
       <div class="sec-head"><h2>Stock on hand</h2><p>Units not yet sold, by where they are</p></div>
       <div class="tscroll"><table id="onhand"></table></div>
     </div>
@@ -258,16 +268,6 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
     <div class="panel">
       <div class="sec-head"><h2>Profit by supplier</h2><p id="psSub"></p></div>
       <div class="tscroll"><table id="bySupplier"></table></div>
-    </div>
-    <div class="panel">
-      <div class="sec-head"><h2>Delivery costs</h2><p id="expSub">Courier Guy top-ups (read from your account) and Adam's deliveries; taken off the month's profit</p></div>
-      <div class="adam-bar">
-        <div><div class="lbl-s">Adam owes you</div><div class="adam-bal" id="adamBal">–</div><div class="note" id="adamSub"></div></div>
-        <div class="spacer"></div>
-        <button class="btn primary small" type="button" id="adamAdd">Add Adam delivery</button>
-        <button class="btn small" type="button" id="adamSet">Update balance</button>
-      </div>
-      <div class="tscroll"><table id="expTable"></table></div>
     </div>
   </section>
 
@@ -315,7 +315,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 
   <!-- SHIPMENTS -->
   <section id="view-ship" class="stack" hidden>
-    <div class="filters"><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
+    <div class="filters"><button class="btn primary small" type="button" id="adamAdd2">Add Adam delivery</button><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
     <div class="panel">
       <div class="sec-head"><h2>Coming from Takealot</h2><p>Returns and removal orders the courier is bringing to you</p></div>
       <div class="tscroll"><table id="shipFrom"></table></div>
@@ -772,6 +772,7 @@ function undeliveredPOs(){
   return pos.filter(p=>p.due_date>="2026-10-01" && /ship|receiv/i.test(p.status||"") && !courierFor(p.po) && !recorded.has(p.po));
 }
 $("#adamAdd").addEventListener("click",()=>openAdam(""));
+$("#adamAdd2").addEventListener("click",()=>openAdam(""));
 function openAdam(po){
   const sel=$("#ad-po"); const recent=pos.filter(p=>!courierFor(p.po)).slice(0,30);
   sel.innerHTML=`<option value="">No PO / other delivery</option>`+recent.map(p=>`<option value="${esc(p.po)}">${esc(p.po)} · ${esc(p.facility||p.warehouse||"")} · ${fd(p.due_date)} · ${p.qty_sending??"?"} units</option>`).join("");
