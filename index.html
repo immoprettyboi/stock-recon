@@ -734,7 +734,9 @@ function shipFor(u){
 }
 const shipWhen=x=>{ const c=x.expected_collection?`collect ${fd(x.expected_collection)}`:""; const d=x.expected_delivery_from?`deliver ${fd(x.expected_delivery_from)}${x.expected_delivery_to&&x.expected_delivery_to!==x.expected_delivery_from?`–${fd(x.expected_delivery_to)}`:""}`:""; return [c,d].filter(Boolean).join(" · "); };
 const poRow=po=>pos.find(p=>p.po===po);
-const contents=p=>p&&Array.isArray(p.items)&&p.items.length ? p.items.map(i=>`${i.qty} × ${i.title}`).join("; ") : "";
+const contents=p=>{ if(!p||!Array.isArray(p.items)||!p.items.length) return "";
+  const m=new Map(); p.items.forEach(i=>m.set(i.title,(m.get(i.title)||0)+(Number(i.qty)||0)));     // same product on several lines -> one total
+  return [...m.entries()].map(([t,q])=>`${q} × ${t}`).join("; "); };
 const courierFor=po=>ships.find(x=>x.direction==="to_takealot" && poOf(x)===po);
 function renderPOs(){
   const all=$("#shipAll").checked;
