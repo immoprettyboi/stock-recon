@@ -537,7 +537,8 @@ function renderOverview(){
   const unlinked=products.filter(p=>!p.product).length;
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
-  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
+  const booked=u=>u.po && ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && x.status!=="cancelled");
+  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
@@ -551,10 +552,11 @@ function renderOverview(){
     : `<div class="empty">Nothing needs you right now.</div>`;
 
   // ---- Waiting on Takealot: grouped, no action needed
-  const waitUnits=units.filter(u=>!u.flag && !(u.order_id && toSend.has(u.order_id)));
+  const waitUnits=units.filter(u=>!u.flag && !(u.order_id && toSend.has(u.order_id) && !booked(u)));
   const groups=[
     {s:"awaiting_fees", t:"Fees not charged yet", list:waitUnits.filter(u=>u.status==="awaiting_fees"),
-      line:u=>`${u.order_id} · ${fd(u.sold_date)} · ${R(u.gross)}`, sum:L=>`${R(L.reduce((a,u)=>a+(u.gross||0),0))} in sales; fees appear once shipped`},
+      line:u=>{ const x=u.po?ships.find(s=>s.direction==="to_takealot" && poOf(s)===u.po && !SHIP_DONE.has(s.status)):null; return `${u.order_id} · ${fd(u.sold_date)} · ${R(u.gross)}${x?` · courier ${x.waybill} ${shipLabel(x.status).toLowerCase()}`:""}`; },
+      sum:L=>`${R(L.reduce((a,u)=>a+(u.gross||0),0))} in sales; fees appear once shipped`},
     {s:"return_takealot", t:"Returns pending at Takealot", list:waitUnits.filter(u=>u.status==="return_takealot"),
       line:u=>`${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`, sum:()=>"Takealot is checking if they're sellable"},
     {s:"missing_query", t:"Queries open with Takealot", list:waitUnits.filter(u=>u.status==="missing_query"),
