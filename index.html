@@ -79,6 +79,8 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .chart-wrap .hit{fill:transparent;cursor:default}
 .chart-tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap;color:var(--fg)}
 .chart-tip b{font-family:var(--mono)}
+.otp-box{display:grid;gap:6px;margin-top:8px}.otp-box label{font-size:13px}
+.otp-row{display:flex;gap:6px}.otp-row input{width:120px;font:16px var(--mono);letter-spacing:2px}
 /* tiles */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
@@ -247,6 +249,11 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div style="min-width:0">
         <h2 id="syncTitle">Takealot sync</h2>
         <p id="syncMsg">Checking…</p>
+        <form id="otpBox" class="otp-box" hidden>
+          <label for="otpCode">Takealot emailed a one-time PIN. Type it here and the PC finishes the login.</label>
+          <div class="otp-row"><input id="otpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="PIN" required>
+          <button class="btn primary small" type="submit">Send PIN to the PC</button></div>
+        </form>
         <div class="sync2"><span class="dot2" id="cDot" aria-hidden="true"></span><span><b id="cTitle">Courier Guy</b> <span class="muted" id="cMsg"></span></span></div>
       </div>
       <button class="btn" type="button" id="syncNow">Sync now</button>
@@ -534,7 +541,7 @@ async function loadAll(){
       selectAll("units"),
       sb.from("takealot_sales").select("*").eq("match_status","unmatched").order("order_date",{ascending:false}).then(x=>{if(x.error) throw x.error; return x.data;}),
       selectAll("products"),
-      sb.from("sync_runs").select("*").eq("requested",false).order("id",{ascending:false}).limit(1).then(x=>{if(x.error) throw x.error; return x.data;})
+      sb.from("sync_runs").select("*").eq("requested",false).not("message","like","otp:%").order("id",{ascending:false}).limit(1).then(x=>{if(x.error) throw x.error; return x.data;})
     ]);
     units=u.map(x=>({...x, gross:num(x.gross), fees:num(x.fees), cost:num(x.cost)||0}));
     sales=s; products=p; lastRun=r[0]||null; loaded=true;
@@ -575,12 +582,19 @@ function setView(v){
 }
 
 /* ---------------- sync card ---------------- */
+$("#otpBox").addEventListener("submit", async e=>{ e.preventDefault();
+  const code=$("#otpCode").value.replace(/\D/g,""); if(code.length<4){ toast("Type the PIN from Takealot's email"); return; }
+  const { error } = await sb.from("sync_runs").insert({ requested:false, ok:true, finished_at:new Date().toISOString(), message:"otp:"+code });
+  if(error) toast("Couldn't send the PIN: "+errMsg(error)); else { $("#otpCode").value=""; toast("PIN sent. The PC logs in within a few seconds."); } });
 function renderSync(){
   const dot=$("#syncDot");
   if(!lastRun){ $("#syncTitle").textContent="Takealot sync: not run yet"; $("#syncMsg").textContent="Install the sync on the PC and run it once. Sales, fees and returns will then fill in every 30 minutes."; dot.style.background="var(--muted)"; return; }
   const when = lastRun.finished_at || lastRun.started_at;
   const stale = Date.now()-new Date(when) > 75*60*1000;
-  if(!lastRun.finished_at){ $("#syncTitle").textContent="Takealot sync: running now"; dot.style.background="var(--accent)"; }
+  const wantsCode = !lastRun.finished_at && /^Takealot code needed/.test(lastRun.message||"") && Date.now()-new Date(lastRun.started_at||when) < 12*60*1000;
+  $("#otpBox").hidden = !wantsCode;
+  if(wantsCode){ $("#syncTitle").textContent="Takealot sync: enter the PIN"; dot.style.background="var(--warn)"; }
+  else if(!lastRun.finished_at){ $("#syncTitle").textContent="Takealot sync: running now"; dot.style.background="var(--accent)"; }
   else if(lastRun.ok===false){ $("#syncTitle").textContent="Takealot sync: needs you"; dot.style.background="var(--bad)"; }
   else if(stale){ $("#syncTitle").textContent="Takealot sync: hasn't run lately"; dot.style.background="var(--warn)"; }
   else { $("#syncTitle").textContent="Takealot sync: up to date"; dot.style.background="var(--ok)"; }
@@ -675,6 +689,7 @@ function renderOverview(){
   // ---- Needs you: only things that need an action from you
   const items=[];
   if(lastRun && lastRun.ok===false) items.push({go:"overview", tag:"Sync", t:"Takealot sync needs you", d:lastRun.message||""});
+  if(lastRun && !lastRun.finished_at && /^Takealot code needed/.test(lastRun.message||"")) items.push({go:"overview", tag:"Sync", t:"Enter Takealot's PIN", d:"Takealot emailed a one-time PIN; type it in the box on the sync card at the top"});
   { const c=courierHealth(); if(c.state==="bad") items.push({go:"overview", tag:"Sync", t:"Courier Guy sync needs you", d:c.msg}); }
   if(sales.length) items.push({go:"match", tag:"Sync", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
   const unlinked=products.filter(p=>!p.product).length;

@@ -37,7 +37,102 @@ def _creds(site):
     return (e, pw) if e and pw and "PASTE" not in pw.upper() else (None, None)
 
 
-def auto_login(page, site, log, ok_check, timeout_s=40):
+def _otp_inputs(page):
+    """The PIN boxes on a two-step verification page (one box, or one per digit)."""
+    if "otp" not in (page.inner_text("body") or "").lower() and "one-time" not in (page.inner_text("body") or "").lower():
+        return []
+    boxes = page.locator("input:not([type=hidden]):not([type=password]):not([type=email]):not([type=checkbox])")
+    return [boxes.nth(i) for i in range(boxes.count()) if boxes.nth(i).is_visible()]
+
+
+def _enter_otp(page, cfg, log, name):
+    """Ask for the PIN in the app (sync card), wait up to 9 minutes for it, then type it in."""
+    import re, time, stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    DEBUG_DIR.mkdir(exist_ok=True)
+    try:
+        (DEBUG_DIR / "otp_page.html").write_text(page.content()[:200000], encoding="utf-8")
+    except Exception:
+        pass
+    body = " ".join((page.inner_text("body") or "").split())
+    m = re.search(r"sent to (\S+@\S+?)[.\s]", body)
+    to = m.group(1) if m else "your email"
+    runs = db.select("sync_runs", "select=id,message&finished_at=is.null&requested=is.false&order=id.desc&limit=1")
+    run_id = runs[0]["id"] if runs else None
+    last = db.select("sync_runs", "select=id&order=id.desc&limit=1")
+    since_id = last[0]["id"] if last else 0
+    msg = f"Takealot code needed: a one-time PIN was emailed to {to}. Type it in the app."
+    if run_id:
+        db.patch("sync_runs", f"id=eq.{run_id}", {"message": msg})
+    log(f"{name}: asked for a one-time PIN (emailed to {to}); waiting for it in the app.")
+    code, end = None, time.time() + 9 * 60
+    while time.time() < end and not code:
+        rows = db.select("sync_runs", f"select=id,message&id=gt.{since_id}&message=like.otp:*&order=id.desc")
+        if rows:
+            code = re.sub(r"\D", "", rows[0]["message"])
+            for r in rows:
+                db._req("DELETE", f"sync_runs?id=eq.{r['id']}", None, {"Prefer": "return=minimal"})
+            break
+        page.wait_for_timeout(4000)
+    if run_id:
+        db.patch("sync_runs", f"id=eq.{run_id}", {"message": "Running"})
+    if not code:
+        log(f"{name}: no PIN was entered in the app within 9 minutes.")
+        return False
+    boxes = _otp_inputs(page)
+    if len(boxes) >= len(code) and len(boxes) > 1:
+        for b, ch in zip(boxes, code):
+            b.fill(ch)
+    elif boxes:
+        boxes[0].fill(code)
+    else:
+        page.keyboard.type(code)
+    page.wait_for_timeout(500)
+    btn = page.locator("button[type=submit], button:has-text('Verify'), button:has-text('Submit'), button:has-text('Continue'), button:has-text('Log In')")
+    vis = [btn.nth(i) for i in range(btn.count()) if btn.nth(i).is_visible() and btn.nth(i).is_enabled()]
+    if vis:
+        vis[0].click()
+    else:
+        page.keyboard.press("Enter")
+    log(f"{name}: PIN from the app typed in.")
+    return True
+
+
+def test_logins(p, cfg, log):
+    """One-off check (debug/login_test_request.txt): log in with the config.ini details in a fresh, separate browser,
+    so the sync's own session is left alone."""
+    req = DEBUG_DIR / "login_test_request.txt"
+    if not req.exists():
+        return
+    req.unlink()
+    browser = p.chromium.launch(channel=cfg.get("browser") or "chrome", headless=True,
+                                args=["--disable-blink-features=AutomationControlled"])
+    try:
+        for site, url, ok in (
+            ("takealot", SALES_URL, lambda pg: "/login" not in pg.url and "sellers.takealot.com" in pg.url),
+            ("courier", COURIER_URL, lambda pg: "thecourierguy" in pg.url and "login" not in pg.url.lower()
+                                                 and pg.locator("input[type=password]").count() == 0)):
+            ctx = browser.new_context(viewport={"width": 1400, "height": 900})
+            page = ctx.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+                page.wait_for_timeout(4000)
+                if ok(page) and not page.locator("input[type=password]").count():
+                    log(f"Login test ({site}): opened without a login page, nothing to test.")
+                elif not _creds(site)[0]:
+                    log(f"Login test ({site}): no email/password in config.ini.")
+                else:
+                    good = auto_login(page, site, log, ok, cfg=cfg)
+                    log(f"Login test ({site}): {'PASSED' if good else 'FAILED'}.")
+            except Exception as e:
+                log(f"Login test ({site}) error: {repr(e)[:200]}")
+            finally:
+                ctx.close()
+    finally:
+        browser.close()
+
+
+def auto_login(page, site, log, ok_check, timeout_s=40, cfg=None):
     """Fill in the portal's own login form with the details from config.ini. Returns True once logged in."""
     email, pw = _creds(site)
     name = {"takealot": "Takealot", "courier": "Courier Guy"}[site]
@@ -59,6 +154,14 @@ def auto_login(page, site, log, ok_check, timeout_s=40):
             if ok_check(page):
                 log(f"{name}: logged back in automatically.")
                 return True
+            if cfg and _otp_inputs(page):
+                if _enter_otp(page, cfg, log, name):
+                    for _ in range(30):
+                        page.wait_for_timeout(1000)
+                        if ok_check(page):
+                            log(f"{name}: logged back in with the PIN from the app.")
+                            return True
+                break
         DEBUG_DIR.mkdir(exist_ok=True)
         page.screenshot(path=str(DEBUG_DIR / f"{site}_login_failed.png"))
         body = (page.inner_text("body") or "")[:400].replace("\n", " ")
@@ -164,6 +267,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             pass
 
     with sync_playwright() as p:
+        try:
+            test_logins(p, cfg, log)
+        except Exception as e:
+            log("Login test couldn't run: " + repr(e)[:200])
         ctx = launch(p, cfg, headless, profile_dir, downloads)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -177,7 +284,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     break
                 page.wait_for_timeout(500)
             if "/login" in page.url:
-                if not auto_login(page, "takealot", log, lambda pg: "/login" not in pg.url and "sellers.takealot.com" in pg.url):
+                if not auto_login(page, "takealot", log, cfg=cfg, ok_check=lambda pg: "/login" not in pg.url and "sellers.takealot.com" in pg.url):
                     raise NeedsLogin()
                 auth.clear()
                 page.goto(SALES_URL, wait_until="domcontentloaded", timeout=90_000)
@@ -404,7 +511,7 @@ def fetch_courier(ctx, cfg, log):
         page.wait_for_timeout(500)
     if not auth or page.locator("input[type=password]").count() or "login" in page.url.lower():
         ok = lambda pg: "thecourierguy" in pg.url and "login" not in pg.url.lower() and pg.locator("input[type=password]").count() == 0
-        if auto_login(page, "courier", log, ok):
+        if auto_login(page, "courier", log, ok, cfg=cfg):
             page.goto(COURIER_URL, wait_until="domcontentloaded", timeout=90_000)
             for _ in range(30):
                 if auth:
