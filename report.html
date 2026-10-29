@@ -266,7 +266,7 @@ function render(m){
     <div class="tw"><table><thead><tr><th>Supplier</th><th class="n">Units sold</th><th class="n">Cost</th><th class="n">Avg cost</th><th class="n">Profit</th><th class="n">Profit / unit</th></tr></thead><tbody>${supRows}</tbody></table></div>
   </section>`:""}
 
-  <section class="pb">
+  <section class="split">
     <h2>Deliveries to Takealot</h2><p class="sub">POs due in ${MON[+m.slice(5,7)-1]}, how they got there, and what it cost.</p>
     ${pos.length?`<div class="tw"><table><thead><tr><th>PO</th><th>To</th><th>Due</th><th class="n">Sent</th><th class="n">Received</th><th>Delivered by</th><th class="n">Cost</th></tr></thead><tbody>${pos.map(p=>{ const d=deliv(p); return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td class="n">${p.qty_sending??""}</td><td class="n">${p.qty_received??"–"}</td><td>${d.how}</td><td class="n">${d.cost!=null?R(d.cost):""}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="3">${pos.length} PO${pos.length===1?"":"s"}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_sending||0),0)}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_received||0),0)}</td><td></td><td class="n">${R(pos.reduce((a,p)=>a+(deliv(p).cost||0),0))}</td></tr></tfoot></table></div>`:`<p class="note">No POs due this month.</p>`}
