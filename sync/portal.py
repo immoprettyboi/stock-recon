@@ -112,6 +112,75 @@ def _enter_otp(page, cfg, log, name):
     return True
 
 
+REPORT_URL = "https://immoprettyboi.github.io/stock-recon/report.html"
+
+
+def monthly_report(p, cfg, log):
+    """On the 1st of the month (from 07:00), e-mail last month's report as a PDF. Once per month.
+    debug/report_test_request.txt sends this month's report so far, as a test."""
+    import configparser, smtplib, ssl
+    from email.message import EmailMessage
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    sender, app_pw = (c.get("report_from") or "").strip(), (c.get("report_app_password") or "").replace(" ", "").strip()
+    to = [x.strip() for x in (c.get("report_to") or "").replace(";", ",").split(",") if x.strip()]
+    now = datetime.now()
+    test = (DEBUG_DIR / "report_test_request.txt").exists()
+    first = now.replace(day=1)
+    month = now.strftime("%Y-%m") if test else (first - timedelta(days=1)).strftime("%Y-%m")
+    flag = DEBUG_DIR / f"report_sent_{month}.txt"
+    if not test and (now.hour < 7 or flag.exists() or month < "2026-10"):
+        return
+    if test:
+        (DEBUG_DIR / "report_test_request.txt").unlink()
+    can_send = bool(sender and app_pw and "PASTE" not in app_pw.upper() and to)
+    if not can_send and not test:
+        return
+    DEBUG_DIR.mkdir(exist_ok=True)
+    out = HERE / "reports"
+    out.mkdir(exist_ok=True)
+    pdf = out / f"Stock Recon report {month}.pdf"
+    browser = p.chromium.launch(channel=cfg.get("browser") or "chrome", headless=True)
+    try:
+        page = browser.new_page(viewport={"width": 1000, "height": 1400})
+        page.add_init_script(f"window.SR_PC_KEY = {json.dumps(cfg['key'])};")
+        page.goto(f"{REPORT_URL}?m={month}&t={int(now.timestamp())}", wait_until="domcontentloaded", timeout=90_000)
+        page.wait_for_selector("body[data-ready='1']", timeout=60_000)
+        page.wait_for_timeout(1500)                       # fonts
+        summary = page.evaluate("window.SR_SUMMARY") or {}
+        page.pdf(path=str(pdf), format="A4", print_background=True,
+                 margin={"top": "14mm", "bottom": "14mm", "left": "12mm", "right": "12mm"})
+    finally:
+        browser.close()
+    label = summary.get("month") or month
+    if not can_send:
+        log(f"Monthly report: PDF saved in the reports folder ({pdf.name}); not e-mailed because report_from, "
+            "report_app_password and report_to aren't filled in in config.ini yet.")
+        return
+    msg = EmailMessage()
+    msg["Subject"] = f"Stock Recon: {label} report" + (" (month to date, test)" if test else "")
+    msg["From"] = f"Stock Recon <{sender}>"
+    msg["To"] = ", ".join(to)
+    lines = [f"Hi,", "", f"Here is the {label} Takealot report" + (" so far (test)." if test else "."), "",
+             f"Profit after all costs: {summary.get('profit', '?')} ({summary.get('margin', '?')} margin)",
+             f"Units sold: {summary.get('units', '?')}   Sales: {summary.get('sales', '?')}", "",
+             "The full report is attached as a PDF. You can also open it any time in the app: Monthly report.",
+             "https://immoprettyboi.github.io/stock-recon/", "", "Stock Recon"]
+    msg.set_content("\n".join(lines))
+    msg.add_attachment(pdf.read_bytes(), maintype="application", subtype="pdf", filename=pdf.name)
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=60) as smtp:
+            smtp.login(sender, app_pw)
+            smtp.send_message(msg)
+    except Exception as e:
+        log("Monthly report: the e-mail couldn't be sent: " + repr(e)[:200])
+        return
+    if not test:
+        flag.write_text(now.isoformat(), encoding="utf-8")
+    log(f"Monthly report: {label} e-mailed to {', '.join(to)}" + (" (test)." if test else "."))
+
+
 def test_logins(p, cfg, log):
     """One-off check (debug/login_test_request.txt): log in with the config.ini details in a fresh, separate browser,
     so the sync's own session is left alone."""
@@ -285,6 +354,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             test_logins(p, cfg, log)
         except Exception as e:
             log("Login test couldn't run: " + repr(e)[:200])
+        try:
+            monthly_report(p, cfg, log)
+        except Exception as e:
+            log("Monthly report couldn't be made: " + repr(e)[:200])
         ctx = launch(p, cfg, headless, profile_dir, downloads)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()

@@ -121,7 +121,10 @@ footer{margin-top:36px;padding-top:12px;border-top:1px solid var(--rule);color:v
 <script>
 const SUPABASE_URL = "https://dycpqdoqsbjvtzomvwzi.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5Y3BxZG9xc2JqdnR6b212d3ppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5ODgzNjcsImV4cCI6MjEwODU2NDM2N30.yscmk2jsOuHzNrJizhr34rRtFjxNLHXpkx2kBVjdYN8";
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+// The PC's monthly e-mail job opens this page with its own key (window.SR_PC_KEY) to make the PDF.
+const PC_KEY = window.SR_PC_KEY || null;
+const sb = PC_KEY ? supabase.createClient(SUPABASE_URL, PC_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+                  : supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const R = v => (v<0?"−":"")+"R\u00a0"+Math.round(Math.abs(v||0)).toLocaleString("en-ZA");
@@ -138,7 +141,7 @@ async function opt(table){ try{ return await all(table); }catch(e){ return []; }
 
 let D=null;
 (async function start(){
-  const { data:{ session } } = await sb.auth.getSession();
+  const { data:{ session } } = PC_KEY ? {data:{session:true}} : await sb.auth.getSession();
   if(!session){ $("#msg").innerHTML=`Please <a href="./">sign in to Stock Recon</a> first, then open the report again.`; return; }
   try{
     const [units,products,expenses,rets,ships,pos]=await Promise.all([all("units"),all("products"),opt("expenses"),opt("takealot_returns"),opt("courier_shipments"),opt("takealot_pos")]);
@@ -303,6 +306,8 @@ function render(m){
   <footer><span>Stock Recon · figures from Takealot's Seller Portal and Courier Guy, synced automatically</span><span>${mLabel(m)}</span></footer>`;
   document.title=`${mLabel(m)} Report · Stock Recon`;
   $("#msg").hidden=true; $("#page").hidden=false;
+  document.body.dataset.ready="1";
+  window.SR_SUMMARY={month:mLabel(m), profit:R(S.N), units:n, sales:R(S.G), margin:pct(margin), partial};
 }
 </script>
 </body>
