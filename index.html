@@ -620,7 +620,9 @@ function renderOverview(){
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   undeliveredPOs().forEach(p=>items.push({adampo:p.po, tag:"Delivery", t:`Who delivered PO ${p.po}?`, d:`${p.qty_sending??"?"} unit${p.qty_sending===1?"":"s"} to ${p.facility||p.warehouse||""} · ${contents(p)} · no Courier Guy booking found. If Adam took it, record it here.`}));
-  ships.filter(x=>SHIP_BAD.has(x.status) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
+  // a shipment Takealot turned away whose units are already set to come back is tracked under "Coming back to you"
+  const handledRts=x=>x.direction==="to_takealot" && x.status==="returned-to-sender" && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && units.some(u=>u.courier_shipment_id===s.id)));
+  ships.filter(x=>SHIP_BAD.has(x.status) && !handledRts(x) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
     <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.adampo?`data-adampo="${esc(i.adampo)}"`:`data-go="${i.go}"`}>
@@ -847,14 +849,18 @@ const shipLabel=st=>{ const t=String(st||"").replace(/-/g," "); return t.charAt(
 const shipPill=st=>SHIP_BAD.has(st)?"s-return_me":st==="delivered"?"s-settled":st==="cancelled"?"s-in_stock":"s-awaiting_fees";
 const poOf=x=>(String(x.reference||"").match(/\d{6,}/)||[""])[0];
 const cleanNote=t=>String(t||"").replace(/&nbsp;/g," ").replace(/Please note that your account[^|]*?arrears[^|]*/gi,"").replace(/\s*\|\s*(\|\s*)+/g," | ").replace(/^\s*\|\s*|\s*\|\s*$/g,"").replace(/\s+/g," ").trim();
+const isRtsWaybill=x=>/-R$/i.test(x.waybill||"");          // courier's return-to-sender waybill (e.g. NRVWMM-R)
 function shipUnits(x){
   if(x.direction==="to_takealot"){ const po=poOf(x); return po?units.filter(u=>u.po===po):[]; }
-  if(x.direction==="from_takealot" && !SHIP_DONE.has(x.status)) return units.filter(u=>u.status==="return_me" && u.location===x.takealot_dc);
+  const linked=units.filter(u=>u.courier_shipment_id===x.id);
+  if(linked.length || isRtsWaybill(x)) return linked;
+  if(x.direction==="from_takealot" && !SHIP_DONE.has(x.status)) return units.filter(u=>u.status==="return_me" && !u.courier_shipment_id && u.location===x.takealot_dc);
   return [];
 }
 function shipFor(u){
   const live=ships.filter(x=>!SHIP_DONE.has(x.status));
-  if(u.status==="return_me") return live.find(x=>x.direction==="from_takealot" && x.takealot_dc===u.location);
+  if(u.courier_shipment_id){ const x=ships.find(s=>s.id===u.courier_shipment_id); if(x) return x; }
+  if(u.status==="return_me") return live.find(x=>x.direction==="from_takealot" && x.takealot_dc===u.location && !isRtsWaybill(x) && !units.some(v=>v.courier_shipment_id===x.id));
   if(u.po) return ships.find(x=>x.direction==="to_takealot" && poOf(x)===u.po);
   return null;
 }
@@ -920,6 +926,8 @@ function renderCheck(){
   for(const p of live){ const g=G[p.product]=G[p.product]||{tal:{},way:{},app:{}};
     for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); } }
   units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
+  // units on a shipment Takealot rejected: Takealot keeps counting them "on the way" until it closes the PO
+  units.filter(u=>u.status==="return_me" && /Takealot rejected/.test(u.comment||"") && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g){ g.rej=g.rej||{}; g.rej[u.location]=(g.rej[u.location]||0)+1; } });
   units.filter(u=>u.status==="missing_query" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g){ g.q=g.q||{}; g.q[u.location]=(g.q[u.location]||0)+1; } });
   // units sold on lead-time orders and sent in: Takealot still counts them as on the way / being received
   const skuGroup={}; products.forEach(p=>skuGroup[p.sku]=p.product);
@@ -928,6 +936,8 @@ function renderCheck(){
   const rows=Object.entries(G).filter(([n,g])=>DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
       let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;
+      const RJ=(g.rej||{})[dc]||0, rejNote = d<0 && RJ>0 && w>0 ? Math.min(RJ,w,-d) : 0; d+=rejNote;
+      if(!d && rejNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${rejNote} rejected by Takealot, coming back to you (Takealot still shows ${rejNote>1?"them":"it"} on the way)</div></td>`;
       if(!d && leadNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${leadNote} sold on a lead-time order, on its way</div></td>`;
       const Q=(g.q||{})[dc]||0, qNote=Q?`<div class="muted" style="font-size:12px">${Q} under query with Takealot</div>`:"";
       if(d) issues++;

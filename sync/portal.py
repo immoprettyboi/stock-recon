@@ -503,6 +503,76 @@ def fetch_courier(ctx, cfg, log):
             else:
                 raise
     log(f"Courier Guy: {len(rows)} Takealot shipment(s) saved ({len(shipments)} read).")
+    if rows:
+        try:
+            handle_rejected(cfg, rows, log)
+        except Exception as e:
+            log("Rejected shipments couldn't be handled: " + repr(e)[:200])
+
+
+REJECTED = {"returned-to-sender", "delivery-rejected"}
+
+
+def handle_rejected(cfg, rows, log):
+    """A shipment to Takealot that Takealot turned away (returned to sender).
+    The units on that PO never got in, so:
+      - any sale matched to them was really filled from Takealot's own stock at that DC ->
+        move the sale to the oldest unsold unit of the same product at that DC;
+      - the units themselves are coming back to us -> Return: me, linked to the return waybill (e.g. NRVWMM-R)."""
+    import re, stockrecon_sync as S
+    since = cfg.get("since") or "2026-10-01"
+    bad = [r for r in rows if r["direction"] == "to_takealot" and r["status"] in REJECTED
+           and str(r.get("created_at") or "")[:10] >= since]
+    if not bad:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    units = db.select("units", "select=id,product,sku,location,po,order_id,sold_date,gross,fees,status,match_method,"
+                               "comment,received,created_at,courier_shipment_id")
+    groups = {p["sku"]: p["product"] for p in db.select("products", "select=sku,product") if p.get("product")}
+    grp = lambda u: groups.get(u.get("sku") or "") or u.get("product")
+    now = datetime.utcnow().isoformat() + "Z"
+    for x in bad:
+        po = (re.search(r"\d{6,}", x.get("reference") or "") or [None])[0]
+        if not po:
+            continue
+        back = next((r for r in rows if r["direction"] == "from_takealot" and r["status"] != "cancelled"
+                     and (r.get("waybill") or "").upper() == (x.get("waybill") or "").upper() + "-R"), None) \
+            or next((r for r in rows if r["direction"] == "from_takealot" and r["status"] != "cancelled"
+                     and po in (r.get("reference") or "") and str(r.get("created_at")) >= str(x.get("created_at"))), None)
+        link = (back or x)["id"]
+        m = re.search(r"rejected by Takealot due to (.+?) and", x.get("note") or "", re.I)
+        why = f" ({m.group(1).strip().lower()})" if m else ""
+        for u in [u for u in units if u.get("po") == po]:
+            if u.get("courier_shipment_id") == link:
+                continue                                   # already handled
+            if u.get("courier_shipment_id") == x["id"]:    # handled before the return waybill existed
+                if u["status"] == "return_me" and link != x["id"]:
+                    db.patch("units", f"id=eq.{u['id']}", {"courier_shipment_id": link, "updated_at": now})
+                continue
+            if u["status"] not in ("in_stock", "awaiting_fees", "settled"):
+                continue
+            note = f"Takealot rejected {x['waybill']} (PO {po}){why}; coming back on {back['waybill'] if back else 'a return waybill'}."
+            if u.get("order_id"):
+                pool = sorted([v for v in units if v["status"] == "in_stock" and not v.get("order_id") and v.get("po") != po
+                               and v.get("location") == x["takealot_dc"] and grp(v) == grp(u)],
+                              key=lambda v: (str(v.get("received") or ""), str(v.get("created_at") or "")))
+                if not pool:
+                    log(f"  Rejected PO {po}: no unsold {u['product']} at {x['takealot_dc']} to move order {u['order_id']} to; left as is.")
+                    continue
+                v = pool[0]
+                moved = {k: u.get(k) for k in ("order_id", "sold_date", "gross", "fees", "status", "match_method", "product", "sku")}
+                moved["comment"] = ((v.get("comment") or "") + f" Order {u['order_id']} moved here: PO {po} was rejected, "
+                                    f"so Takealot filled it from its {x['takealot_dc']} stock.").strip()
+                db.patch("units", f"id=eq.{u['id']}", {"order_id": "", "sold_date": None, "gross": None, "fees": None})
+                db.patch("units", f"id=eq.{v['id']}", moved | {"updated_at": now})
+                db.patch("takealot_sales", f"order_id=eq.{u['order_id']}", {"unit_id": v["id"]})
+                v.update(moved)
+                log(f"  Rejected PO {po}: order {u['order_id']} moved to a {x['takealot_dc']} unit (in {v.get('received')}).")
+            db.patch("units", f"id=eq.{u['id']}", {"status": "return_me", "location": x["takealot_dc"], "order_id": "",
+                                                    "sold_date": None, "gross": None, "fees": None, "courier_shipment_id": link,
+                                                    "comment": ((u.get("comment") or "") + " " + note).strip(), "updated_at": now})
+            u.update(status="return_me", order_id="", courier_shipment_id=link)
+            log(f"  Rejected PO {po}: {u['product']} set to Return: me ({note})")
 
 
 
