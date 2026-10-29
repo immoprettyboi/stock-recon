@@ -604,6 +604,7 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
     <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
 
@@ -661,9 +662,9 @@ function renderOverview(){
     : `<tbody><tr><td class="muted">No unsold stock.</td></tr></tbody>`;
 
   const group=key=>{const m=new Map(); sold.forEach(u=>{const k=u[key]||"–"; const g=m.get(k)||{n:0,G:0,F:0,C:0}; g.n++; g.G+=u.gross||0; g.F+=u.fees||0; g.C+=u.cost||0; m.set(k,g);}); return [...m.entries()].map(([k,g])=>({k,...g,P:g.G-g.F-g.C})).sort((a,b)=>b.P-a.P);};
-  const tbl=(rows,label)=>rows.length ? `<thead><tr><th>${label}</th><th class="num">Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th><th class="num">Avg / unit</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr><td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${R(r.G)}</td><td class="num">${R(r.F)}</td><td class="num">${R(r.C)}</td><td class="num ${r.P<0?"neg":""}"><b>${R(r.P)}</b></td><td class="num">${R(r.P/r.n)}</td></tr>`).join("")}</tbody>
-    <tfoot><tr><td>Total</td><td class="num">${sold.length}</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td><td class="num">${sold.length?R(P/sold.length):""}</td></tr></tfoot>`
+  const tbl=(rows,label)=>rows.length ? `<thead><tr><th>${label}</th><th class="num">Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th><th class="num">Avg price</th><th class="num">Avg cost</th><th class="num">Avg profit</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td>${esc(r.k)}</td><td class="num">${r.n}</td><td class="num">${R(r.G)}</td><td class="num">${R(r.F)}</td><td class="num">${R(r.C)}</td><td class="num ${r.P<0?"neg":""}"><b>${R(r.P)}</b></td><td class="num">${R(r.G/r.n)}</td><td class="num">${R(r.C/r.n)}</td><td class="num">${R(r.P/r.n)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td><td class="num">${sold.length}</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td><td class="num">${sold.length?R(G/sold.length):""}</td><td class="num">${sold.length?R(C/sold.length):""}</td><td class="num">${sold.length?R(P/sold.length):""}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No sales in ${esc(mLabel)}.</td></tr></tbody>`;
   $("#byProduct").innerHTML=tbl(group("product"),"Product");
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
