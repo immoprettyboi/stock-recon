@@ -51,11 +51,12 @@ def _enter_otp(page, cfg, log, name):
     db = S.DB(cfg["url"], cfg["key"])
     DEBUG_DIR.mkdir(exist_ok=True)
     try:
-        (DEBUG_DIR / "otp_page.html").write_text(page.content()[:200000], encoding="utf-8")
+        (DEBUG_DIR / "otp_page.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(DEBUG_DIR / "otp_page.png"))
     except Exception:
         pass
     body = " ".join((page.inner_text("body") or "").split())
-    m = re.search(r"sent to (\S+@\S+?)[.\s]", body)
+    m = re.search(r"sent to (\S+@[\w.-]+\.\w+)", body)
     to = m.group(1) if m else "your email"
     runs = db.select("sync_runs", "select=id,message&finished_at=is.null&requested=is.false&order=id.desc&limit=1")
     run_id = runs[0]["id"] if runs else None
@@ -87,6 +88,19 @@ def _enter_otp(page, cfg, log, name):
         boxes[0].fill(code)
     else:
         page.keyboard.type(code)
+    # tick "Remember this device" so Takealot doesn't ask for a PIN on every login
+    try:
+        cb = page.locator("input[type=checkbox]")
+        ticked = False
+        for i in range(cb.count()):
+            if not cb.nth(i).is_checked():
+                cb.nth(i).check(force=True)
+            ticked = True
+        if not ticked:
+            page.get_by_text(re.compile(r"remember", re.I)).first.click(timeout=3000)
+        log(f"{name}: ticked 'Remember this device'.")
+    except Exception as e:
+        log(f"{name}: couldn't tick 'Remember this device': {repr(e)[:120]}")
     page.wait_for_timeout(500)
     btn = page.locator("button[type=submit], button:has-text('Verify'), button:has-text('Submit'), button:has-text('Continue'), button:has-text('Log In')")
     vis = [btn.nth(i) for i in range(btn.count()) if btn.nth(i).is_visible() and btn.nth(i).is_enabled()]
