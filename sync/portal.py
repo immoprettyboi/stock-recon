@@ -170,8 +170,16 @@ def monthly_report(p, cfg, log):
     msg.set_content("\n".join(lines))
     msg.add_attachment(pdf.read_bytes(), maintype="application", subtype="pdf", filename=pdf.name)
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=60) as smtp:
-            smtp.login(sender, app_pw)
+        host = (c.get("report_smtp_host") or "smtp.gmail.com").strip()
+        port = int((c.get("report_smtp_port") or "465").strip())
+        user = (c.get("report_smtp_user") or sender).strip()
+        if port == 465:
+            smtp = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=60)
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=60)
+            smtp.starttls(context=ssl.create_default_context())
+        with smtp:
+            smtp.login(user, app_pw)
             smtp.send_message(msg)
     except Exception as e:
         log("Monthly report: the e-mail couldn't be sent: " + repr(e)[:200])
