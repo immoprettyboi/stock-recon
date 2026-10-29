@@ -694,7 +694,7 @@ function renderOverview(){
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery costs`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost</span></div>
+    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost${stock.length?` · avg ${R0(stockV/stock.length)} a unit`:""}</span></div>
     <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
 
   // ---- Needs you: only things that need an action from you
@@ -747,9 +747,9 @@ function renderOverview(){
     </button>`).join("") : `<div class="empty">Nothing waiting on Takealot.</div>`;
 
   const prods=[...new Set(stock.map(u=>u.product))].sort();
-  $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l}</th>`).join("")}<th class="num">Total</th><th class="num">At cost</th></tr></thead>
-    <tbody>${prods.map(p=>{const tot=stock.filter(u=>u.product===p);return `<tr><td>${esc(p)}</td>${LOCS.map(l=>{const n=tot.filter(u=>u.location===l).length;return `<td class="num ${n?"":"muted"}">${n||"·"}</td>`}).join("")}<td class="num"><b>${tot.length}</b></td><td class="num">${R0(tot.reduce((s,u)=>s+u.cost,0))}</td></tr>`}).join("")}</tbody>
-    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="num">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="num">${stock.length}</td><td class="num">${R0(stockV)}</td></tr></tfoot>`
+  $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l}</th>`).join("")}<th class="num">Total</th><th class="num">Avg cost</th><th class="num">At cost</th></tr></thead>
+    <tbody>${prods.map(p=>{const tot=stock.filter(u=>u.product===p), v=tot.reduce((s,u)=>s+u.cost,0);return `<tr><td>${esc(p)}</td>${LOCS.map(l=>{const n=tot.filter(u=>u.location===l).length;return `<td class="num ${n?"":"muted"}">${n||"·"}</td>`}).join("")}<td class="num"><b>${tot.length}</b></td><td class="num">${R0(v/tot.length)}</td><td class="num">${R0(v)}</td></tr>`}).join("")}</tbody>
+    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="num">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="num">${stock.length}</td><td class="num">${stock.length?R0(stockV/stock.length):""}</td><td class="num">${R0(stockV)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No unsold stock.</td></tr></tbody>`;
 
   const group=key=>{const m=new Map(); sold.forEach(u=>{const k=u[key]||"–"; const g=m.get(k)||{n:0,G:0,F:0,C:0}; g.n++; g.G+=u.gross||0; g.F+=u.fees||0; g.C+=u.cost||0; m.set(k,g);}); return [...m.entries()].map(([k,g])=>({k,...g,P:g.G-g.F-g.C})).sort((a,b)=>b.P-a.P);};

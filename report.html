@@ -289,8 +289,8 @@ function render(m){
 
   <section class="split">
     <h2>Stock on hand</h2><p class="sub">Unsold units as of today, by where they are, at what they cost you.</p>
-    ${stockRows.length?`<div class="tw"><table><thead><tr><th>Product</th>${LOCS.map(l=>`<th class="n">${l}</th>`).join("")}<th class="n">Total</th><th class="n">At cost</th></tr></thead><tbody>${stockRows.map(([k,g])=>`<tr><td class="name">${esc(k)}</td>${LOCS.map(l=>`<td class="n ${g.L[l]?"":"muted"}">${g.L[l]||"·"}</td>`).join("")}<td class="n"><b>${g.n}</b></td><td class="n">${R(g.v)}</td></tr>`).join("")}</tbody>
-    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="n">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="n">${stock.length}</td><td class="n">${R(stock.reduce((a,u)=>a+u.cost,0))}</td></tr></tfoot></table></div>`:`<p class="note">No unsold stock.</p>`}
+    ${stockRows.length?`<div class="tw"><table><thead><tr><th>Product</th>${LOCS.map(l=>`<th class="n">${l}</th>`).join("")}<th class="n">Total</th><th class="n">Avg cost</th><th class="n">At cost</th></tr></thead><tbody>${stockRows.map(([k,g])=>`<tr><td class="name">${esc(k)}</td>${LOCS.map(l=>`<td class="n ${g.L[l]?"":"muted"}">${g.L[l]||"·"}</td>`).join("")}<td class="n"><b>${g.n}</b></td><td class="n">${R(g.v/g.n)}</td><td class="n">${R(g.v)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="n">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="n">${stock.length}</td><td class="n">${stock.length?R(stock.reduce((a,u)=>a+u.cost,0)/stock.length):""}</td><td class="n">${R(stock.reduce((a,u)=>a+u.cost,0))}</td></tr></tfoot></table></div>`:`<p class="note">No unsold stock.</p>`}
   </section>
 
   <section>
