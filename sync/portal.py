@@ -27,6 +27,50 @@ class NeedsLogin(Exception):
     pass
 
 
+def _creds(site):
+    """Login details the owner typed into config.ini (they never leave the PC). site: 'takealot' or 'courier'."""
+    import configparser
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    e, pw = (c.get(f"{site}_email") or "").strip(), (c.get(f"{site}_password") or "").strip()
+    return (e, pw) if e and pw and "PASTE" not in pw.upper() else (None, None)
+
+
+def auto_login(page, site, log, ok_check, timeout_s=40):
+    """Fill in the portal's own login form with the details from config.ini. Returns True once logged in."""
+    email, pw = _creds(site)
+    name = {"takealot": "Takealot", "courier": "Courier Guy"}[site]
+    if not email:
+        return False
+    try:
+        page.wait_for_selector("input[type=password]", timeout=20_000)
+        user = page.locator("input[type=email], input[name*=email i], input[name*=user i], input[id*=email i], input[id*=user i]").first
+        user.fill(email)
+        page.locator("input[type=password]").first.fill(pw)
+        btn = page.locator("button[type=submit], input[type=submit]")
+        if btn.count():
+            btn.first.click()
+        else:
+            page.locator("input[type=password]").first.press("Enter")
+        deadline = datetime.now() + timedelta(seconds=timeout_s)
+        while datetime.now() < deadline:
+            page.wait_for_timeout(1000)
+            if ok_check(page):
+                log(f"{name}: logged back in automatically.")
+                return True
+        DEBUG_DIR.mkdir(exist_ok=True)
+        page.screenshot(path=str(DEBUG_DIR / f"{site}_login_failed.png"))
+        body = (page.inner_text("body") or "")[:400].replace("\n", " ")
+        why = ("it asked for a code" if page.locator("input[autocomplete=one-time-code], input[name*=otp i], input[name*=code i]").count()
+               else "it didn't accept the email or password" if any(w in body.lower() for w in ("invalid", "incorrect", "wrong"))
+               else "it didn't finish")
+        log(f"{name}: automatic login failed ({why}). Page said: {body[:200]}")
+    except Exception as e:
+        log(f"{name}: automatic login failed: {repr(e)[:200]}")
+    return False
+
+
 def launch(p, cfg, headless, profile_dir: Path, downloads: Path):
     profile_dir.mkdir(parents=True, exist_ok=True)
     downloads.mkdir(exist_ok=True)
@@ -133,7 +177,16 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     break
                 page.wait_for_timeout(500)
             if "/login" in page.url:
-                raise NeedsLogin()
+                if not auto_login(page, "takealot", log, lambda pg: "/login" not in pg.url and "sellers.takealot.com" in pg.url):
+                    raise NeedsLogin()
+                auth.clear()
+                page.goto(SALES_URL, wait_until="domcontentloaded", timeout=90_000)
+                for _ in range(40):
+                    if auth or "/login" in page.url:
+                        break
+                    page.wait_for_timeout(500)
+                if "/login" in page.url:
+                    raise NeedsLogin()
             if not auth:
                 raise RuntimeError("The sales page didn't load its data.")
             start = max(date.fromisoformat(cfg["since"]), date.today() - timedelta(days=90))
@@ -350,9 +403,17 @@ def fetch_courier(ctx, cfg, log):
             break
         page.wait_for_timeout(500)
     if not auth or page.locator("input[type=password]").count() or "login" in page.url.lower():
-        log("Courier Guy login needed: double-click COURIER_LOGIN.bat in the Sync folder.")
-        page.close()
-        return
+        ok = lambda pg: "thecourierguy" in pg.url and "login" not in pg.url.lower() and pg.locator("input[type=password]").count() == 0
+        if auto_login(page, "courier", log, ok):
+            page.goto(COURIER_URL, wait_until="domcontentloaded", timeout=90_000)
+            for _ in range(30):
+                if auth:
+                    break
+                page.wait_for_timeout(500)
+        if not auth:
+            log("Courier Guy login needed: double-click COURIER_LOGIN.bat in the Sync folder.")
+            page.close()
+            return
     from urllib.parse import quote
     shipments, off = [], 0
     while off < 1000:
