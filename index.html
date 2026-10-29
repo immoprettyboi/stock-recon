@@ -584,7 +584,7 @@ function setView(v){
 /* ---------------- sync card ---------------- */
 $("#otpBox").addEventListener("submit", async e=>{ e.preventDefault();
   const code=$("#otpCode").value.replace(/\D/g,""); if(code.length<4){ toast("Type the PIN from Takealot's email"); return; }
-  const { error } = await sb.from("sync_runs").insert({ requested:false, ok:true, finished_at:new Date().toISOString(), message:"otp:"+code });
+  const { error } = await sb.from("sync_runs").insert({ requested:true, message:"otp:"+code });
   if(error) toast("Couldn't send the PIN: "+errMsg(error)); else { $("#otpCode").value=""; toast("PIN sent. The PC logs in within a few seconds."); } });
 function renderSync(){
   const dot=$("#syncDot");
