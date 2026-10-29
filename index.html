@@ -67,6 +67,18 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .btn.danger.solid{background:var(--bad);color:var(--surface)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 
+/* chart */
+.chart-card{margin-top:14px}
+.chart-card .sec-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.seg{display:flex;gap:4px}.seg .btn.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.chart-wrap{position:relative;width:100%}
+.chart-wrap svg{display:block;width:100%;height:240px;overflow:visible}
+.chart-wrap .ax{font:11px var(--body);fill:var(--muted)}
+.chart-wrap .grid{stroke:var(--line);stroke-width:1}
+.chart-wrap .bar{fill:var(--accent)}.chart-wrap .bar.neg{fill:var(--bad)}.chart-wrap .bar.dim{opacity:.35}
+.chart-wrap .hit{fill:transparent;cursor:default}
+.chart-tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);white-space:nowrap;color:var(--fg)}
+.chart-tip b{font-family:var(--mono)}
 /* tiles */
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
@@ -240,6 +252,14 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <button class="btn" type="button" id="syncNow">Sync now</button>
     </div>
     <div class="tiles" id="tiles"></div>
+    <div class="panel chart-card">
+      <div class="sec-head"><h2 id="chTitle">Profit by day</h2>
+        <div class="seg" role="group" aria-label="Measure">
+          <button type="button" class="btn small on" data-ch="P">Profit</button><button type="button" class="btn small" data-ch="G">Sales</button><button type="button" class="btn small" data-ch="n">Units sold</button>
+        </div></div>
+      <p class="note" id="chSub"></p>
+      <div class="chart-wrap" id="chart"></div>
+    </div>
     <div class="cols">
       <div class="panel">
         <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
@@ -586,6 +606,50 @@ $("#syncNow").addEventListener("click", async ()=>{
   toast(error ? "Couldn't ask the PC to sync: "+errMsg(error) : "Sync requested. The PC picks it up within a minute.");
 });
 
+
+/* ---------------- chart: one measure per day (or per month for "all time") ---------------- */
+let chMeasure="P";
+function renderChart(){
+  const el=$("#chart"); if(!el) return;
+  const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u) && u.sold_date);
+  const byMonth=state.month==="all";
+  const key=u=>String(u.sold_date).slice(0,byMonth?7:10);
+  let keys=[];
+  if(byMonth){ keys=[...new Set(sold.map(key))].sort(); }
+  else { const [y,m]=state.month.split("-").map(Number); const days=new Date(y,m,0).getDate(); for(let d=1;d<=days;d++) keys.push(`${state.month}-${String(d).padStart(2,"0")}`); }
+  const agg=new Map(keys.map(k=>[k,{n:0,G:0,P:0,wait:0}]));
+  sold.forEach(u=>{ const g=agg.get(key(u)); if(!g) return; g.n++; g.G+=u.gross||0; g.P+=(u.gross||0)-(u.fees||0)-(u.cost||0); if(u.status==="awaiting_fees") g.wait++; });
+  const L={P:"Profit",G:"Sales",n:"Units sold"}[chMeasure];
+  $("#chTitle").textContent=`${L} by ${byMonth?"month":"day"}`;
+  const vals=keys.map(k=>agg.get(k)[chMeasure]);
+  const tot=vals.reduce((a,b)=>a+b,0), waitN=sold.filter(u=>u.status==="awaiting_fees").length;
+  $("#chSub").textContent = !sold.length ? "No sales in this period." :
+    `${chMeasure==="n"?tot:R0(tot)} in total`+(chMeasure==="P"?` · from sales, before delivery costs`+(waitN?` · ${waitN} unit${waitN>1?"s":""} still awaiting fees, so their profit drops a little when Takealot charges`:""):"");
+  if(!sold.length){ el.innerHTML=""; return; }
+  const W=Math.max(320, el.clientWidth||640), H=240, ml=chMeasure==="n"?28:64, mr=6, mt=8, mb=24;
+  let hi=Math.max(0,...vals), lo=Math.min(0,...vals); if(hi===lo) hi=lo+1;
+  const nice=v=>{ const e=Math.pow(10,Math.floor(Math.log10(Math.abs(v)||1))); const f=Math.abs(v)/e; const s=f<=1?1:f<=2?2:f<=5?5:10; return Math.sign(v)*s*e; };
+  const step=nice((hi-lo)/4); hi=Math.ceil(hi/step)*step; lo=Math.floor(lo/step)*step;
+  const y=v=>mt+(hi-v)/(hi-lo)*(H-mt-mb), bw=(W-ml-mr)/keys.length, gap=Math.min(2,bw*.2);
+  const fmtAx=v=>chMeasure==="n"?String(v):(Math.abs(v)>=1000?`R${(v/1000).toLocaleString("en-ZA",{maximumFractionDigits:1})}k`:`R${v}`);
+  let g="";
+  for(let v=lo; v<=hi+1e-9; v+=step) g+=`<line class="grid" x1="${ml}" x2="${W-mr}" y1="${y(v)}" y2="${y(v)}" ${v===0?'style="stroke:var(--muted)"':""}/><text class="ax" x="${ml-6}" y="${y(v)+4}" text-anchor="end">${fmtAx(v)}</text>`;
+  const every=byMonth?1:(bw<14?5:bw<22?2:1);
+  keys.forEach((k,i)=>{ const v=vals[i], x=ml+i*bw+gap/2, w=Math.max(1,bw-gap), y0=y(0), y1=y(v), top=Math.min(y0,y1), h=Math.abs(y1-y0);
+    if(v) g+=`<path class="bar ${v<0?"neg":""}" data-i="${i}" d="${v>=0?`M${x},${y0}V${top+Math.min(4,h)}Q${x},${top} ${x+Math.min(4,w/2)},${top}H${x+w-Math.min(4,w/2)}Q${x+w},${top} ${x+w},${top+Math.min(4,h)}V${y0}Z`:`M${x},${y0}V${top+h-Math.min(4,h)}Q${x},${top+h} ${x+Math.min(4,w/2)},${top+h}H${x+w-Math.min(4,w/2)}Q${x+w},${top+h} ${x+w},${top+h-Math.min(4,h)}V${y0}Z`}"/>`;
+    g+=`<rect class="hit" data-i="${i}" x="${ml+i*bw}" y="${mt}" width="${bw}" height="${H-mt-mb}"/>`;
+    if(byMonth || (i%every===0)) g+=`<text class="ax" x="${ml+i*bw+bw/2}" y="${H-6}" text-anchor="middle">${byMonth?MON[+k.slice(5,7)-1]+" "+k.slice(2,4):+k.slice(8)}</text>`; });
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L)} by ${byMonth?"month":"day"}">${g}</svg><div class="chart-tip" hidden></div>`;
+  const tip=el.querySelector(".chart-tip"), svg=el.querySelector("svg");
+  svg.addEventListener("mousemove",e=>{ const r=e.target.closest(".hit"); svg.querySelectorAll(".bar").forEach(b=>b.classList.toggle("dim", !!r && b.dataset.i!==r?.dataset.i));
+    if(!r){ tip.hidden=true; return; } const i=+r.dataset.i, k=keys[i], a=agg.get(k);
+    tip.innerHTML=`<div>${byMonth?MON[+k.slice(5,7)-1]+" "+k.slice(0,4):fd(k)}</div><div>${a.n} unit${a.n===1?"":"s"} sold</div><div>Sales <b>${R0(a.G)}</b></div><div>Profit <b>${R0(a.P)}</b></div>${a.wait?`<div class="muted">${a.wait} awaiting fees</div>`:""}`;
+    tip.hidden=false; const bx=el.getBoundingClientRect(); let lx=e.clientX-bx.left+12; if(lx+tip.offsetWidth>bx.width) lx=e.clientX-bx.left-tip.offsetWidth-12; tip.style.left=lx+"px"; tip.style.top=Math.max(0,e.clientY-bx.top-tip.offsetHeight-8)+"px"; });
+  svg.addEventListener("mouseleave",()=>{ tip.hidden=true; svg.querySelectorAll(".bar").forEach(b=>b.classList.remove("dim")); });
+  svg.addEventListener("click",e=>svg.dispatchEvent(new MouseEvent("mousemove",{clientX:e.clientX,clientY:e.clientY,bubbles:true})));
+}
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-ch]"); if(!b) return; chMeasure=b.dataset.ch; document.querySelectorAll("[data-ch]").forEach(x=>x.classList.toggle("on",x===b)); renderChart(); });
+let chRs; window.addEventListener("resize",()=>{ clearTimeout(chRs); chRs=setTimeout(renderChart,150); });
 /* ---------------- overview ---------------- */
 function renderOverview(){
   const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
@@ -667,6 +731,7 @@ function renderOverview(){
     <tfoot><tr><td>Total</td><td class="num">${sold.length}</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td><td class="num">${sold.length?R(G/sold.length):""}</td><td class="num">${sold.length?R(C/sold.length):""}</td><td class="num">${sold.length?R(P/sold.length):""}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No sales in ${esc(mLabel)}.</td></tr></tbody>`;
   $("#byProduct").innerHTML=tbl(group("product"),"Product");
+  renderChart();
   $("#bySupplier").innerHTML=tbl(group("supplier"),"Supplier");
   $("#ppSub").textContent=$("#psSub").textContent=`Sales in ${mLabel}, before courier top-ups`;
   renderAdam();
