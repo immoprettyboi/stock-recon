@@ -247,7 +247,10 @@ def parse_recon(text):
             if k not in ("period", "sku", "tsin_id", "product_title") and k:
                 line[k] = _num(v)
         rows.append(line)
-        lost, other = line.get("warehouse_down_adjustments", 0), line.get("other_outflow", 0)
+        lost = line.get("warehouse_down_adjustments", 0)
+        # picked-out / counted-out stock that wasn't found again in the same month (found stock cancels it out)
+        other = max(0.0, line.get("other_outflow", 0) - line.get("other_inflow", 0) - line.get("warehouse_up_adjustments", 0)
+                    - line.get("lost_in_transit_returns_found", 0))
         if lost > 0 or other > 0:
             missing.append({"sku": line["sku"], "title": line["title"], "lost": lost, "other_outflow": other,
                             "claim_value": line.get("total_claim_value", 0), "average_selling_price": line.get("average_selling_price", 0),
