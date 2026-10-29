@@ -39,7 +39,7 @@ h1{font:600 44px/1.05 var(--serif);margin:6px 0 0;letter-spacing:-.01em}
 .hero{display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:center;padding:26px 0 22px;border-bottom:1px solid var(--rule)}
 .hero .lbl{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .hero .big{font:600 56px/1 var(--serif);letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:6px}
-.hero .big.neg{color:var(--bad)} .muted{color:var(--muted)}
+.hero .big.neg{color:var(--bad)} .muted{color:var(--muted)} .nw{white-space:nowrap}
 .hero .delta{display:inline-block;margin-top:8px;font:600 12px var(--sans);padding:2px 8px;border-radius:99px}
 .delta.up{background:var(--good-soft);color:var(--good)} .delta.down{background:var(--bad-soft);color:var(--bad)}
 .hero p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink2)}
@@ -75,7 +75,7 @@ th:first-child,td:first-child{padding-left:0} th:last-child,td:last-child{paddin
 tfoot td{border-top:1px solid var(--ink);border-bottom:0;font-weight:700}
 td.name{min-width:200px}
 .share{display:block;height:4px;border-radius:2px;background:var(--accent);margin-top:6px;opacity:.85}
-.neg{color:var(--bad)} .muted{color:var(--muted)}
+.neg{color:var(--bad)} .muted{color:var(--muted)} .nw{white-space:nowrap}
 .pill{display:inline-block;font:600 11px var(--sans);padding:1px 8px;border-radius:99px;white-space:nowrap}
 .p-good{background:var(--good-soft);color:var(--good)} .p-bad{background:var(--bad-soft);color:var(--bad)} .p-acc{background:var(--accent-soft);color:var(--accent)} .p-mut{background:var(--rule2);color:var(--ink2)}
 
@@ -265,7 +265,7 @@ function render(m){
 
   <section class="pb">
     <h2>Deliveries to Takealot</h2><p class="sub">POs due in ${MON[+m.slice(5,7)-1]}, how they got there, and what it cost.</p>
-    ${pos.length?`<div class="tw"><table><thead><tr><th>PO</th><th>To</th><th>Due</th><th class="n">Sent</th><th class="n">Received</th><th>Delivered by</th><th class="n">Cost</th></tr></thead><tbody>${pos.map(p=>{ const d=deliv(p); return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td>${fd(p.due_date)}</td><td class="n">${p.qty_sending??""}</td><td class="n">${p.qty_received??"–"}</td><td>${d.how}</td><td class="n">${d.cost!=null?R(d.cost):""}</td></tr>`; }).join("")}</tbody>
+    ${pos.length?`<div class="tw"><table><thead><tr><th>PO</th><th>To</th><th>Due</th><th class="n">Sent</th><th class="n">Received</th><th>Delivered by</th><th class="n">Cost</th></tr></thead><tbody>${pos.map(p=>{ const d=deliv(p); return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td class="n">${p.qty_sending??""}</td><td class="n">${p.qty_received??"–"}</td><td>${d.how}</td><td class="n">${d.cost!=null?R(d.cost):""}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="3">${pos.length} PO${pos.length===1?"":"s"}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_sending||0),0)}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_received||0),0)}</td><td></td><td class="n">${R(pos.reduce((a,p)=>a+(deliv(p).cost||0),0))}</td></tr></tfoot></table></div>`:`<p class="note">No POs due this month.</p>`}
     <div class="cols" style="margin-top:22px">
       <div><h2 style="font-size:17px">Delivery costs</h2><p class="sub">Taken off this month's profit.</p>
@@ -281,7 +281,7 @@ function render(m){
 
   <section>
     <h2>Returns</h2><p class="sub">${rets.length?`${rets.reduce((a,r)=>a+(r.qty||1),0)} return${rets.length===1?"":"s"} in ${MON[+m.slice(5,7)-1]}: ${rk.sellable} back in Takealot stock, ${rk.pending} pending, ${rk.removal} coming back to you.`:`No returns in ${MON[+m.slice(5,7)-1]}.`}</p>
-    ${rets.length?`<div class="tw"><table><thead><tr><th>Date</th><th>Product</th><th>Order</th><th>Reason</th><th>Outcome</th></tr></thead><tbody>${rets.map(r=>{ const [t,c]=rLabel[rKind(r.outcome)]; return `<tr><td>${fd(r.return_date)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.order_id)}</td><td>${esc(r.reason||"")}</td><td><span class="pill ${c}">${t}</span></td></tr>`; }).join("")}</tbody></table></div>`:""}
+    ${rets.length?`<div class="tw"><table><thead><tr><th>Date</th><th>Product</th><th>Order</th><th>Reason</th><th>Outcome</th></tr></thead><tbody>${rets.map(r=>{ const [t,c]=rLabel[rKind(r.outcome)]; return `<tr><td class="nw">${fd(r.return_date)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.order_id)}</td><td>${esc(r.reason||"")}</td><td><span class="pill ${c}">${t}</span></td></tr>`; }).join("")}</tbody></table></div>`:""}
   </section>
 
   <section class="split">
