@@ -260,7 +260,7 @@ def parse_recon(text):
 
 def takealot_recon(ctx, cfg, auth, log):
     """Takealot releases a Stock Recon report for each month. From the 1st, ask for last month's, download it when it's
-    ready, save it (file + database) and e-mail it with any missing stock, so the claim can be sent to Takealot."""
+    ready, and save it (file + database). Missing stock shows in the app (Needs you / Stock check); no e-mail is sent."""
     import stockrecon_sync as S
     db = S.DB(cfg["url"], cfg["key"])
     try:
@@ -329,22 +329,6 @@ def takealot_recon(ctx, cfg, auth, log):
         label = f"{_MONTHS[int(m[5:7]) - 1]} {m[:4]}"
         log(f"Takealot stock recon {label}: {len(rows)} product line(s), "
             + (f"{units} unit(s) missing, claim value R{claim:,.2f}." if missing else "nothing missing."))
-        if m >= "2026-10":
-            if missing:
-                lines = [f"Takealot's Stock Recon for {label} shows missing stock:", ""]
-                for x in missing:
-                    lines.append(f"- {x['title']} (SKU {x['sku']}): {int(x['lost'])} lost"
-                                 + (f", {int(x['other_outflow'])} other outflow" if x["other_outflow"] else "")
-                                 + f", claim value R{x['claim_value']:,.2f}")
-                lines += ["", f"Total to claim: R{claim:,.2f}", "",
-                          "To get reimbursed: e-mail Takealot (reply on your query ticket) with the attached Stock Recon file "
-                          "and an invoice for the claim value. Then mark it as claimed in the app (Stock check tab).", "", "Stock Recon"]
-                subj = f"Takealot Stock Recon {label}: {units} unit(s) missing, claim R{claim:,.0f}"
-            else:
-                lines = [f"Takealot's Stock Recon for {label} is in: nothing missing, nothing to claim.", "",
-                         "The file is attached for your records.", "", "Stock Recon"]
-                subj = f"Takealot Stock Recon {label}: nothing missing"
-            send_mail(subj, "\n".join(lines), [(name, text.encode("utf-8"), "text", "csv")], log, what=f"Takealot stock recon {label}")
 
 
 def test_logins(p, cfg, log):
