@@ -226,6 +226,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="spacer"></div>
       <label class="muted" for="month" style="font-size:12px">Sales month</label>
       <select id="month" aria-label="Sales month"></select>
+      <button class="btn small" type="button" id="openReport">Monthly report</button>
       <button class="btn small" type="button" id="signOut">Sign out</button>
     </div>
     <nav class="tabs" role="tablist">
@@ -571,6 +572,7 @@ function buildMonths(){
   sel.value=state.month;
 }
 $("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
+$("#openReport").addEventListener("click",()=>window.open(`report.html${state.month&&state.month!=="all"?`?m=${state.month}`:""}`,"_blank"));
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
 function setView(v){
   if(!$("#view-"+v)) v="overview";

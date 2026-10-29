@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monthly Report · Stock Recon</title>
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* A printed-statement look: paper, one ink, one accent. Light only on purpose: it is made to be printed / saved as PDF. */
+:root{
+  --paper:#ffffff; --desk:#eceae4; --ink:#16181d; --ink2:#4a505c; --muted:#7a808c; --rule:#dcdad3; --rule2:#eeece6;
+  --accent:#1f4fd1; --accent-soft:#e8eefc; --good:#1d7a3e; --good-soft:#e3f3e8; --bad:#b42323; --bad-soft:#fbe6e6; --warn:#9a6400;
+  --serif:"Fraunces",Georgia,serif; --sans:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--desk);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+[hidden]{display:none!important}
+.toolbar{position:sticky;top:0;z-index:5;background:rgba(236,234,228,.92);backdrop-filter:blur(6px);border-bottom:1px solid var(--rule)}
+.toolbar .in{max-width:860px;margin:0 auto;padding:10px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.toolbar a{color:var(--ink2);text-decoration:none;font-weight:600}
+.toolbar .sp{flex:1}
+select,.btn{font:600 13px var(--sans);border:1px solid var(--rule);background:#fff;color:var(--ink);border-radius:6px;padding:7px 12px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.page{max-width:860px;margin:20px auto 60px;background:var(--paper);box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 30px rgba(0,0,0,.06);padding:48px 52px}
+@media (max-width:640px){ .page{margin:0;padding:24px 16px;box-shadow:none} }
+.msg{max-width:860px;margin:60px auto;text-align:center;color:var(--ink2)}
+
+/* masthead */
+.mast{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;border-bottom:2px solid var(--ink);padding-bottom:14px}
+.kicker{font:600 11px var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{font:600 44px/1.05 var(--serif);margin:6px 0 0;letter-spacing:-.01em}
+.mast .meta{text-align:right;color:var(--muted);font-size:12px;line-height:1.6}
+.mast .meta b{color:var(--ink);font-weight:600}
+@media (max-width:640px){ h1{font-size:34px} .mast{flex-direction:column;align-items:flex-start} .mast .meta{text-align:left} }
+
+/* headline */
+.hero{display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:center;padding:26px 0 22px;border-bottom:1px solid var(--rule)}
+.hero .lbl{font:600 11px var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.hero .big{font:600 56px/1 var(--serif);letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin-top:6px}
+.hero .big.neg{color:var(--bad)} .muted{color:var(--muted)}
+.hero .delta{display:inline-block;margin-top:8px;font:600 12px var(--sans);padding:2px 8px;border-radius:99px}
+.delta.up{background:var(--good-soft);color:var(--good)} .delta.down{background:var(--bad-soft);color:var(--bad)}
+.hero p{margin:0;font-size:15.5px;line-height:1.6;color:var(--ink2)}
+.hero p b{color:var(--ink)}
+@media (max-width:640px){ .hero{grid-template-columns:1fr;gap:12px} .hero .big{font-size:44px} }
+
+/* KPI grid */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--rule)}
+.kpi{padding:16px 14px 16px 0}
+.kpi + .kpi{padding-left:14px;border-left:1px solid var(--rule2)}
+.kpi:nth-child(5){padding-left:0;border-left:0}
+.kpi:nth-child(n+5){border-top:1px solid var(--rule2)}
+.kpi .l{font:600 10.5px var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.kpi .v{font:600 22px/1.2 var(--sans);font-variant-numeric:tabular-nums;margin-top:4px;letter-spacing:-.01em}
+.kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
+@media (max-width:640px){ .kpis{grid-template-columns:repeat(2,1fr)} .kpi{padding:12px 10px!important;border-left:0!important;border-top:1px solid var(--rule2)} }
+
+/* sections */
+section{padding-top:30px;break-inside:avoid}
+section.split{break-inside:auto}
+h2{font:600 22px/1.2 var(--serif);margin:0 0 4px}
+.sub{color:var(--muted);font-size:12.5px;margin:0 0 14px}
+.note{color:var(--muted);font-size:12px;margin:8px 0 0}
+
+/* tables */
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font:600 10.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:0 10px 8px;border-bottom:1px solid var(--ink);white-space:nowrap}
+td{padding:9px 10px;border-bottom:1px solid var(--rule2);vertical-align:top}
+th:first-child,td:first-child{padding-left:0} th:last-child,td:last-child{padding-right:0}
+.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.mono{font-family:var(--mono);font-size:12px}
+tfoot td{border-top:1px solid var(--ink);border-bottom:0;font-weight:700}
+td.name{min-width:200px}
+.share{display:block;height:4px;border-radius:2px;background:var(--accent);margin-top:6px;opacity:.85}
+.neg{color:var(--bad)} .muted{color:var(--muted)}
+.pill{display:inline-block;font:600 11px var(--sans);padding:1px 8px;border-radius:99px;white-space:nowrap}
+.p-good{background:var(--good-soft);color:var(--good)} .p-bad{background:var(--bad-soft);color:var(--bad)} .p-acc{background:var(--accent-soft);color:var(--accent)} .p-mut{background:var(--rule2);color:var(--ink2)}
+
+/* chart */
+.chart{position:relative}
+.chart svg{display:block;width:100%;height:220px;overflow:visible}
+.chart .ax{font:10.5px var(--sans);fill:var(--muted)}
+.chart .grid{stroke:var(--rule2)} .chart .zero{stroke:var(--ink2)}
+.chart .bar{fill:var(--accent)} .chart .bar.best{fill:var(--ink)} .chart .bar.negb{fill:var(--bad)}
+.chart .ann{font:600 11px var(--sans);fill:var(--ink)}
+
+/* two columns */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+@media (max-width:640px){ .cols{grid-template-columns:1fr} }
+.stat-list{display:grid;gap:0}
+.stat-list div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--rule2)}
+.stat-list div span:last-child{font-variant-numeric:tabular-nums;font-weight:600}
+.callout{background:var(--accent-soft);border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ink)}
+
+footer{margin-top:36px;padding-top:12px;border-top:1px solid var(--rule);color:var(--muted);font-size:11.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+
+@media print{
+  @page{size:A4;margin:14mm 12mm}
+  html,body{background:#fff}
+  .toolbar{display:none}
+  .page{box-shadow:none;margin:0;padding:0;max-width:none}
+  section{padding-top:22px}
+  .pb{break-before:page}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<div class="toolbar"><div class="in">
+  <a href="./">← Back to Stock Recon</a><span class="sp"></span>
+  <select id="m" aria-label="Month"></select>
+  <button class="btn primary" id="print" type="button">Print / Save as PDF</button>
+</div></div>
+<div class="msg" id="msg">Loading your report…</div>
+<main class="page" id="page" hidden></main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://dycpqdoqsbjvtzomvwzi.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5Y3BxZG9xc2JqdnR6b212d3ppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5ODgzNjcsImV4cCI6MjEwODU2NDM2N30.yscmk2jsOuHzNrJizhr34rRtFjxNLHXpkx2kBVjdYN8";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const R = v => (v<0?"−":"")+"R\u00a0"+Math.round(Math.abs(v||0)).toLocaleString("en-ZA");
+const pct = v => (isFinite(v)?(v*100).toFixed(1):"0.0")+"%";
+const MON=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const mLabel = m => `${MON[+m.slice(5,7)-1]} ${m.slice(0,4)}`;
+const fd = d => d ? `${+String(d).slice(8,10)} ${MS[+String(d).slice(5,7)-1]}` : "";
+const SOLD = new Set(["awaiting_fees","settled"]);
+const IGNORE="__ignore__";
+
+async function all(table, q="*"){ let out=[],f=0; for(;;){ const {data,error}=await sb.from(table).select(q).range(f,f+999); if(error) throw error; out=out.concat(data); if(data.length<1000) return out; f+=1000; } }
+async function opt(table){ try{ return await all(table); }catch(e){ return []; } }
+
+let D=null;
+(async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){ $("#msg").innerHTML=`Please <a href="./">sign in to Stock Recon</a> first, then open the report again.`; return; }
+  try{
+    const [units,products,expenses,rets,ships,pos]=await Promise.all([all("units"),all("products"),opt("expenses"),opt("takealot_returns"),opt("courier_shipments"),opt("takealot_pos")]);
+    D={units:units.map(u=>({...u,gross:+u.gross||0,fees:+u.fees||0,cost:+u.cost||0})),products,expenses:expenses.map(e=>({...e,amount:+e.amount||0})),rets,ships,pos};
+  }catch(e){ $("#msg").textContent="Couldn't load the data: "+(e.message||e); return; }
+  const months=[...new Set(D.units.filter(u=>SOLD.has(u.status)&&u.sold_date).map(u=>u.sold_date.slice(0,7)))].sort().reverse();
+  const want=new URLSearchParams(location.search).get("m");
+  $("#m").innerHTML=months.map(m=>`<option value="${m}">${mLabel(m)}</option>`).join("");
+  $("#m").value = months.includes(want)?want:months[0];
+  $("#m").onchange=()=>{ history.replaceState(null,"",`?m=${$("#m").value}`); render($("#m").value); };
+  $("#print").onclick=()=>window.print();
+  render($("#m").value);
+})();
+
+function stats(m){
+  const sold=D.units.filter(u=>SOLD.has(u.status) && (u.sold_date||"").slice(0,7)===m);
+  const G=sold.reduce((a,u)=>a+u.gross,0), F=sold.reduce((a,u)=>a+u.fees,0), C=sold.reduce((a,u)=>a+u.cost,0);
+  const exp=D.expenses.filter(e=>!["adam_balance","delivery_other"].includes(e.category) && String(e.date).slice(0,7)===m);
+  const X=exp.reduce((a,e)=>a+e.amount,0);
+  return {sold,G,F,C,P:G-F-C,X,N:G-F-C-X,exp};
+}
+
+function render(m){
+  const S=stats(m), prevM=(()=>{ const y=+m.slice(0,4), mo=+m.slice(5,7); return mo===1?`${y-1}-12`:`${y}-${String(mo-1).padStart(2,"0")}`; })();
+  const P0=stats(prevM), hasPrev=P0.sold.length>0;
+  const now=new Date(), thisM=now.toISOString().slice(0,7), partial=m===thisM;
+  const n=S.sold.length, wait=S.sold.filter(u=>u.status==="awaiting_fees");
+  const title={}; D.products.forEach(p=>{ if(p.product && p.product!==IGNORE){ title[p.takealot_title]=p.product; title[p.product]=p.product; } });
+  const grp=name=>title[name]||name;
+
+  // ---- groups
+  const by=(key)=>{ const mp=new Map(); S.sold.forEach(u=>{ const k=key(u)||"–"; const g=mp.get(k)||{n:0,G:0,F:0,C:0}; g.n++; g.G+=u.gross; g.F+=u.fees; g.C+=u.cost; mp.set(k,g); });
+    return [...mp].map(([k,g])=>({k,...g,P:g.G-g.F-g.C})).sort((a,b)=>b.P-a.P); };
+  const prods=by(u=>grp(u.product)), sups=by(u=>u.supplier);
+  const top=prods[0], topSup=sups[0];
+
+  // ---- days
+  const days=new Date(+m.slice(0,4), +m.slice(5,7), 0).getDate(), lastDay=partial?now.getDate():days;
+  const daily=Array.from({length:days},(_,i)=>({d:i+1,P:0,n:0,G:0}));
+  S.sold.forEach(u=>{ const d=+u.sold_date.slice(8,10); const x=daily[d-1]; if(x){ x.P+=u.gross-u.fees-u.cost; x.n++; x.G+=u.gross; } });
+  const best=daily.reduce((a,b)=>b.P>a.P?b:a,daily[0]);
+  const activeDays=daily.filter(x=>x.n).length;
+
+  // ---- returns, deliveries, stock
+  const rets=D.rets.filter(r=>String(r.return_date).slice(0,7)===m).sort((a,b)=>String(a.return_date).localeCompare(String(b.return_date)));
+  const rKind=o=>{ o=String(o||"").toLowerCase(); return /removal|return to seller|unsellable|collect|dispos/.test(o)?"removal":/pending/.test(o)?"pending":/sellable/.test(o)?"sellable":"other"; };
+  const rLabel={sellable:["Back in Takealot stock","p-good"],pending:["Pending at Takealot","p-mut"],removal:["Coming back to you","p-bad"],other:["Other","p-mut"]};
+  const poOf=x=>(String(x.reference||"").match(/\d{6,}/)||[""])[0];
+  const pos=D.pos.filter(p=>String(p.due_date).slice(0,7)===m).sort((a,b)=>String(a.due_date).localeCompare(String(b.due_date)));
+  const deliv=p=>{ const x=D.ships.find(s=>s.direction==="to_takealot" && poOf(s)===p.po && s.status!=="cancelled");
+    const ad=D.expenses.find(e=>e.category==="adam_delivery" && (e.raw||{}).po===p.po);
+    if(x) return {how:`Courier Guy <span class="mono">${esc(x.waybill)}</span>${x.status==="returned-to-sender"?` <span class="pill p-bad">rejected</span>`:""}`, cost:x.cost!=null?+x.cost:null};
+    if(ad) return {how:`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>`, cost:ad.amount};
+    return {how:`<span class="muted">not recorded</span>`, cost:null}; };
+  const topups=S.exp.filter(e=>e.category==="courier_topup"), adamD=S.exp.filter(e=>e.category==="adam_delivery");
+  const anchor=D.expenses.find(e=>e.id==="adam-balance");
+  const adamBal=anchor?Number((anchor.raw||{}).balance||0)-D.expenses.filter(e=>e.category==="adam_delivery" && e.created_at>anchor.created_at).reduce((a,e)=>a+e.amount,0):null;
+  const LOCS=["JHB","CPT","DBN","HOME"];
+  const stock=D.units.filter(u=>u.status==="in_stock");
+  const sp=new Map(); stock.forEach(u=>{ const k=grp(u.product); const g=sp.get(k)||{L:{},n:0,v:0}; g.L[u.location]=(g.L[u.location]||0)+1; g.n++; g.v+=u.cost; sp.set(k,g); });
+  const stockRows=[...sp].sort((a,b)=>b[1].v-a[1].v);
+  const comingBack=D.units.filter(u=>u.status==="return_me"), queries=D.units.filter(u=>u.status==="missing_query"), retTal=D.units.filter(u=>u.status==="return_takealot");
+
+  const delta=(cur,prev)=>{ if(!hasPrev||!prev) return ""; const d=(cur-prev)/Math.abs(prev); return `<span class="delta ${d>=0?"up":"down"}">${d>=0?"▲":"▼"} ${Math.abs(d*100).toFixed(0)}% vs ${MS[+prevM.slice(5,7)-1]}</span>`; };
+  const margin=S.G?S.N/S.G:0;
+
+  // ---- chart svg (profit per day, one series, one axis)
+  const W=760,H=220,ml=52,mr=4,mt=22,mb=22;
+  let hi=Math.max(0,...daily.map(x=>x.P)), lo=Math.min(0,...daily.map(x=>x.P)); if(hi===lo) hi=1;
+  const nice=v=>{const e=Math.pow(10,Math.floor(Math.log10(Math.abs(v)||1)));const f=Math.abs(v)/e;return (f<=1?1:f<=2?2:f<=5?5:10)*e;};
+  const step=nice((hi-lo)/4); hi=Math.ceil(hi/step)*step; lo=Math.floor(lo/step)*step;
+  const y=v=>mt+(hi-v)/(hi-lo)*(H-mt-mb), bw=(W-ml-mr)/days;
+  let svg="";
+  for(let v=lo;v<=hi+1e-9;v+=step) svg+=`<line class="${v===0?"zero":"grid"}" x1="${ml}" x2="${W-mr}" y1="${y(v)}" y2="${y(v)}"/><text class="ax" x="${ml-8}" y="${y(v)+3.5}" text-anchor="end">${Math.abs(v)>=1000?`R${(v/1000).toLocaleString("en-ZA",{maximumFractionDigits:1})}k`:`R${v}`}</text>`;
+  daily.forEach((x,i)=>{ const bx=ml+i*bw+1, w=Math.max(1,bw-2), y0=y(0), y1=y(x.P), t=Math.min(y0,y1), h=Math.abs(y1-y0), r=Math.min(3,w/2,h);
+    if(x.P) svg+= x.P>0 ? `<path class="bar ${x===best?"best":""}" d="M${bx},${y0}V${t+r}Q${bx},${t} ${bx+r},${t}H${bx+w-r}Q${bx+w},${t} ${bx+w},${t+r}V${y0}Z"><title>${x.d} ${MS[+m.slice(5,7)-1]}: ${x.n} sold, profit ${R(x.P)}</title></path>`
+                        : `<rect class="bar negb" x="${bx}" y="${t}" width="${w}" height="${h}"><title>${x.d}: ${R(x.P)}</title></rect>`;
+    if((i+1)%(days>20?5:1)===0||i===0) svg+=`<text class="ax" x="${bx+w/2}" y="${H-6}" text-anchor="middle">${x.d}</text>`; });
+  if(best && best.P>0){ const bx=ml+(best.d-1)*bw+bw/2; svg+=`<text class="ann" x="${Math.min(Math.max(bx,ml+60),W-60)}" y="${y(best.P)-7}" text-anchor="middle">Best day · ${R(best.P)}</text>`; }
+
+  const prodRows=prods.map(r=>`<tr><td class="name">${esc(r.k)}<span class="share" style="width:${top&&top.P>0?Math.max(2,r.P/top.P*100):0}%"></span></td><td class="n">${r.n}</td><td class="n">${R(r.G)}</td><td class="n">${R(r.G/r.n)}</td><td class="n">${R(r.C/r.n)}</td><td class="n ${r.P<0?"neg":""}"><b>${R(r.P)}</b></td><td class="n">${pct(r.G?r.P/r.G:0)}</td></tr>`).join("");
+  const supRows=sups.map(r=>`<tr><td>${esc(r.k)}</td><td class="n">${r.n}</td><td class="n">${R(r.C)}</td><td class="n">${R(r.C/r.n)}</td><td class="n ${r.P<0?"neg":""}"><b>${R(r.P)}</b></td><td class="n">${R(r.P/r.n)}</td></tr>`).join("");
+  const rk={sellable:0,pending:0,removal:0,other:0}; rets.forEach(r=>rk[rKind(r.outcome)]+=(r.qty||1));
+
+  $("#page").innerHTML=`
+  <header class="mast">
+    <div><div class="kicker">Monthly report · Takealot</div><h1>${mLabel(m)}</h1></div>
+    <div class="meta"><b>Stock Recon</b><br>${partial?`Month to date, 1–${lastDay} ${MS[+m.slice(5,7)-1]}`:`Full month`}<br>Prepared ${now.getDate()} ${MS[now.getMonth()]} ${now.getFullYear()}, ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}</div>
+  </header>
+
+  <div class="hero">
+    <div><div class="lbl">Profit after all costs</div><div class="big ${S.N<0?"neg":""}">${R(S.N)}</div>${delta(S.N,P0.N)}</div>
+    <p>${n?`You sold <b>${n} unit${n===1?"":"s"}</b> for <b>${R(S.G)}</b>. After Takealot's fees of ${R(S.F)}, the ${R(S.C)} the units cost you${S.X?` and ${R(S.X)} in delivery costs`:""}, you kept <b>${R(S.N)}</b>, a <b>${pct(margin)}</b> margin.${top?` <b>${esc(top.k)}</b> earned the most (${R(top.P)} from ${top.n} sold).`:""}`:`No sales recorded in ${mLabel(m)}.`}</p>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="l">Units sold</div><div class="v">${n}</div><div class="s">${activeDays} selling day${activeDays===1?"":"s"}</div></div>
+    <div class="kpi"><div class="l">Gross sales</div><div class="v">${R(S.G)}</div><div class="s">${delta(S.G,P0.G)||"&nbsp;"}</div></div>
+    <div class="kpi"><div class="l">Takealot fees</div><div class="v">${R(S.F)}</div><div class="s">${pct(S.G?S.F/S.G:0)} of sales</div></div>
+    <div class="kpi"><div class="l">Cost of units</div><div class="v">${R(S.C)}</div><div class="s">${pct(S.G?S.C/S.G:0)} of sales</div></div>
+    <div class="kpi"><div class="l">Profit from sales</div><div class="v">${R(S.P)}</div><div class="s">before delivery</div></div>
+    <div class="kpi"><div class="l">Delivery costs</div><div class="v">${R(S.X)}</div><div class="s">Courier top-ups & Adam</div></div>
+    <div class="kpi"><div class="l">Avg sale price</div><div class="v">${n?R(S.G/n):"–"}</div><div class="s">avg cost ${n?R(S.C/n):"–"}</div></div>
+    <div class="kpi"><div class="l">Avg profit / unit</div><div class="v">${n?R(S.P/n):"–"}</div><div class="s">from sales</div></div>
+  </div>
+  ${wait.length?`<p class="note">${wait.length} unit${wait.length>1?"s are":" is"} still awaiting Takealot's fees (${R(wait.reduce((a,u)=>a+u.gross,0))} in sales), so profit will come down slightly once they're charged.</p>`:""}
+
+  ${n?`<section>
+    <h2>Profit by day</h2><p class="sub">Profit from sales on each day of ${MON[+m.slice(5,7)-1]} (before delivery costs).${best&&best.P>0?` Best day: ${best.d} ${MS[+m.slice(5,7)-1]}, ${best.n} units sold for ${R(best.G)}.`:""}</p>
+    <div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Profit by day">${svg}</svg></div>
+  </section>
+
+  <section class="split">
+    <h2>Products</h2><p class="sub">Ranked by profit. The bar shows each product's profit next to the top seller's.</p>
+    <div class="tw"><table><thead><tr><th>Product</th><th class="n">Sold</th><th class="n">Sales</th><th class="n">Avg price</th><th class="n">Avg cost</th><th class="n">Profit</th><th class="n">Margin</th></tr></thead>
+    <tbody>${prodRows}</tbody>
+    <tfoot><tr><td>Total</td><td class="n">${n}</td><td class="n">${R(S.G)}</td><td class="n">${R(S.G/n)}</td><td class="n">${R(S.C/n)}</td><td class="n">${R(S.P)}</td><td class="n">${pct(S.G?S.P/S.G:0)}</td></tr></tfoot></table></div>
+  </section>
+
+  <section>
+    <h2>Suppliers</h2><p class="sub">What you paid each supplier for the units sold this month, and the profit those units made.${topSup?` ${esc(topSup.k)} units made the most profit.`:""}</p>
+    <div class="tw"><table><thead><tr><th>Supplier</th><th class="n">Units sold</th><th class="n">Cost</th><th class="n">Avg cost</th><th class="n">Profit</th><th class="n">Profit / unit</th></tr></thead><tbody>${supRows}</tbody></table></div>
+  </section>`:""}
+
+  <section class="pb">
+    <h2>Deliveries to Takealot</h2><p class="sub">POs due in ${MON[+m.slice(5,7)-1]}, how they got there, and what it cost.</p>
+    ${pos.length?`<div class="tw"><table><thead><tr><th>PO</th><th>To</th><th>Due</th><th class="n">Sent</th><th class="n">Received</th><th>Delivered by</th><th class="n">Cost</th></tr></thead><tbody>${pos.map(p=>{ const d=deliv(p); return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td>${fd(p.due_date)}</td><td class="n">${p.qty_sending??""}</td><td class="n">${p.qty_received??"–"}</td><td>${d.how}</td><td class="n">${d.cost!=null?R(d.cost):""}</td></tr>`; }).join("")}</tbody>
+    <tfoot><tr><td colspan="3">${pos.length} PO${pos.length===1?"":"s"}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_sending||0),0)}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_received||0),0)}</td><td></td><td class="n">${R(pos.reduce((a,p)=>a+(deliv(p).cost||0),0))}</td></tr></tfoot></table></div>`:`<p class="note">No POs due this month.</p>`}
+    <div class="cols" style="margin-top:22px">
+      <div><h2 style="font-size:17px">Delivery costs</h2><p class="sub">Taken off this month's profit.</p>
+        <div class="stat-list">
+          ${topups.map(e=>`<div><span>Courier Guy top-up · ${fd(e.date)}</span><span>${R(e.amount)}</span></div>`).join("")}
+          ${adamD.map(e=>`<div><span>Adam · PO ${esc((e.raw||{}).po||"")} · ${fd(e.date)}</span><span>${R(e.amount)}</span></div>`).join("")}
+          <div style="border-bottom:1px solid var(--ink)"><span><b>Total</b></span><span>${R(S.X)}</span></div>
+        </div></div>
+      <div><h2 style="font-size:17px">Adam's PS5</h2><p class="sub">R600 a delivery plus R14 a wrapped unit, taken off what he owes.</p>
+        <div class="callout">${adamBal==null?"Balance not set yet.":adamBal>=0?`Adam still owes <b>${R(adamBal)}</b> after ${D.expenses.filter(e=>e.category==="adam_delivery").length} deliver${D.expenses.filter(e=>e.category==="adam_delivery").length===1?"y":"ies"}.`:`The PS5 is paid off; you now owe Adam <b>${R(-adamBal)}</b>.`}</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Returns</h2><p class="sub">${rets.length?`${rets.reduce((a,r)=>a+(r.qty||1),0)} return${rets.length===1?"":"s"} in ${MON[+m.slice(5,7)-1]}: ${rk.sellable} back in Takealot stock, ${rk.pending} pending, ${rk.removal} coming back to you.`:`No returns in ${MON[+m.slice(5,7)-1]}.`}</p>
+    ${rets.length?`<div class="tw"><table><thead><tr><th>Date</th><th>Product</th><th>Order</th><th>Reason</th><th>Outcome</th></tr></thead><tbody>${rets.map(r=>{ const [t,c]=rLabel[rKind(r.outcome)]; return `<tr><td>${fd(r.return_date)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.order_id)}</td><td>${esc(r.reason||"")}</td><td><span class="pill ${c}">${t}</span></td></tr>`; }).join("")}</tbody></table></div>`:""}
+  </section>
+
+  <section class="split">
+    <h2>Stock on hand</h2><p class="sub">Unsold units as of today, by where they are, at what they cost you.</p>
+    ${stockRows.length?`<div class="tw"><table><thead><tr><th>Product</th>${LOCS.map(l=>`<th class="n">${l}</th>`).join("")}<th class="n">Total</th><th class="n">At cost</th></tr></thead><tbody>${stockRows.map(([k,g])=>`<tr><td class="name">${esc(k)}</td>${LOCS.map(l=>`<td class="n ${g.L[l]?"":"muted"}">${g.L[l]||"·"}</td>`).join("")}<td class="n"><b>${g.n}</b></td><td class="n">${R(g.v)}</td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="n">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="n">${stock.length}</td><td class="n">${R(stock.reduce((a,u)=>a+u.cost,0))}</td></tr></tfoot></table></div>`:`<p class="note">No unsold stock.</p>`}
+  </section>
+
+  <section>
+    <h2>Still open</h2><p class="sub">Things that weren't finished when this report was prepared.</p>
+    <div class="stat-list">
+      <div><span>Sold, waiting for Takealot's fees</span><span>${D.units.filter(u=>u.status==="awaiting_fees").length}</span></div>
+      <div><span>Returns being checked by Takealot</span><span>${retTal.length}</span></div>
+      <div><span>Coming back to you</span><span>${comingBack.length}${comingBack.length?` · ${R(comingBack.reduce((a,u)=>a+u.cost,0))} at cost`:""}</span></div>
+      <div><span>Queries open with Takealot</span><span>${queries.length}</span></div>
+    </div>
+  </section>
+
+  <footer><span>Stock Recon · figures from Takealot's Seller Portal and Courier Guy, synced automatically</span><span>${mLabel(m)}</span></footer>`;
+  document.title=`${mLabel(m)} Report · Stock Recon`;
+  $("#msg").hidden=true; $("#page").hidden=false;
+}
+</script>
+</body>
+</html>
