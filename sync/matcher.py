@@ -169,7 +169,9 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
 
         if k == "cancelled":
             for u in linked:
-                upd(u, status="in_stock", order_id="", sold_date=None, gross=None, fees=None, flag=True,
+                # a customer cancelling before shipping is routine: straight back into stock, nothing to check
+                upd(u, status="in_stock", order_id="", sold_date=None, gross=None, fees=None,
+                    flag="customer" not in s["sale_status"].lower(),
                     comment=(f"Takealot order {s['order_id']} was {s['sale_status'].lower()} on "
                              f"{s['sold_date']}. Unit put back in stock. " + (u.get("comment") or "")).strip(),
                     match_method=None)
