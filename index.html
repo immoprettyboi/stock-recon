@@ -372,6 +372,11 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <p class="note" style="margin:0;max-width:80ch">For each product and warehouse: units the app has <b>In stock</b> there, next to what Takealot holds, including stock on its way or being received. A red difference means a unit is missing, sold without being recorded, or sitting in the wrong place.</p>
       <div class="tscroll"><table id="checkTable"></table></div>
     </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Takealot's monthly Stock Recon</h2><p id="reconSub">Downloaded by the PC on the 1st of every month</p></div>
+      <p class="note" style="margin:0;max-width:80ch">Takealot releases a Stock Recon for each month. Any stock Takealot lost or wrote off shows here with the amount you can claim. To get reimbursed, e-mail Takealot the recon file (Download) with an invoice for the claim value, then set the status to <b>Claimed</b> and later <b>Paid</b>.</p>
+      <div class="tscroll"><table id="reconTable"></table></div>
+    </div>
   </section>
 
   <!-- PRODUCTS -->
@@ -494,7 +499,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[];
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
 let loaded=false;
 
@@ -558,6 +563,8 @@ async function loadAll(){
       pos = error ? [] : data; }
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
+    { const {data,error}=await sb.from("takealot_recons").select("month,file_name,missing,missing_units,claim_value,claim_status,claim_ref,claim_date,downloaded_at").order("month",{ascending:false});
+      recons = error ? [] : data; }
     buildMonths(); render();
   }catch(e){ toast("Couldn't load your stock: "+errMsg(e)); }
 }
@@ -701,6 +708,7 @@ function renderOverview(){
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
+  recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
   undeliveredPOs().forEach(p=>items.push({adampo:p.po, tag:"Delivery", t:`Who delivered PO ${p.po}?`, d:`${p.qty_sending??"?"} unit${p.qty_sending===1?"":"s"} to ${p.facility||p.warehouse||""} · ${contents(p)} · no Courier Guy booking found. If Adam took it, record it here.`}));
   // a shipment Takealot turned away whose units are already set to come back is tracked under "Coming back to you"
   const handledRts=x=>x.direction==="to_takealot" && x.status==="returned-to-sender" && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && units.some(u=>u.courier_shipment_id===s.id)));
@@ -998,6 +1006,31 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- Takealot monthly stock recon ---------------- */
+const CLAIM={open:"To claim", claimed:"Claimed", paid:"Paid", nothing:"Nothing missing"};
+function renderRecons(){
+  const el=$("#reconTable"); if(!el) return;
+  if(!recons.length){ el.innerHTML=`<tbody><tr><td class="muted">Nothing yet. The PC downloads Takealot's Stock Recon on the 1st of each month (run 9_database_update.sql in Supabase first).</td></tr></tbody>`; return; }
+  el.innerHTML=`<thead><tr><th>Month</th><th>Missing at Takealot</th><th class="num">Units</th><th class="num">Claim value</th><th>Status</th><th>Claim reference</th><th></th></tr></thead><tbody>${recons.map(r=>{
+    const miss=(r.missing||[]).map(x=>`${esc(x.title)} · ${x.lost?`${x.lost} lost`:""}${x.other_outflow?`${x.lost?", ":""}${x.other_outflow} other outflow`:""}${x.claim_value?` · ${R(Number(x.claim_value))}`:""}`).join("<br>");
+    const st=r.missing_units>0?`<select data-rstatus="${esc(r.month)}">${["open","claimed","paid"].map(k=>`<option value="${k}" ${r.claim_status===k?"selected":""}>${CLAIM[k]}</option>`).join("")}</select>`:`<span class="pill s-settled">Nothing missing</span>`;
+    return `<tr><td class="nw">${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}</td><td style="min-width:260px">${miss||'<span class="muted">–</span>'}</td>
+      <td class="num">${r.missing_units||0}</td><td class="num">${Number(r.claim_value)?R(Number(r.claim_value)):""}</td><td>${st}</td>
+      <td>${r.missing_units>0?`<input data-rref="${esc(r.month)}" value="${esc(r.claim_ref||"")}" placeholder="ticket / invoice no." style="width:150px">`:""}</td>
+      <td><button class="btn small" type="button" data-rdl="${esc(r.month)}">Download</button></td></tr>`; }).join("")}</tbody>`;
+}
+$("#reconTable").addEventListener("change",async e=>{
+  const t=e.target, m=t.dataset.rstatus||t.dataset.rref; if(!m) return;
+  const body=t.dataset.rstatus?{claim_status:t.value, ...(t.value==="claimed"?{claim_date:today()}:{})}:{claim_ref:t.value.trim()||null};
+  const {error}=await sb.from("takealot_recons").update(body).eq("month",m);
+  if(error) toast("Couldn't save: "+errMsg(error)); else { toast("Saved"); loadAll(); } });
+$("#reconTable").addEventListener("click",async e=>{
+  const b=e.target.closest("[data-rdl]"); if(!b) return;
+  const {data,error}=await sb.from("takealot_recons").select("csv,file_name").eq("month",b.dataset.rdl).single();
+  if(error||!data){ toast("Couldn't download: "+errMsg(error||{message:"not found"})); return; }
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([data.csv],{type:"text/csv"})); a.download=data.file_name||`Takealot Stock Recon ${b.dataset.rdl}.csv`;
+  document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},500); });
+
 /* ---------------- stock check ---------------- */
 function renderCheck(){
   const DCS=["JHB","CPT","DBN"];
@@ -1083,7 +1116,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */

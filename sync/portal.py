@@ -189,6 +189,161 @@ def monthly_report(p, cfg, log):
     log(f"Monthly report: {label} e-mailed to {', '.join(to)}" + (" (test)." if test else "."))
 
 
+def send_mail(subject, body, attachments, log, what="E-mail"):
+    """Send with the report_* settings in config.ini. attachments: [(filename, bytes, maintype, subtype)]. Returns True if sent."""
+    import configparser, smtplib, ssl
+    from email.message import EmailMessage
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    sender, app_pw = (c.get("report_from") or "").strip(), (c.get("report_app_password") or "").replace(" ", "").strip()
+    to = [x.strip() for x in (c.get("report_to") or "").replace(";", ",").split(",") if x.strip()]
+    if not (sender and app_pw and "PASTE" not in app_pw.upper() and to):
+        return False
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = subject, f"Stock Recon <{sender}>", ", ".join(to)
+    msg.set_content(body)
+    for name, data, mt, st in attachments:
+        msg.add_attachment(data, maintype=mt, subtype=st, filename=name)
+    try:
+        host = (c.get("report_smtp_host") or "smtp.gmail.com").strip()
+        port = int((c.get("report_smtp_port") or "465").strip())
+        user = (c.get("report_smtp_user") or sender).strip()
+        if port == 465:
+            smtp = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=60)
+        else:
+            smtp = smtplib.SMTP(host, port, timeout=60)
+            smtp.starttls(context=ssl.create_default_context())
+        with smtp:
+            smtp.login(user, app_pw)
+            smtp.send_message(msg)
+        log(f"{what}: e-mailed to {', '.join(to)}.")
+        return True
+    except Exception as e:
+        log(f"{what}: the e-mail couldn't be sent: " + repr(e)[:200])
+        return False
+
+
+RECON_TYPE = 27      # Takealot report type "Stock Recon"
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+
+
+def _num(v):
+    try:
+        return float(str(v).replace(",", "").strip() or 0)
+    except ValueError:
+        return 0.0
+
+
+def parse_recon(text):
+    """Takealot's Stock Recon CSV -> (product lines, missing lines)."""
+    import csv, io
+    rows, missing = [], []
+    for r in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
+        if not str(r.get("period") or "").strip().isdigit():
+            continue                                           # the line that explains each column
+        line = {"sku": (r.get("sku") or "").strip(), "tsin": (r.get("tsin_id") or "").strip(), "title": (r.get("product_title") or "").strip()}
+        for k, v in r.items():
+            if k not in ("period", "sku", "tsin_id", "product_title") and k:
+                line[k] = _num(v)
+        rows.append(line)
+        lost, other = line.get("warehouse_down_adjustments", 0), line.get("other_outflow", 0)
+        if lost > 0 or other > 0:
+            missing.append({"sku": line["sku"], "title": line["title"], "lost": lost, "other_outflow": other,
+                            "claim_value": line.get("total_claim_value", 0), "average_selling_price": line.get("average_selling_price", 0),
+                            "success_fee": line.get("success_fee", 0), "fulfilment_fee": line.get("fulfilment_fee", 0)})
+    return rows, missing
+
+
+def takealot_recon(ctx, cfg, auth, log):
+    """Takealot releases a Stock Recon report for each month. From the 1st, ask for last month's, download it when it's
+    ready, save it (file + database) and e-mail it with any missing stock, so the claim can be sent to Takealot."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        have = {r["month"] for r in db.select("takealot_recons", "select=month")}
+    except RuntimeError as e:
+        if "takealot_recons" in str(e):
+            flag = DEBUG_DIR / "recon_needs_sql.txt"
+            if not flag.exists():
+                DEBUG_DIR.mkdir(exist_ok=True)
+                flag.write_text("1")
+                log("Takealot stock recon: run 9_database_update.sql in Supabase to switch this on.")
+            return
+        raise
+    now = datetime.now()
+    prev = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    r = ctx.request.get(f"https://{API_HOST}/v2/tasks/group/report?check_archived=true&page_number=1&page_size=50&only_archived=false",
+                        headers=auth, timeout=60_000)
+    if not r.ok:
+        log(f"Takealot stock recon: the reports list answered {r.status}")
+        return
+    recon = {}
+    for t in (r.json() or {}).get("tasks") or []:
+        if (t.get("task_type") or {}).get("task_type_id") != RECON_TYPE:
+            continue
+        try:
+            params = json.loads(t.get("request_params") or "{}")
+        except Exception:
+            params = {}
+        m = str(params.get("date_from") or "")[:7]
+        if len(m) != 7:
+            continue
+        done = (t.get("task_status") or {}).get("task_status_type_id") == 4 and bool((t.get("result") or {}).get("success"))
+        cur = recon.get(m)
+        if not cur or (done and not cur["done"]) or (done == cur["done"] and str(t.get("date_created")) > str(cur["t"].get("date_created"))):
+            recon[m] = {"t": t, "done": done}
+    if prev not in have and prev not in recon and prev >= "2026-10" and now.hour >= 6:
+        rq = ctx.request.post(f"https://{API_HOST}/v2/task/report", headers={**auth, "content-type": "application/json"},
+                              data=json.dumps({"check_duplicate": True, "task_type_id": RECON_TYPE,
+                                               "request_params": {"delimeter": ",", "date_from": prev}}), timeout=60_000)
+        log(f"Takealot stock recon: asked Takealot for the {prev} report ({rq.status}); it downloads once it's ready."
+            if rq.ok else f"Takealot stock recon: asking for the {prev} report failed ({rq.status}): {rq.text()[:150]}")
+        return
+    for m, x in sorted(recon.items()):
+        if m in have or not x["done"] or m < "2026-08":
+            continue
+        t = x["t"]
+        d = ctx.request.get(f"https://{API_HOST}/v2/task/{t['task_id']}/report/download", headers=auth, timeout=90_000)
+        if not d.ok:
+            log(f"Takealot stock recon: downloading {m} answered {d.status}")
+            continue
+        text = d.text()
+        if text.lstrip("\ufeff").startswith("{"):                 # a link instead of the file
+            j = json.loads(text)
+            link = j.get("url") or j.get("download_url") or (j.get("result") or {}).get("url")
+            text = ctx.request.get(link, timeout=90_000).text() if link else ""
+        rows, missing = parse_recon(text)
+        name = f"Takealot Stock Recon {m}.csv"
+        out = HERE / "reports"
+        out.mkdir(exist_ok=True)
+        (out / name).write_text(text, encoding="utf-8")
+        units = int(sum(x["lost"] + x["other_outflow"] for x in missing))
+        claim = round(sum(x["claim_value"] for x in missing), 2)
+        db.insert("takealot_recons", [{"month": m, "task_id": str(t["task_id"]), "file_name": name, "csv": text, "rows": rows,
+                                       "missing": missing, "missing_units": units, "claim_value": claim,
+                                       "claim_status": "open" if missing else "nothing", "downloaded_at": now.isoformat()}], upsert_on="month")
+        label = f"{_MONTHS[int(m[5:7]) - 1]} {m[:4]}"
+        log(f"Takealot stock recon {label}: {len(rows)} product line(s), "
+            + (f"{units} unit(s) missing, claim value R{claim:,.2f}." if missing else "nothing missing."))
+        if m >= "2026-10":
+            if missing:
+                lines = [f"Takealot's Stock Recon for {label} shows missing stock:", ""]
+                for x in missing:
+                    lines.append(f"- {x['title']} (SKU {x['sku']}): {int(x['lost'])} lost"
+                                 + (f", {int(x['other_outflow'])} other outflow" if x["other_outflow"] else "")
+                                 + f", claim value R{x['claim_value']:,.2f}")
+                lines += ["", f"Total to claim: R{claim:,.2f}", "",
+                          "To get reimbursed: e-mail Takealot (reply on your query ticket) with the attached Stock Recon file "
+                          "and an invoice for the claim value. Then mark it as claimed in the app (Stock check tab).", "", "Stock Recon"]
+                subj = f"Takealot Stock Recon {label}: {units} unit(s) missing, claim R{claim:,.0f}"
+            else:
+                lines = [f"Takealot's Stock Recon for {label} is in: nothing missing, nothing to claim.", "",
+                         "The file is attached for your records.", "", "Stock Recon"]
+                subj = f"Takealot Stock Recon {label}: nothing missing"
+            send_mail(subj, "\n".join(lines), [(name, text.encode("utf-8"), "text", "csv")], log, what=f"Takealot stock recon {label}")
+
+
 def test_logins(p, cfg, log):
     """One-off check (debug/login_test_request.txt): log in with the config.ini details in a fresh, separate browser,
     so the sync's own session is left alone."""
@@ -408,6 +563,131 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 if not batch or len(sales) >= total or pg >= 100:
                     break
                 pg += 1
+
+            # ---- Takealot's monthly Stock Recon report (missing stock to claim)
+            try:
+                takealot_recon(ctx, cfg, auth, log)
+            except Exception as e:
+                log("Takealot stock recon couldn't be read: " + repr(e)[:200])
+
+            # ---- one-off: read how the portal asks for a report (debug/recon_discover3.txt)
+            try:
+                if (DEBUG_DIR / "recon_discover3.txt").exists():
+                    (DEBUG_DIR / "recon_discover3.txt").unlink()
+                    import re as _re
+                    js = ctx.request.get("https://sellers.takealot.com/assets/main-DS7F8Hpa.js", timeout=60_000).text()
+                    segs = []
+                    for key in ('/v2/task/report"', "delimeter", "date_from:", "task_type_id:27", "Stock Recon"):
+                        for m in list(_re.finditer(_re.escape(key), js))[:4]:
+                            segs.append({"key": key, "text": js[max(0, m.start() - 900): m.start() + 600]})
+                    (DEBUG_DIR / "recon_discovery3.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
+                    log(f"Stock recon discovery 3: {len(segs)} pieces saved.")
+            except Exception as e:
+                log("Stock recon discovery 3 failed: " + repr(e)[:200])
+
+            # ---- one-off: record how a Stock Recon report row downloads, and what the request form looks like
+            try:
+                if (DEBUG_DIR / "recon_discover2.txt").exists():
+                    (DEBUG_DIR / "recon_discover2.txt").unlink()
+                    calls, out = [], {}
+                    def lis2(r):
+                        try:
+                            if "takealot" in r.url and r.request.resource_type in ("xhr", "fetch", "document", "other"):
+                                ct = r.headers.get("content-type", "")
+                                calls.append({"url": r.url, "method": r.request.method, "status": r.status, "type": ct,
+                                              "post": (r.request.post_data or "")[:1000],
+                                              "body": r.text()[:1500] if ("json" in ct or "text" in ct) else ""})
+                        except Exception:
+                            pass
+                    page.on("response", lis2)
+                    page.goto("https://sellers.takealot.com/reports", wait_until="domcontentloaded", timeout=90_000)
+                    page.wait_for_timeout(7000)
+                    row = page.locator("tr", has_text="Stock Recon").first
+                    out["row_html"] = row.inner_html()[:4000]
+                    calls.clear()
+                    try:
+                        with page.expect_download(timeout=30_000) as dl:
+                            row.locator("a, button, [role=button], svg").last.click()
+                        d = dl.value
+                        dest = HERE / "reports" / ("takealot_" + d.suggested_filename)
+                        dest.parent.mkdir(exist_ok=True)
+                        d.save_as(str(dest))
+                        out["download"] = {"file": str(dest), "url": d.url}
+                    except Exception as e:
+                        out["download_error"] = repr(e)[:300]
+                    page.wait_for_timeout(3000)
+                    out["download_calls"] = list(calls)
+                    # the request form: pick "Stock Recon" in the report type list, don't submit
+                    calls.clear()
+                    try:
+                        sel = page.locator("select").first
+                        if sel.count():
+                            sel.select_option(label="Stock Recon")
+                        else:
+                            page.get_by_text("Select", exact=True).first.click(); page.wait_for_timeout(800)
+                            page.get_by_text("Stock Recon", exact=True).last.click()
+                        page.wait_for_timeout(2500)
+                        page.screenshot(path=str(DEBUG_DIR / "recon_form.png"))
+                        form = page.locator("form").first
+                        out["form_html"] = (form.inner_html() if form.count() else page.locator("main").first.inner_html())[:8000]
+                    except Exception as e:
+                        out["form_error"] = repr(e)[:300]
+                    out["form_calls"] = list(calls)
+                    # the page's script files, to find how a report is requested
+                    out["scripts"] = page.evaluate("() => [...document.scripts].map(s => s.src).filter(Boolean)")
+                    page.remove_listener("response", lis2)
+                    (DEBUG_DIR / "recon_discovery2.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+                    log("Stock recon discovery 2 saved.")
+            except Exception as e:
+                log("Stock recon discovery 2 failed: " + repr(e)[:200])
+
+            # ---- one-off discovery of Takealot's stock recon report (debug/recon_discover.txt)
+            try:
+                if (DEBUG_DIR / "recon_discover.txt").exists():
+                    (DEBUG_DIR / "recon_discover.txt").unlink()
+                    found = {"links": [], "pages": []}
+                    calls = []
+                    def lis(r):
+                        try:
+                            if ("takealot" in r.url) and r.request.resource_type in ("xhr", "fetch"):
+                                ct = r.headers.get("content-type", "")
+                                calls.append({"url": r.url, "status": r.status, "type": ct,
+                                              "body": r.text()[:3000] if "json" in ct else ""})
+                        except Exception:
+                            pass
+                    page.on("response", lis)
+                    page.goto("https://sellers.takealot.com/", wait_until="domcontentloaded", timeout=90_000)
+                    page.wait_for_timeout(6000)
+                    # open every collapsible menu entry so hidden links render
+                    for el in page.locator("nav [aria-expanded=false], [class*=menu] [aria-expanded=false]").all()[:40]:
+                        try:
+                            el.click(timeout=1500); page.wait_for_timeout(200)
+                        except Exception:
+                            pass
+                    links = page.evaluate("""() => [...document.querySelectorAll('a')].map(a => ({href: a.href, text: (a.innerText||'').trim().slice(0,80)}))""")
+                    found["links"] = links
+                    found["home_text"] = page.inner_text("body")[:4000]
+                    cands = []
+                    for l in links:
+                        t = (l["href"] + " " + l["text"]).lower()
+                        if any(w in t for w in ("recon", "report", "inventory", "stock", "statement", "document", "download")) \
+                                and l["href"].startswith("https://sellers.takealot.com") and l["href"] not in cands:
+                            cands.append(l["href"])
+                    for i, u in enumerate(cands[:15]):
+                        calls.clear()
+                        try:
+                            page.goto(u, wait_until="domcontentloaded", timeout=60_000)
+                            page.wait_for_timeout(6000)
+                            page.screenshot(path=str(DEBUG_DIR / f"recon_page_{i}.png"))
+                            found["pages"].append({"url": u, "text": page.inner_text("body")[:5000], "calls": list(calls)[:40]})
+                        except Exception as e:
+                            found["pages"].append({"url": u, "error": repr(e)[:200]})
+                    page.remove_listener("response", lis)
+                    DEBUG_DIR.mkdir(exist_ok=True)
+                    (DEBUG_DIR / "recon_discovery.json").write_text(json.dumps(found, indent=1, default=str), encoding="utf-8")
+                    log(f"Stock recon discovery: {len(links)} links, {len(cands)} candidate pages saved.")
+            except Exception as e:
+                log("Stock recon discovery failed: " + repr(e)[:200])
 
             # ---- one-off history request (a history_request.txt file with a start date, e.g. 2026-08-01)
             try:
