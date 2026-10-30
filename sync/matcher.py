@@ -410,6 +410,9 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
             continue
         if not linked:
             if k == "removal":
+                # already booked in earlier (the unit's order number was cleared when it went back into stock)
+                if any(f"order {r['order_id']}" in (u.get("comment") or "") for u in units):
+                    continue
                 product = sku_map.get(r["sku"])
                 if product == IGNORE_PRODUCT:
                     continue

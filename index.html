@@ -1234,6 +1234,10 @@ $("#editForm").addEventListener("submit", async e=>{
     comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
   if(units.some(x=>"query_date" in x)){ body.query_date=$("#e-qdate").value||null; body.query_ref=$("#e-qref").value.trim(); }
   if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
+  // a returned unit going back into stock: its old order no longer applies, so it can be matched to a new sale
+  if(body.status==="in_stock" && /^return_/.test(editing.status) && body.order_id && body.order_id===editing.order_id){
+    body.comment=(`Returned on order ${body.order_id}; back in stock ${today()}. `+body.comment).trim();
+    body.order_id=""; body.sold_date=null; body.gross=null; body.fees=null; body.match_method=null; body.flag=false; }
   $("#eSave").disabled=true;
   const {error}=await sb.from("units").update(body).eq("id",editing.id);
   $("#eSave").disabled=false;
