@@ -929,13 +929,31 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log):
         db.patch("leadtime_requests", f"id=eq.{r['id']}", {"done_at": now, "ok": False, "result": "Replaced by a newer change"})
     wanted += [(r["id"], str(r["sku"]), int(r["qty"])) for r in latest.values()]
     by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
-    # listings you keep at a fixed lead-time number (supplier stock): put them back whenever they drift
+    # products.leadtime_fixed: a number = keep the listing at that number (supplier stock);
+    #                          -1 = follow what you have at HOME (new units, In stock) for that product
     try:
         asked = {sku for _, sku, _ in wanted}
-        for f in db.select("products", "select=sku,leadtime_fixed&leadtime_fixed=not.is.null"):
-            o = by_sku.get(str(f["sku"]))
-            if o and str(f["sku"]) not in asked and (o.get("total_merchant_stock") or 0) != int(f["leadtime_fixed"]):
-                wanted.append((None, str(f["sku"]), int(f["leadtime_fixed"])))
+        prods = db.select("products", "select=sku,product,takealot_title,leadtime_fixed")
+        rules = [f for f in prods if f.get("leadtime_fixed") is not None]
+        home = {}
+        if any(int(f["leadtime_fixed"]) < 0 for f in rules):
+            group = {}
+            for p in prods:
+                if p.get("product") and p["product"] != "__ignore__":
+                    group[p.get("takealot_title") or ""] = p["product"]
+                    group[p["product"]] = p["product"]
+            for u in db.select("units", "select=product,condition&status=eq.in_stock&location=eq.HOME"):
+                if (u.get("condition") or "new") == "new":
+                    g = group.get(u["product"], u["product"])
+                    home[g] = home.get(g, 0) + 1
+        for f in rules:
+            sku = str(f["sku"])
+            o = by_sku.get(sku)
+            if not o or sku in asked:
+                continue
+            target = home.get(f.get("product"), 0) if int(f["leadtime_fixed"]) < 0 else int(f["leadtime_fixed"])
+            if (o.get("total_merchant_stock") or 0) != target:
+                wanted.append((None, sku, target))
     except RuntimeError:
         pass                                          # before 11_database_update.sql
     if not wanted:
