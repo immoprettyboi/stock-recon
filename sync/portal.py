@@ -354,13 +354,21 @@ def receive_returns(cfg, rows, log):
         for u in mine:
             c = (u.get("comment") or "").strip()
             if "Takealot rejected" in c:
-                db.patch("units", f"id=eq.{u['id']}", {"status": "in_stock", "location": "HOME", "flag": False, "updated_at": now,
-                                                        "comment": (c + f" Arrived back {day} on {x['waybill']}: in stock at HOME.").strip()})
+                body = {"status": "in_stock", "location": "HOME", "flag": False, "updated_at": now,
+                        "comment": (c + f" Arrived back {day} on {x['waybill']}: in stock at HOME.").strip()}
+                try:
+                    db.patch("units", f"id=eq.{u['id']}", body | {"arrived_at": day})
+                except RuntimeError:
+                    db.patch("units", f"id=eq.{u['id']}", body)
                 log(f"  Arrived on {x['waybill']}: {u['product']} set to In stock at HOME.")
             elif u.get("location") != "HOME":
-                db.patch("units", f"id=eq.{u['id']}", {"location": "HOME", "flag": True, "updated_at": now,
-                                                        "comment": (f"Arrived back {day} on {x['waybill']}. Check it: if it's fine, set it "
-                                                                    "to In stock; if it's faulty, note what's wrong. " + c).strip()})
+                body = {"location": "HOME", "flag": True, "updated_at": now,
+                        "comment": (f"Arrived back {day} on {x['waybill']}. Check it on the Removal orders tab: Back in stock (used) "
+                                    "or Faulty. " + c).strip()}
+                try:
+                    db.patch("units", f"id=eq.{u['id']}", body | {"arrived_at": day, "removal_order_id": u.get("order_id") or None})
+                except RuntimeError:
+                    db.patch("units", f"id=eq.{u['id']}", body)          # before 10_database_update.sql
                 log(f"  Arrived on {x['waybill']}: {u['product']} (order {u.get('order_id') or '-'}) is at HOME, waiting for you to check it.")
 
 
@@ -741,6 +749,72 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     log(f"History: saved {len(hist)} sale lines and {len(rets)} return(s) since {since}.")
             except Exception as e:
                 log("History request failed: " + repr(e)[:200])
+
+            # ---- one-off: removal order details (debug/removal_discover.txt)
+            try:
+                if (DEBUG_DIR / "removal_discover.txt").exists():
+                    (DEBUG_DIR / "removal_discover.txt").unlink()
+                    calls, out = [], {"pages": []}
+                    def lis4(r):
+                        try:
+                            if "seller-api" in r.url and r.request.resource_type in ("xhr", "fetch"):
+                                ct = r.headers.get("content-type", "")
+                                calls.append({"url": r.url, "status": r.status, "body": r.text()[:5000] if "json" in ct else ""})
+                        except Exception:
+                            pass
+                    ctx.on("response", lis4)
+                    for u in ("https://sellers.takealot.com/shipments/removal-orders/ready-for-pickup",
+                              "https://sellers.takealot.com/shipments/removal-orders/submitted/2318514"):
+                        calls.clear()
+                        page.goto(u, wait_until="domcontentloaded", timeout=90_000)
+                        page.wait_for_timeout(7000)
+                        try:
+                            el = page.get_by_text("2318514").first
+                            if el.count() and "submitted/2318514" not in u:
+                                el.click(timeout=5000); page.wait_for_timeout(5000)
+                        except Exception:
+                            pass
+                        out["pages"].append({"url": u, "now": page.url, "text": page.inner_text("body")[:5000], "calls": list(calls)})
+                    ctx.remove_listener("response", lis4)
+                    (DEBUG_DIR / "removal_discovery.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+                    log("Removal order discovery saved.")
+            except Exception as e:
+                log("Removal order discovery failed: " + repr(e)[:200])
+
+            # ---- one-off: how a return's details (customer comment) load (debug/return_discover.txt)
+            try:
+                if (DEBUG_DIR / "return_discover.txt").exists():
+                    (DEBUG_DIR / "return_discover.txt").unlink()
+                    calls, out = [], {}
+                    def lis3(r):
+                        try:
+                            if "seller-api" in r.url and r.request.resource_type in ("xhr", "fetch"):
+                                ct = r.headers.get("content-type", "")
+                                calls.append({"url": r.url, "status": r.status, "body": r.text()[:4000] if "json" in ct else ""})
+                        except Exception:
+                            pass
+                    page.on("response", lis3)
+                    page.goto(RETURNS_URL, wait_until="domcontentloaded", timeout=90_000)
+                    page.wait_for_timeout(7000)
+                    calls.clear()
+                    row = page.locator("tr", has_text="225135004").first
+                    if not row.count():
+                        row = page.locator("tbody tr").first
+                    out["row_text"] = row.inner_text()[:500]
+                    out["row_html"] = row.inner_html()[:3000]
+                    try:
+                        row.get_by_text("View Details").first.click(timeout=8000)
+                    except Exception as e:
+                        out["click_error"] = repr(e)[:200]
+                    page.wait_for_timeout(5000)
+                    page.screenshot(path=str(DEBUG_DIR / "return_detail.png"))
+                    out["page_text"] = page.inner_text("body")[:6000]
+                    out["calls"] = list(calls)
+                    page.remove_listener("response", lis3)
+                    (DEBUG_DIR / "return_discovery.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+                    log("Return details discovery saved.")
+            except Exception as e:
+                log("Return details discovery failed: " + repr(e)[:200])
 
             # ---- returns (best effort: a problem here never stops the sales sync)
             returns = []

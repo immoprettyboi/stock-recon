@@ -82,6 +82,7 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .chart-tip b{font-family:var(--mono)}
 .otp-box{display:grid;gap:6px;margin-top:8px}.otp-box label{font-size:13px}
 .otp-row{display:flex;gap:6px}.otp-row input{width:120px;font:16px var(--mono);letter-spacing:2px}
+.cond{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:1px 6px;border-radius:4px;background:var(--query-soft);color:var(--query);vertical-align:1px}
 .tal-st{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
 /* tiles */
 @media (min-width:900px){ #tiles{grid-template-columns:repeat(4,1fr)!important} }
@@ -303,6 +304,7 @@ html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255
       <button class="tab" role="tab" aria-selected="false" data-view="match">Needs matching <span class="n badge" id="cntMatch"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
       <button class="tab" role="tab" aria-selected="false" data-view="ship">Shipments <span class="n" id="cntShip"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="removals">Removal orders <span class="n badge" id="cntRem"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
     </nav>
@@ -447,6 +449,15 @@ html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255
     </div>
   </section>
 
+  <!-- REMOVAL ORDERS -->
+  <section id="view-removals" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Removal orders: stock Takealot sends back to you</h2><p id="remSub"></p></div>
+      <p class="note" style="margin:0;max-width:85ch">Customer returns Takealot won't sell again. When the courier delivers one, it's marked <b>Arrived</b> here. Check it, then tap <b>Back in stock (used)</b>: it goes into your stock as a <b>used</b> item, never as new. If it's broken, tap <b>Faulty</b> to keep it out of stock.</p>
+      <div class="tscroll"><table id="remTable"></table></div>
+    </div>
+  </section>
+
   <!-- PRODUCTS -->
   <section id="view-products" class="stack" hidden>
     <div class="panel">
@@ -471,6 +482,7 @@ html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255
       <div class="field"><label for="e-location">Location</label><select id="e-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
       <div class="field"><label for="e-supplier">Supplier</label><input id="e-supplier" list="dl-suppliers"></div>
       <div class="field"><label for="e-type">Type of stock</label><select id="e-type"><option>ICASA</option><option>TDRA</option></select></div>
+      <div class="field"><label for="e-cond">Condition</label><select id="e-cond"><option value="new">New</option><option value="used">Used</option><option value="faulty">Faulty</option></select></div>
       <div class="field"><label for="e-received">Date received</label><input id="e-received" type="date"></div>
       <div class="field"><label for="e-po">PO number</label><input id="e-po" inputmode="numeric"></div>
       <div class="field"><label for="e-sn">IMEI / serial</label><input id="e-sn"></div>
@@ -627,7 +639,8 @@ async function loadAll(){
     { const since=new Date(Date.now()-60*864e5).toISOString();
       const {data,error}=await sb.from("courier_shipments").select("*").gte("created_at",since).order("created_at",{ascending:false});
       ships = error ? [] : data; }
-    { const {data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date").order("return_date",{ascending:false});
+    { let {data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date,customer_comment").order("return_date",{ascending:false});
+      if(error) ({data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date").order("return_date",{ascending:false}));
       rets = error ? [] : data; }
     { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items").order("due_date",{ascending:false});
       pos = error ? [] : data; }
@@ -880,7 +893,7 @@ function renderLedger(){
   const G=rows.reduce((s,u)=>s+(SOLD.has(u.status)?(u.gross||0):0),0), F=rows.reduce((s,u)=>s+(SOLD.has(u.status)?(u.fees||0):0),0), C=rows.reduce((s,u)=>s+(u.cost||0),0), P=rows.reduce((s,u)=>s+(profit(u)||0),0);
   $("#ledger").innerHTML=`<thead><tr><th>Product</th><th>Status</th><th>Supplier</th><th>Loc</th><th>Received</th><th>PO</th><th>Order ID</th><th>Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
   <tbody>${rows.map(u=>{const p=profit(u);return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}">
-    <td class="prod">${esc(u.product)}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
+    <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
     <td><span class="pill s-${u.status}">${STATUS[u.status]?.short||esc(u.status)}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
     <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}</td>
     <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${fd(u.sold_date)}</td>
@@ -888,7 +901,7 @@ function renderLedger(){
     <td class="num">${R(u.cost)}</td><td class="num ${p<0?"neg":""}">${p==null?"":`<b>${R(p)}</b>`}</td></tr>`}).join("")}</tbody>
   <tfoot><tr><td colspan="8">${rows.length} unit${rows.length===1?"":"s"} shown</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td></tr></tfoot>`;
   $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
-    <div class="r1"><span class="p">${esc(u.product)}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${STATUS[u.status]?.short}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
+    <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${STATUS[u.status]?.short}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
     <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
@@ -1084,6 +1097,65 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- removal orders ---------------- */
+const isRemoval = o => /removal|return to seller|unsellable|collect|dispos/i.test(String(o||""));
+function removalRows(){
+  return rets.filter(r=>isRemoval(r.outcome)).map(r=>{
+    const u=units.find(x=>x.removal_order_id===r.order_id) || units.find(x=>x.order_id===r.order_id) || units.find(x=>(x.comment||"").includes(`order ${r.order_id}`));
+    const x=u?shipFor(u):null;
+    const delivered=u&&u.arrived_at || (x&&x.status==="delivered"&&x.delivered_at ? String(x.delivered_at).slice(0,10) : null) || ((u&&u.comment||"").match(/Arrived back (\d{4}-\d{2}-\d{2})/)||[])[1] || null;
+    let st, cls;
+    if(!u){ st="Not in the app"; cls="s-in_stock"; }
+    else if(u.condition==="faulty"){ st="Faulty"; cls="s-return_me"; }
+    else if(u.status==="in_stock"){ st="In stock (used)"; cls="s-settled"; }
+    else if(SOLD.has(u.status)){ st="Sold again (used)"; cls="s-settled"; }
+    else if(u.status==="return_me" && u.location==="HOME"){ st="Arrived: check it"; cls="s-awaiting_fees"; }
+    else if(u.status==="return_me"){ st=x?`On its way · ${shipLabel(x.status).toLowerCase()}`:"Waiting for Takealot / courier"; cls="s-return_me"; }
+    else { st=STATUS[u.status]?.short||u.status; cls="s-"+u.status; }
+    return {r,u,x,delivered,st,cls};
+  });
+}
+function renderRemovals(){
+  const el=$("#remTable"); if(!el) return;
+  const L=removalRows();
+  $("#cntRem").textContent=L.filter(z=>z.st.startsWith("Arrived")).length||"";
+  $("#remSub").textContent=L.length?`${L.length} removal order${L.length===1?"":"s"}`:"";
+  if(!L.length){ el.innerHTML=`<tbody><tr><td class="muted">No removal orders yet.</td></tr></tbody>`; return; }
+  el.innerHTML=`<thead><tr><th>Product</th><th>Order ID</th><th>RRN</th><th>Return reason</th><th>Customer comment</th><th>Return date</th><th>Courier</th><th>Delivered to you</th><th>Status</th><th></th></tr></thead><tbody>${L.map(({r,u,x,delivered,st,cls})=>`<tr>
+    <td class="prod">${esc(r.title)}${u&&u.condition==="used"?'<span class="cond">USED</span>':""}</td>
+    <td class="mono">${esc(r.order_id)}</td><td class="mono">${esc(r.rrn||"")}</td><td>${esc(r.reason||"")}</td>
+    <td><input data-rcomment="${esc(r.return_id)}" value="${esc(r.customer_comment||"")}" placeholder="What the customer said" style="min-width:200px"></td>
+    <td class="nw">${fd(r.return_date)}</td>
+    <td class="nw">${x?`<span class="mono">${esc(x.waybill)}</span><div class="tal-st">${x.expected_collection?`collect ${fd(x.expected_collection)}`:""}</div>`:'<span class="muted">–</span>'}</td>
+    <td class="nw">${delivered?fd(delivered):'<span class="muted">not yet</span>'}</td>
+    <td><span class="pill ${cls}">${esc(st)}</span></td>
+    <td class="nw">${u && u.status==="return_me" && u.condition!=="faulty" ? `<button class="btn primary small" type="button" data-rused="${esc(u.id)}" data-rorder="${esc(r.order_id)}">Back in stock (used)</button> <button class="btn small" type="button" data-rfaulty="${esc(u.id)}">Faulty</button>`
+       : u ? `<button class="btn small" type="button" data-ropen="${esc(u.id)}">Open unit</button>` : ""}</td></tr>`).join("")}</tbody>`;
+}
+$("#remTable").addEventListener("change",async e=>{ const id=e.target.dataset.rcomment; if(!id) return;
+  const {error}=await sb.from("takealot_returns").update({customer_comment:e.target.value.trim()||null}).eq("return_id",id);
+  if(error) toast(/customer_comment/.test(errMsg(error))?"Run 10_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)); else { toast("Saved"); const r=rets.find(x=>x.return_id===id); if(r) r.customer_comment=e.target.value.trim(); } });
+$("#remTable").addEventListener("click",async e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.ropen){ openEdit(b.dataset.ropen); return; }
+  const id=b.dataset.rused||b.dataset.rfaulty, u=units.find(x=>x.id===id); if(!u) return;
+  if(b.dataset.rused && u.location!=="HOME" && !confirm("The courier hasn't delivered this yet. Put it in stock anyway?")) return;
+  let body;
+  if(b.dataset.rused){
+    const name=/\(used\)$/i.test(u.product)?u.product:`${u.product} (Used)`;
+    body={status:"in_stock", location:"HOME", condition:"used", product:name, order_id:"", sold_date:null, gross:null, fees:null, match_method:null, flag:false,
+      removal_order_id:u.removal_order_id||b.dataset.rorder||u.order_id||null, arrived_at:u.arrived_at||today(),
+      comment:(`Removal order ${b.dataset.rorder}: back in stock ${today()} as a USED item (not brand new). `+(u.comment||"")).trim()};
+  } else {
+    body={condition:"faulty", location:"HOME", flag:false, removal_order_id:u.removal_order_id||u.order_id||null, arrived_at:u.arrived_at||today(),
+      comment:(`Faulty (checked ${today()}): kept out of stock. `+(u.comment||"")).trim()};
+  }
+  b.disabled=true;
+  const {error}=await sb.from("units").update(body).eq("id",id);
+  b.disabled=false;
+  if(error) toast(/condition|removal_order_id|arrived_at/.test(errMsg(error))?"Run 10_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error));
+  else { toast(b.dataset.rused?"Back in stock as a used item":"Marked as faulty"); loadAll(); } });
+
 /* ---------------- Takealot monthly stock recon ---------------- */
 const CLAIM={open:"To claim", claimed:"Claimed", paid:"Paid", nothing:"Nothing missing"};
 function renderRecons(){
@@ -1194,7 +1266,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */
@@ -1212,7 +1284,7 @@ function openEdit(id){
   const set=(id,v)=>$("#"+id).value=v??"";
   set("e-product",u.product); set("e-status",u.status); set("e-location",u.location||"HOME"); set("e-supplier",u.supplier); set("e-type",u.stock_type||"ICASA");
   set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
-  set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); $("#e-flag").checked=!!u.flag;
+  set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); set("e-cond",u.condition||"new"); $("#e-flag").checked=!!u.flag;
   $("#eConfirm").hidden=true;
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
   const sx=shipFor(u);
@@ -1232,6 +1304,7 @@ $("#editForm").addEventListener("submit", async e=>{
     cost:num($("#e-cost").value)||0, order_id:$("#e-order").value.trim(), sold_date:$("#e-sold").value||null,
     gross:num($("#e-gross").value), fees:num($("#e-fees").value), return_date:$("#e-return").value||null,
     comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
+  if(units.some(x=>"condition" in x)) body.condition=$("#e-cond").value;
   if(units.some(x=>"query_date" in x)){ body.query_date=$("#e-qdate").value||null; body.query_ref=$("#e-qref").value.trim(); }
   if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
   // a returned unit going back into stock: its old order no longer applies, so it can be matched to a new sale
