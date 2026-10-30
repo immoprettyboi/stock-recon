@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-look="glass">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Stock Recon</title>
-<meta name="theme-color" content="#1f4fd1">
+<meta name="theme-color" content="#070b1a">
+<script>try{const l=localStorage.getItem("sr-look");if(l)document.documentElement.dataset.look=l;}catch(e){}</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -203,6 +204,69 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 #onhand td:first-child,#byProduct td:first-child,#bySupplier td:first-child,#pickTable td:first-child{min-width:170px}
 @media (max-width:760px){.sync{grid-template-columns:auto 1fr}.sync .btn{grid-column:1/-1}.match-item{grid-template-columns:1fr}.match-item .actions{justify-content:flex-start}}
 
+/* ---------- Glass look (default): frosted cards over a deep blue backdrop. "Classic" switches back. ---------- */
+html[data-look="glass"]{
+  --bg:transparent; --surface:rgba(255,255,255,.07); --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.13);
+  --fg:#f2f5ff; --muted:rgba(222,230,255,.66);
+  --accent:#6f9bff; --accent-ink:#06102b; --accent-soft:rgba(111,155,255,.18);
+  --ok:#34d399; --ok-soft:rgba(52,211,153,.16); --warn:#fbbf24; --warn-soft:rgba(251,191,36,.15);
+  --orange:#fb923c; --orange-soft:rgba(251,146,60,.16); --bad:#f87171; --bad-soft:rgba(248,113,113,.16);
+  --stock:#cbd5e1; --stock-soft:rgba(203,213,225,.12); --query:#c4b5fd; --query-soft:rgba(196,181,253,.16);
+  --r:12px; color-scheme:dark;
+  background:#070b1a;
+}
+html[data-look="glass"] body{
+  background:
+    radial-gradient(900px 600px at 8% -10%, rgba(64,110,255,.55), transparent 60%),
+    radial-gradient(700px 520px at 100% 10%, rgba(24,190,214,.35), transparent 60%),
+    radial-gradient(800px 640px at 70% 110%, rgba(124,77,255,.38), transparent 60%),
+    radial-gradient(600px 400px at 0% 100%, rgba(16,185,129,.18), transparent 60%),
+    linear-gradient(160deg,#0a1230 0%,#070b1a 55%,#0b0f24 100%);
+  background-attachment:fixed;
+}
+html[data-look="glass"] body::before{background:rgba(7,11,26,.6)}
+html[data-look="glass"] :is(.panel,.tile,.sync,.card,.match-item,.login-card,.empty,.adam-bar,.chart-tip,header.top,dialog){
+  -webkit-backdrop-filter:blur(18px) saturate(150%); backdrop-filter:blur(18px) saturate(150%);
+}
+html[data-look="glass"] :is(.panel,.sync,.card,.match-item,.login-card,.empty){
+  border:1px solid var(--line); border-radius:18px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.10), 0 12px 40px rgba(0,0,0,.28);
+}
+html[data-look="glass"] .sync{border-style:solid}
+html[data-look="glass"] header.top{background:rgba(9,14,34,.55);border-bottom:1px solid var(--line)}
+html[data-look="glass"] .tiles{gap:12px;background:transparent;border:0;overflow:visible}
+html[data-look="glass"] .tile{
+  border:1px solid var(--line); border-radius:18px; padding:16px 18px;
+  background:linear-gradient(145deg,rgba(255,255,255,.11),rgba(255,255,255,.04));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14), 0 10px 30px rgba(0,0,0,.25);
+}
+html[data-look="glass"] .tile .val{font-size:26px}
+html[data-look="glass"] .tile.hero{background:linear-gradient(145deg,rgba(52,211,153,.22),rgba(255,255,255,.04));border-color:rgba(52,211,153,.35)}
+@media (prefers-reduced-motion:no-preference){
+  html[data-look="glass"] :is(.tile,.attn-item,.card){transition:transform .2s ease, box-shadow .2s ease, background .2s}
+  html[data-look="glass"] :is(.tile,.card):hover{transform:translateY(-3px);box-shadow:inset 0 1px 0 rgba(255,255,255,.18), 0 16px 40px rgba(0,0,0,.35)}
+}
+html[data-look="glass"] .attn-item{border-radius:14px;background:rgba(255,255,255,.05)}
+html[data-look="glass"] .attn-item:hover{background:rgba(255,255,255,.10)}
+html[data-look="glass"] th{background:transparent}
+html[data-look="glass"] tbody tr[tabindex]:hover{background:rgba(255,255,255,.06)}
+html[data-look="glass"] tfoot td{border-top-color:rgba(255,255,255,.4)}
+html[data-look="glass"] :is(select,input,textarea){background:rgba(255,255,255,.08);border-color:var(--line)}
+html[data-look="glass"] select option{background:#111833;color:#f2f5ff}
+html[data-look="glass"] .btn{background:rgba(255,255,255,.08);border-color:var(--line);border-radius:10px}
+html[data-look="glass"] .btn:hover{background:rgba(255,255,255,.14)}
+html[data-look="glass"] .btn.primary,html[data-look="glass"] .seg .btn.on{background:linear-gradient(135deg,#6f9bff,#4f7cff);border-color:transparent;color:#fff;box-shadow:0 6px 18px rgba(79,124,255,.35)}
+html[data-look="glass"] .chip{background:rgba(255,255,255,.06)}
+html[data-look="glass"] .chip[aria-pressed="true"]{background:#f2f5ff;color:#0a1230;border-color:#f2f5ff}
+html[data-look="glass"] dialog{background:rgba(16,22,46,.88);border-radius:18px}
+html[data-look="glass"] .dlg-head{background:rgba(16,22,46,.95)}
+html[data-look="glass"] .toast{background:rgba(242,245,255,.95);color:#0a1230;border-radius:12px}
+html[data-look="glass"] .chart-wrap .bar{fill:url(#barGlass)}
+html[data-look="glass"] .chart-tip{background:rgba(16,22,46,.85)}
+html[data-look="glass"] .calc div{background:rgba(255,255,255,.05)}
+html[data-look="glass"] .calc{background:var(--line)}
+html[data-look="glass"] .tab[aria-selected="true"]{border-bottom-color:#6f9bff;text-shadow:0 0 18px rgba(111,155,255,.6)}
+.look-btn{font-size:12px}
 </style>
 </head>
 <body>
@@ -228,6 +292,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
       <div class="spacer"></div>
       <label class="muted" for="month" style="font-size:12px">Sales month</label>
       <select id="month" aria-label="Sales month"></select>
+      <button class="btn small look-btn" type="button" id="lookBtn" title="Switch between the glass and classic look">Classic look</button>
       <button class="btn small" type="button" id="openReport">Monthly report</button>
       <button class="btn small" type="button" id="signOut">Sign out</button>
     </div>
@@ -586,6 +651,8 @@ function buildMonths(){
   sel.value=state.month;
 }
 $("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
+{ const setLookBtn=()=>$("#lookBtn").textContent=document.documentElement.dataset.look==="glass"?"Classic look":"Glass look"; setLookBtn();
+  $("#lookBtn").addEventListener("click",()=>{ const n=document.documentElement.dataset.look==="glass"?"classic":"glass"; document.documentElement.dataset.look=n; try{localStorage.setItem("sr-look",n);}catch(e){} setLookBtn(); renderChart(); }); }
 $("#openReport").addEventListener("click",()=>window.open(`report.html${state.month&&state.month!=="all"?`?m=${state.month}`:""}`,"_blank"));
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
 function setView(v){
@@ -669,7 +736,7 @@ function renderChart(){
     if(v) g+=`<path class="bar ${v<0?"neg":""}" data-i="${i}" d="${v>=0?`M${x},${y0}V${top+Math.min(4,h)}Q${x},${top} ${x+Math.min(4,w/2)},${top}H${x+w-Math.min(4,w/2)}Q${x+w},${top} ${x+w},${top+Math.min(4,h)}V${y0}Z`:`M${x},${y0}V${top+h-Math.min(4,h)}Q${x},${top+h} ${x+Math.min(4,w/2)},${top+h}H${x+w-Math.min(4,w/2)}Q${x+w},${top+h} ${x+w},${top+h-Math.min(4,h)}V${y0}Z`}"/>`;
     g+=`<rect class="hit" data-i="${i}" x="${ml+i*bw}" y="${mt}" width="${bw}" height="${H-mt-mb}"/>`;
     if(byMonth || (i%every===0)) g+=`<text class="ax" x="${ml+i*bw+bw/2}" y="${H-6}" text-anchor="middle">${byMonth?MON[+k.slice(5,7)-1]+" "+k.slice(2,4):+k.slice(8)}</text>`; });
-  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L)} by ${byMonth?"month":"day"}">${g}</svg><div class="chart-tip" hidden></div>`;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(L)} by ${byMonth?"month":"day"}"><defs><linearGradient id="barGlass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fb3ff"/><stop offset="1" stop-color="#4f7cff" stop-opacity=".55"/></linearGradient></defs>${g}</svg><div class="chart-tip" hidden></div>`;
   const tip=el.querySelector(".chart-tip"), svg=el.querySelector("svg");
   svg.addEventListener("mousemove",e=>{ const r=e.target.closest(".hit"); svg.querySelectorAll(".bar").forEach(b=>b.classList.toggle("dim", !!r && b.dataset.i!==r?.dataset.i));
     if(!r){ tip.hidden=true; return; } const i=+r.dataset.i, k=keys[i], a=agg.get(k);
