@@ -673,7 +673,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","ship","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","ship","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -798,8 +798,9 @@ function renderOverview(){
   const booked=u=>u.po && ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && x.status!=="cancelled");
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
-  units.filter(u=>u.flag).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
+  units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
+  removalRows().filter(z=>z.st.startsWith("Arrived")).forEach(z=>items.push({go:"removals", tag:"Removal", t:`Removal order arrived · ${z.r.title}`, d:`Order ${z.r.order_id} · ${z.r.reason||""}. Check it, then Back in stock (used) or Faulty.`}));
   undeliveredPOs().forEach(p=>items.push({adampo:p.po, tag:"Delivery", t:`Who delivered PO ${p.po}?`, d:`${p.qty_sending??"?"} unit${p.qty_sending===1?"":"s"} to ${p.facility||p.warehouse||""} · ${contents(p)} · no Courier Guy booking found. If Adam took it, record it here.`}));
   // a shipment Takealot turned away whose units are already set to come back is tracked under "Coming back to you"
   const handledRts=x=>x.direction==="to_takealot" && x.status==="returned-to-sender" && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && units.some(u=>u.courier_shipment_id===s.id)));
