@@ -266,6 +266,8 @@ html[data-look="glass"] .chart-tip{background:rgba(16,22,46,.85)}
 html[data-look="glass"] .calc div{background:rgba(255,255,255,.05)}
 html[data-look="glass"] .calc{background:var(--line)}
 html[data-look="glass"] .tab[aria-selected="true"]{border-bottom-color:#6f9bff;text-shadow:0 0 18px rgba(111,155,255,.6)}
+html[data-look="glass"] .panel{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.035))}
+html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.035))}
 .look-btn{font-size:12px}
 </style>
 </head>
@@ -746,7 +748,9 @@ function renderChart(){
   svg.addEventListener("click",e=>svg.dispatchEvent(new MouseEvent("mousemove",{clientX:e.clientX,clientY:e.clientY,bubbles:true})));
 }
 document.addEventListener("click",e=>{ const b=e.target.closest("[data-ch]"); if(!b) return; chMeasure=b.dataset.ch; document.querySelectorAll("[data-ch]").forEach(x=>x.classList.toggle("on",x===b)); renderChart(); });
-let chRs; window.addEventListener("resize",()=>{ clearTimeout(chRs); chRs=setTimeout(renderChart,150); });
+let chRs, chW=0; window.addEventListener("resize",()=>{ clearTimeout(chRs); chRs=setTimeout(renderChart,150); });
+// redraw when the chart's box changes size (e.g. it was drawn while its tab was hidden)
+if(window.ResizeObserver) new ResizeObserver(es=>{ const w=Math.round(es[0].contentRect.width); if(w && Math.abs(w-chW)>4){ chW=w; clearTimeout(chRs); chRs=setTimeout(renderChart,60); } }).observe($("#chart"));
 /* ---------------- overview ---------------- */
 function renderOverview(){
   const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
