@@ -60,7 +60,7 @@ def parse_export(text: str) -> list[dict]:
         out.append({
             "order_id": r["Order ID"].strip(),
             "sku": (r.get("SKU") or "").strip(),
-            "order_date": od.isoformat() if od else None,
+            "order_date": (od.isoformat() + "+02:00") if od else None,   # Takealot shows South African time
             "sold_date": od.date().isoformat() if od else None,
             "sale_status": (r.get("Sale Status") or "").strip(),
             "product_title": (r.get("Product Title") or "").strip(),
@@ -97,7 +97,7 @@ def parse_api(items: list[dict]) -> list[dict]:
         out.append({
             "order_id": str(r["order_id"]),
             "sku": str(r.get("sku") or ""),
-            "order_date": od.isoformat() if od else None,
+            "order_date": (od.isoformat() + "+02:00") if od else None,   # Takealot shows South African time
             "sold_date": od.date().isoformat() if od else None,
             "sale_status": (r.get("sale_status") or "").strip(),
             "product_title": (r.get("product_title") or "").strip(),
