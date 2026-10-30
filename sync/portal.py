@@ -605,7 +605,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     import re as _re
                     js = ctx.request.get("https://sellers.takealot.com/assets/main-DS7F8Hpa.js", timeout=60_000).text()
                     segs = []
-                    for key in ('/v2/task/report"', "delimeter", "date_from:", "task_type_id:27", "Stock Recon"):
+                    for key in ("customer_comment", "customerComment", "Customer Comment", "/v2/returns/", "seller_return_id}"):
                         for m in list(_re.finditer(_re.escape(key), js))[:4]:
                             segs.append({"key": key, "text": js[max(0, m.start() - 900): m.start() + 600]})
                     (DEBUG_DIR / "recon_discovery3.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
@@ -803,7 +803,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     out["row_text"] = row.inner_text()[:500]
                     out["row_html"] = row.inner_html()[:3000]
                     try:
-                        row.get_by_text("View Details").first.click(timeout=8000)
+                        row.get_by_text("RRN-BZYN7-KXBV").first.click(timeout=8000)
                     except Exception as e:
                         out["click_error"] = repr(e)[:200]
                     page.wait_for_timeout(5000)
@@ -850,7 +850,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                         "url": url, "count": len(returns), "keys": sorted(returns[0].keys()) if returns else [],
                         "sample": [{k: v for k, v in x.items() if "customer" not in k.lower()} for x in returns[:3]],
                         "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
-                    save_returns(cfg, returns, log)
+                    save_returns(cfg, returns, log, ctx=ctx, auth=auth)
                 else:
                     log("Returns page: no returns data found.")
             except NeedsLogin:
@@ -1275,8 +1275,27 @@ def fetch_takealot_pos(ctx, cfg, auth, log):
 
 
 
-def save_returns(cfg, returns, log):
-    """Keep every return (from View Returns) in takealot_returns, so the app can count returns per month."""
+def _find_comment(obj):
+    """The customer's comment somewhere in a return's details."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if "comment" in k.lower() and "seller" not in k.lower() and isinstance(v, str) and v.strip():
+                return v.strip()
+        for v in obj.values():
+            c = _find_comment(v)
+            if c:
+                return c
+    elif isinstance(obj, list):
+        for v in obj:
+            c = _find_comment(v)
+            if c:
+                return c
+    return None
+
+
+def save_returns(cfg, returns, log, ctx=None, auth=None):
+    """Keep every return (from View Returns) in takealot_returns, so the app can count returns per month.
+    Also reads each new return's details once for the customer's comment."""
     if not returns:
         return
     import matcher, stockrecon_sync as S
@@ -1293,3 +1312,41 @@ def save_returns(cfg, returns, log):
     except RuntimeError as e:
         log("Returns history: run 8_database_update.sql in Supabase to switch this on." if "takealot_returns" in str(e)
             else "Returns history couldn't be saved: " + str(e)[:150])
+        return
+    # customer comments (once per return)
+    if ctx is None or not auth:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        have = {r["return_id"] for r in db.select("takealot_returns", "select=return_id,customer_comment&customer_comment=not.is.null")}
+    except RuntimeError:
+        return                                                     # before 10_database_update.sql
+    tried = DEBUG_DIR / "return_comments_tried.json"
+    try:
+        done = set(json.loads(tried.read_text(encoding="utf-8")))
+    except Exception:
+        done = set()
+    for row in rows:
+        rid = row["return_id"]
+        if rid in have or rid in done or not rid.isdigit():
+            continue
+        try:
+            r = ctx.request.get(f"https://{API_HOST}/v2/return/{rid}/details", headers=auth, timeout=60_000)
+            if not r.ok:
+                continue
+            j = r.json()
+            if not (DEBUG_DIR / "return_details.json").exists():
+                DEBUG_DIR.mkdir(exist_ok=True)
+                (DEBUG_DIR / "return_details.json").write_text(json.dumps(j, indent=1, default=str)[:20000], encoding="utf-8")
+            c = _find_comment(j)
+            done.add(rid)
+            if c:
+                db.patch("takealot_returns", f"return_id=eq.{rid}", {"customer_comment": c[:2000]})
+                log(f"Return {row['order_id']}: customer comment saved.")
+        except Exception as e:
+            log(f"Return {row['order_id']}: details couldn't be read: {repr(e)[:120]}")
+    try:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        tried.write_text(json.dumps(sorted(done)), encoding="utf-8")
+    except Exception:
+        pass
