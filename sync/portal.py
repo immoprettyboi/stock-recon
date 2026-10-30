@@ -925,6 +925,9 @@ def save_offer_stock(cfg, offers, log):
             name = WAREHOUSE_NAMES.get(w.get("takealot_warehouse_id"), str(w.get("takealot_warehouse_id")))
             stock[name] = {"qty": w.get("quantity") or 0, "on_way": w.get("stock_on_way") or 0,
                            "receiving": w.get("stock_in_receiving") or 0, "sold_30d": w.get("quantity_sold_30_days") or 0}
+        # lead-time stock: what you offer from your own warehouse (HOME)
+        stock["LEADTIME"] = {"qty": o.get("total_merchant_stock") or 0,
+                             "days": ((o.get("leadtime_days") or {}).get("minimum"))}
         row = {"sku": sku, "tsin": str(o.get("tsin_id") or ""), "takealot_title": ((o.get("tsin") or {}).get("title") or ""),
                "takealot_status": status, "takealot_stock": stock, "stock_updated_at": now}
         rows.append(row)
