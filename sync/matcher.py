@@ -206,8 +206,11 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
                     fields["product"] = s["product_title"]      # named after the listing it sold on
                 if s["po"] and not u.get("po"):          # PO appears once the unit is sent in
                     fields["po"] = s["po"]
-                    if u.get("location") == "HOME" and s["fulfilment_dc"]:
-                        fields["location"] = s["fulfilment_dc"]
+                # once the unit has left home (it's on a PO, or Takealot is past waiting for it), show it at
+                # the warehouse the sale ships from, as on the Seller Portal
+                if u.get("location") == "HOME" and s.get("fulfilment_dc") in ("JHB", "CPT", "DBN") and \
+                        (s["po"] or u.get("po") or s.get("sale_status") not in ("New Lead Time Order", "Confirmed Shipment", "Inbound")):
+                    fields["location"] = s["fulfilment_dc"]
                 upd(u, **fields)
             res.update(match_status="matched", reason="order", unit_ids=[u["id"] for u in linked])
             results.append(res)
