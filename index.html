@@ -213,17 +213,16 @@ html[data-look="glass"]{
   --orange:#fb923c; --orange-soft:rgba(251,146,60,.16); --bad:#f87171; --bad-soft:rgba(248,113,113,.16);
   --stock:#cbd5e1; --stock-soft:rgba(203,213,225,.12); --query:#c4b5fd; --query-soft:rgba(196,181,253,.16);
   --r:12px; color-scheme:dark;
-  background:#070b1a;
-}
-html[data-look="glass"] body{
-  background:
+  background-color:#070b1a;
+  background-image:
     radial-gradient(900px 600px at 8% -10%, rgba(64,110,255,.55), transparent 60%),
     radial-gradient(700px 520px at 100% 10%, rgba(24,190,214,.35), transparent 60%),
     radial-gradient(800px 640px at 70% 110%, rgba(124,77,255,.38), transparent 60%),
     radial-gradient(600px 400px at 0% 100%, rgba(16,185,129,.18), transparent 60%),
     linear-gradient(160deg,#0a1230 0%,#070b1a 55%,#0b0f24 100%);
-  background-attachment:fixed;
+  background-attachment:fixed; min-height:100%;
 }
+html[data-look="glass"] body{background:transparent}
 html[data-look="glass"] body::before{background:rgba(7,11,26,.6)}
 html[data-look="glass"] :is(.panel,.tile,.sync,.card,.match-item,.login-card,.empty,.adam-bar,.chart-tip,header.top,dialog){
   -webkit-backdrop-filter:blur(18px) saturate(150%); backdrop-filter:blur(18px) saturate(150%);
