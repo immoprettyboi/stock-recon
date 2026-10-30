@@ -928,9 +928,18 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log):
     for r in stale:
         db.patch("leadtime_requests", f"id=eq.{r['id']}", {"done_at": now, "ok": False, "result": "Replaced by a newer change"})
     wanted += [(r["id"], str(r["sku"]), int(r["qty"])) for r in latest.values()]
+    by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
+    # listings you keep at a fixed lead-time number (supplier stock): put them back whenever they drift
+    try:
+        asked = {sku for _, sku, _ in wanted}
+        for f in db.select("products", "select=sku,leadtime_fixed&leadtime_fixed=not.is.null"):
+            o = by_sku.get(str(f["sku"]))
+            if o and str(f["sku"]) not in asked and (o.get("total_merchant_stock") or 0) != int(f["leadtime_fixed"]):
+                wanted.append((None, str(f["sku"]), int(f["leadtime_fixed"])))
+    except RuntimeError:
+        pass                                          # before 11_database_update.sql
     if not wanted:
         return
-    by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
     for rid, sku, qty in wanted:
         o = by_sku.get(sku)
         ok, msg = False, ""

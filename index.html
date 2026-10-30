@@ -1236,13 +1236,14 @@ function renderCheck(){
   let issues=0;
   // lead time: what Takealot offers from your own warehouse vs new units you have at HOME
   // each listing should offer at most what you have at HOME (they all draw on the same units)
-  for(const p of live){ const g=G[p.product]; const lt=(p.takealot_stock.LEADTIME||{}).qty||0; g.ltT=Math.max(g.ltT||0,lt); if(lt) g.ltN=(g.ltN||0)+1; }
+  for(const p of live){ const g=G[p.product]; if(p.leadtime_fixed!=null){ g.ltFixed=p.leadtime_fixed; continue; } const lt=(p.takealot_stock.LEADTIME||{}).qty||0; g.ltT=Math.max(g.ltT||0,lt); if(lt) g.ltN=(g.ltN||0)+1; }
   units.filter(u=>u.status==="in_stock" && u.location==="HOME" && (!u.condition||u.condition==="new")).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.home=(g.home||0)+1; });
   const leadCell=g=>{ const t=g.ltT||0, h=g.home||0;
+    if(g.ltFixed!=null && !t) return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${g.ltFixed} <span class="muted">on lead time</span></div><span class="pill s-settled">supplier stock</span><div class="muted" style="font-size:12px">Kept at ${g.ltFixed} on purpose</div></td>`;
     if(!t && !h) return `<td class="num muted">·</td>`;
     if(t>h){ issues++; return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time${g.ltN>1?" (highest listing)":""}</span></div><span class="pill s-return_me">${t-h} more on Takealot</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">Lower the lead-time stock on the Seller Portal to ${h}, or a customer can order a unit you don't have</div></td>`; }
     return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time${g.ltN>1?` (each of ${g.ltN} listings)`:""}</span></div><span class="pill s-settled">${t===h?"matches":"ok"}</span>${t<h?`<div class="muted" style="font-size:12px">${h-t} at HOME not offered on lead time</div>`:""}</td>`; };
-  const rows=Object.entries(G).filter(([n,g])=>(g.ltT||0)+(g.home||0)>0 || DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
+  const rows=Object.entries(G).filter(([n,g])=>(g.ltT||0)+(g.home||0)+(g.ltFixed||0)>0 || DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
       let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;
       const RJ=(g.rej||{})[dc]||0, rejNote = d<0 && RJ>0 && w>0 ? Math.min(RJ,w,-d) : 0; d+=rejNote;
@@ -1291,7 +1292,8 @@ function renderProducts(){
       : pend ? `<div class="tal-st">Setting to ${pend.qty}…</div>`
       : last && (Date.now()-new Date(last.done_at))<864e5 ? `<div class="tal-st ${last.ok?"":"neg"}">${esc(last.result||"")}</div>` : "";
     return `<td class="nw"><div class="inline"><input type="number" min="0" step="1" value="${cur}" data-ltq="${esc(p.sku)}" style="width:70px" aria-label="Lead-time stock for ${esc(p.takealot_title)}">
-      <button class="btn small" type="button" data-lts="${esc(p.sku)}" ${ltReqs===null?"disabled":""}>Set</button>${home!=null?`<span class="muted" style="font-size:12px">${home} at HOME</span>`:""}</div>${st}</td>`; };
+      <button class="btn small" type="button" data-lts="${esc(p.sku)}" ${ltReqs===null?"disabled":""}>Set</button>${home!=null?`<span class="muted" style="font-size:12px">${home} at HOME</span>`:""}</div>
+      <label class="tal-st" style="display:flex;gap:5px;align-items:center"><input type="checkbox" data-ltfix="${esc(p.sku)}" ${p.leadtime_fixed!=null?"checked":""}> Always keep at this number (supplier stock)</label>${st}</td>`; };
   $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Status</th><th>Lead time</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr>
     <td>${esc(p.takealot_title)}</td><td class="mono">${esc(p.sku)}</td><td class="nw">${esc(p.takealot_status||"")}</td>${ltCell(p)}
     <td><select data-sku="${esc(p.sku)}" aria-label="Your product for ${esc(p.takealot_title)}">
@@ -1306,6 +1308,9 @@ $("#prodTable").addEventListener("click", async e=>{
   if(!(qty>=0)){ toast("Type a number of units (0 or more)"); return; }
   const p=products.find(x=>x.sku===sku);
   b.disabled=true;
+  const keep=$(`[data-ltfix="${CSS.escape(sku)}"]`)?.checked;
+  const fx=await sb.from("products").update({ leadtime_fixed: keep?qty:null }).eq("sku",sku);
+  if(fx.error && !/leadtime_fixed/.test(errMsg(fx.error))){ toast("Couldn't save: "+errMsg(fx.error)); b.disabled=false; return; }
   const {error}=await sb.from("leadtime_requests").insert({ sku, qty, requested_by:me?.email||null });
   if(!error) await sb.from("sync_runs").insert({ requested:true, message:"Requested from the app" });
   b.disabled=false;

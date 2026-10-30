@@ -24,4 +24,8 @@ do $$ begin
   begin alter publication supabase_realtime add table public.leadtime_requests; exception when others then null; end;
 end $$;
 
+-- A listing kept at a fixed lead-time number (e.g. supplier has plenty): the sync puts it back to this every run
+alter table public.products add column if not exists leadtime_fixed int;
+update public.products set leadtime_fixed = 20 where sku = '9902354687788' and leadtime_fixed is null;   -- S26 Ultra 12/256GB Black
+
 select 'ok' as done;
