@@ -463,6 +463,7 @@ html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255
   <section id="view-products" class="stack" hidden>
     <div class="panel">
       <div class="sec-head"><h2>Takealot products</h2><p>Each Takealot SKU is linked once to your own product name. The sync uses this to match sales to stock.</p></div>
+      <p class="note" style="margin:0;max-width:85ch"><b>Lead time:</b> how many units each listing offers from your own stock (HOME). Type a number and tap <b>Set</b>: the PC changes it on the Seller Portal within a minute. 0 takes the listing off lead time.</p>
       <div class="tscroll"><table id="prodTable"></table></div>
     </div>
   </section>
@@ -593,7 +594,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={};
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, ltReqs=[];
 // Takealot's own status for a sold unit's order, shown under "Sold, awaiting fees"
 const talLine = u => u.status==="awaiting_fees" && talStatus[u.order_id] ? talStatus[u.order_id] : "";
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
@@ -663,6 +664,8 @@ async function loadAll(){
     { const ids=[...new Set(units.filter(u=>u.status==="awaiting_fees" && u.order_id).map(u=>u.order_id))];
       const {data,error}=ids.length?await sb.from("takealot_sales").select("order_id,sale_status").in("order_id",ids):{data:[]};
       talStatus={}; if(!error) data.forEach(x=>talStatus[x.order_id]=x.sale_status); }
+    { const {data,error}=await sb.from("leadtime_requests").select("*").order("id",{ascending:false}).limit(100);
+      ltReqs = error ? null : data; }
     { const {data,error}=await sb.from("takealot_recons").select("month,file_name,missing,missing_units,claim_value,claim_status,claim_ref,claim_date,downloaded_at").order("month",{ascending:false});
       recons = error ? [] : data; }
     buildMonths(); render();
@@ -1280,14 +1283,34 @@ $("#checkTable").addEventListener("click",e=>{
 function renderProducts(){
   const names=[...new Set(units.map(u=>u.product))].sort();
   const list=[...products].sort((a,b)=>(a.product?1:0)-(b.product?1:0) || (a.takealot_title||"").localeCompare(b.takealot_title||""));
-  $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr>
-    <td>${esc(p.takealot_title)}</td><td class="mono">${esc(p.sku)}</td>
+  const homeOf=g=>units.filter(u=>u.status==="in_stock" && u.location==="HOME" && (!u.condition||u.condition==="new") && (u.product===g || products.some(q=>q.product===g && q.takealot_title===u.product))).length;
+  const ltCell=p=>{ if(!p.takealot_stock) return `<td class="muted">–</td>`;
+    const cur=(p.takealot_stock.LEADTIME||{}).qty||0, home=p.product&&p.product!==IGNORE?homeOf(p.product):null;
+    const pend=(ltReqs||[]).find(r=>r.sku===p.sku && !r.done_at), last=(ltReqs||[]).find(r=>r.sku===p.sku && r.done_at);
+    const st = ltReqs===null ? '<div class="tal-st">Run 11_database_update.sql to switch this on</div>'
+      : pend ? `<div class="tal-st">Setting to ${pend.qty}…</div>`
+      : last && (Date.now()-new Date(last.done_at))<864e5 ? `<div class="tal-st ${last.ok?"":"neg"}">${esc(last.result||"")}</div>` : "";
+    return `<td class="nw"><div class="inline"><input type="number" min="0" step="1" value="${cur}" data-ltq="${esc(p.sku)}" style="width:70px" aria-label="Lead-time stock for ${esc(p.takealot_title)}">
+      <button class="btn small" type="button" data-lts="${esc(p.sku)}" ${ltReqs===null?"disabled":""}>Set</button>${home!=null?`<span class="muted" style="font-size:12px">${home} at HOME</span>`:""}</div>${st}</td>`; };
+  $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Status</th><th>Lead time</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr>
+    <td>${esc(p.takealot_title)}</td><td class="mono">${esc(p.sku)}</td><td class="nw">${esc(p.takealot_status||"")}</td>${ltCell(p)}
     <td><select data-sku="${esc(p.sku)}" aria-label="Your product for ${esc(p.takealot_title)}">
       <option value="">Not linked yet</option>
       <option value="${IGNORE}" ${p.product===IGNORE?"selected":""}>Don't track this product</option>
       ${names.map(n=>`<option ${n===p.product?"selected":""}>${esc(n)}</option>`).join("")}
     </select></td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">Products appear here after the first sync.</td></tr></tbody>`;
 }
+$("#prodTable").addEventListener("click", async e=>{
+  const b=e.target.closest("[data-lts]"); if(!b) return;
+  const sku=b.dataset.lts, q=$(`[data-ltq="${CSS.escape(sku)}"]`), qty=parseInt(q.value,10);
+  if(!(qty>=0)){ toast("Type a number of units (0 or more)"); return; }
+  const p=products.find(x=>x.sku===sku);
+  b.disabled=true;
+  const {error}=await sb.from("leadtime_requests").insert({ sku, qty, requested_by:me?.email||null });
+  if(!error) await sb.from("sync_runs").insert({ requested:true, message:"Requested from the app" });
+  b.disabled=false;
+  if(error) toast(/leadtime_requests/.test(errMsg(error))?"Run 11_database_update.sql in Supabase first":"Couldn't send: "+errMsg(error));
+  else { toast(`Sent: ${p?.takealot_title||sku} → ${qty} on lead time. The PC sets it within a minute.`); loadAll(); } });
 $("#prodTable").addEventListener("change", async e=>{
   const s=e.target.closest("select[data-sku]"); if(!s) return;
   const {error}=await sb.from("products").update({product:s.value||null}).eq("sku",s.dataset.sku);

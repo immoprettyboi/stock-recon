@@ -881,34 +881,9 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
-            # ---- lead-time stock changes you asked for (debug/set_leadtime.json: [{"sku": "...", "qty": 3}, ...])
+            # ---- lead-time stock changes asked for in the app (leadtime_requests) or via debug/set_leadtime.json
             try:
-                req = DEBUG_DIR / "set_leadtime.json"
-                if req.exists():
-                    wanted = json.loads(req.read_text(encoding="utf-8"))
-                    req.unlink()
-                    by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
-                    for w in wanted:
-                        o = by_sku.get(str(w["sku"]))
-                        if not o:
-                            log(f"Lead-time stock: listing {w['sku']} not found, left alone.")
-                            continue
-                        mw = ((o.get("stock") or {}).get("merchant_warehouse") or [{}])[0].get("merchant_warehouse_id")
-                        before = o.get("total_merchant_stock")
-                        r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{o['offer_id']}",
-                                              headers={**auth, "content-type": "application/json"},
-                                              data=json.dumps({"leadtime_stock": [{"merchant_warehouse_id": mw, "quantity": int(w["qty"])}]}),
-                                              timeout=60_000)
-                        body = r.text()[:300]
-                        errs = None
-                        try:
-                            errs = (r.json() or {}).get("validation_errors")
-                        except Exception:
-                            pass
-                        if r.ok and not errs:
-                            log(f"Lead-time stock: {((o.get('tsin') or {}).get('title') or w['sku'])[:60]} changed from {before} to {w['qty']}.")
-                        else:
-                            log(f"Lead-time stock: {w['sku']} NOT changed ({r.status}): {errs or body}")
+                apply_leadtime_requests(ctx, cfg, auth, offers, log)
             except Exception as e:
                 log("Lead-time stock change failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
@@ -928,6 +903,67 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
 
 WAREHOUSE_NAMES = {1: "CPT", 3: "JHB", 6: "DBN"}
+
+
+def apply_leadtime_requests(ctx, cfg, auth, offers, log):
+    """Set a listing's lead-time stock on Takealot (PATCH /v2/offers/offer/{id}). Only what you asked for in the app."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    wanted = []                                       # (request id or None, sku, qty)
+    req = DEBUG_DIR / "set_leadtime.json"
+    if req.exists():
+        try:
+            wanted += [(None, str(w["sku"]), int(w["qty"])) for w in json.loads(req.read_text(encoding="utf-8"))]
+        finally:
+            req.unlink()
+    try:
+        rows = db.select("leadtime_requests", "select=id,sku,qty&done_at=is.null&order=id.asc")
+    except RuntimeError:
+        rows = []                                     # before 11_database_update.sql
+    latest = {}
+    for r in rows:
+        latest[str(r["sku"])] = r                     # the newest request per listing wins
+    stale = [r for r in rows if latest[str(r["sku"])] is not r]
+    now = datetime.utcnow().isoformat() + "Z"
+    for r in stale:
+        db.patch("leadtime_requests", f"id=eq.{r['id']}", {"done_at": now, "ok": False, "result": "Replaced by a newer change"})
+    wanted += [(r["id"], str(r["sku"]), int(r["qty"])) for r in latest.values()]
+    if not wanted:
+        return
+    by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
+    for rid, sku, qty in wanted:
+        o = by_sku.get(sku)
+        ok, msg = False, ""
+        if not o:
+            msg = "Listing not found on Takealot"
+        else:
+            mw = ((o.get("stock") or {}).get("merchant_warehouse") or [{}])[0].get("merchant_warehouse_id")
+            if not mw:
+                mw = 51981                            # your own warehouse on Takealot
+            before = o.get("total_merchant_stock") or 0
+            r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{o['offer_id']}", headers={**auth, "content-type": "application/json"},
+                                  data=json.dumps({"leadtime_stock": [{"merchant_warehouse_id": mw, "quantity": qty}]}), timeout=60_000)
+            errs = None
+            try:
+                errs = (r.json() or {}).get("validation_errors")
+            except Exception:
+                pass
+            title = ((o.get("tsin") or {}).get("title") or sku)[:60]
+            if r.ok and not errs:
+                ok, msg = True, f"Changed from {before} to {qty}"
+                o["total_merchant_stock"] = qty
+                try:                                  # show the new number in the app straight away
+                    p = db.select("products", f"select=takealot_stock&sku=eq.{sku}")
+                    st = (p[0].get("takealot_stock") or {}) if p else {}
+                    st["LEADTIME"] = {**(st.get("LEADTIME") or {}), "qty": qty}
+                    db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
+                except Exception:
+                    pass
+            else:
+                msg = f"Takealot said no ({r.status}): {(errs[0].get('message') if errs and isinstance(errs[0], dict) else errs) or r.text()[:150]}"
+            log(f"Lead-time stock: {title}: {msg}.")
+        if rid is not None:
+            db.patch("leadtime_requests", f"id=eq.{rid}", {"done_at": datetime.utcnow().isoformat() + "Z", "ok": ok, "result": msg[:300]})
 
 
 def save_offer_stock(cfg, offers, log):
