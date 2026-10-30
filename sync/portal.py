@@ -331,6 +331,39 @@ def takealot_recon(ctx, cfg, auth, log):
             + (f"{units} unit(s) missing, claim value R{claim:,.2f}." if missing else "nothing missing."))
 
 
+def receive_returns(cfg, rows, log):
+    """A Courier Guy shipment from a Takealot DC to us shows Delivered -> book in the units it carried.
+    Units from a shipment Takealot rejected (good stock) go straight to In stock at HOME.
+    Removal-order units (customer returns, often defective) are marked as arrived at HOME for you to check first."""
+    import stockrecon_sync as S
+    delivered = {r["id"]: r for r in rows if r["direction"] == "from_takealot" and r["status"] == "delivered"}
+    if not delivered:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    units = db.select("units", "select=id,product,status,location,order_id,po,comment,courier_shipment_id,flag&status=eq.return_me")
+    live_from = {}
+    for r in rows:
+        if r["direction"] == "from_takealot" and r["status"] not in ("cancelled",) and not str(r.get("waybill") or "").upper().endswith("-R"):
+            live_from.setdefault(r["takealot_dc"], []).append(r)
+    now = datetime.utcnow().isoformat() + "Z"
+    for sid, x in delivered.items():
+        mine = [u for u in units if u.get("courier_shipment_id") == sid]
+        if not mine and not str(x.get("waybill") or "").upper().endswith("-R") and len(live_from.get(x["takealot_dc"], [])) == 1:
+            mine = [u for u in units if not u.get("courier_shipment_id") and u.get("location") == x["takealot_dc"]]
+        day = str(x.get("delivered_at") or now)[:10]
+        for u in mine:
+            c = (u.get("comment") or "").strip()
+            if "Takealot rejected" in c:
+                db.patch("units", f"id=eq.{u['id']}", {"status": "in_stock", "location": "HOME", "flag": False, "updated_at": now,
+                                                        "comment": (c + f" Arrived back {day} on {x['waybill']}: in stock at HOME.").strip()})
+                log(f"  Arrived on {x['waybill']}: {u['product']} set to In stock at HOME.")
+            elif u.get("location") != "HOME":
+                db.patch("units", f"id=eq.{u['id']}", {"location": "HOME", "flag": True, "updated_at": now,
+                                                        "comment": (f"Arrived back {day} on {x['waybill']}. Check it: if it's fine, set it "
+                                                                    "to In stock; if it's faulty, note what's wrong. " + c).strip()})
+                log(f"  Arrived on {x['waybill']}: {u['product']} (order {u.get('order_id') or '-'}) is at HOME, waiting for you to check it.")
+
+
 def test_logins(p, cfg, log):
     """One-off check (debug/login_test_request.txt): log in with the config.ini details in a fresh, separate browser,
     so the sync's own session is left alone."""
@@ -1038,6 +1071,10 @@ def fetch_courier(ctx, cfg, log):
             handle_rejected(cfg, rows, log)
         except Exception as e:
             log("Rejected shipments couldn't be handled: " + repr(e)[:200])
+        try:
+            receive_returns(cfg, rows, log)
+        except Exception as e:
+            log("Delivered returns couldn't be booked in: " + repr(e)[:200])
 
 
 REJECTED = {"returned-to-sender", "delivery-rejected"}

@@ -810,9 +810,9 @@ function renderOverview(){
       line:u=>`${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`, sum:()=>"Takealot is checking if they're sellable"},
     {s:"missing_query", t:"Queries open with Takealot", list:waitUnits.filter(u=>u.status==="missing_query"),
       line:u=>`${u.location}${u.query_date?` · sent ${fd(u.query_date)}`:""}${u.query_ref?` · ref ${u.query_ref}`:""}`, sum:()=>"Update the unit when Takealot answers"},
-    {s:"return_me", t:"Coming back to you", list:units.filter(u=>u.status==="return_me"),
+    {s:"return_me", t:"Coming back to you", list:units.filter(u=>u.status==="return_me" && u.location!=="HOME"),
       line:u=>{ const x=shipFor(u); return `${u.order_id||"–"} · from ${u.location}${x?` · ${x.waybill} ${shipLabel(x.status).toLowerCase()}${shipWhen(x)?` · ${shipWhen(x)}`:""}`:" · no courier booked yet"}`; },
-      sum:()=>"Set to HOME and In stock when it arrives"},
+      sum:()=>"Booked in automatically when the courier delivers it"},
   ].filter(g=>g.list.length);
   $("#wait").innerHTML = groups.length ? groups.map(g=>`
     <button class="attn-item" type="button" data-status="${g.s}">

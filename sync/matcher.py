@@ -433,7 +433,8 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                         comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: pending sellable "
                                  f"stock at Takealot {r['dc']}. " + (u.get("comment") or "")).strip())
             elif k == "removal":
-                if u.get("status") == "return_me" and u.get("match_method") == "return" and u.get("location") == "HOME" and r["dc"]:
+                if u.get("status") == "return_me" and u.get("match_method") == "return" and u.get("location") == "HOME" and r["dc"] \
+                        and "Arrived back" not in (u.get("comment") or ""):
                     upd(u, location=r["dc"])
                 if u["status"] != "return_me" and not (u["status"] == "in_stock" and u.get("location") == "HOME"):
                     upd(u, status="return_me", return_date=r["return_date"], location=r["dc"] or u.get("location"),
