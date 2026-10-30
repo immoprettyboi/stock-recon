@@ -594,7 +594,11 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, ltReqs=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[];
+// when the customer ordered on Takealot, in South African time
+const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
+  const p=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
+  return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute}`; };
 // Takealot's own status for a sold unit's order, shown under "Sold, awaiting fees"
 const talLine = u => u.status==="awaiting_fees" && talStatus[u.order_id] ? talStatus[u.order_id] : "";
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
@@ -661,9 +665,11 @@ async function loadAll(){
       pos = error ? [] : data; }
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
-    { const ids=[...new Set(units.filter(u=>u.status==="awaiting_fees" && u.order_id).map(u=>u.order_id))];
-      const {data,error}=ids.length?await sb.from("takealot_sales").select("order_id,sale_status").in("order_id",ids):{data:[]};
-      talStatus={}; if(!error) data.forEach(x=>talStatus[x.order_id]=x.sale_status); }
+    { const ids=[...new Set(units.filter(u=>u.order_id && !/^PRIVATE-/.test(u.order_id)).map(u=>u.order_id))];
+      talStatus={}; talTime={};
+      for(let i=0;i<ids.length;i+=150){
+        const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
+        if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(units.some(u=>u.order_id===x.order_id && u.status==="awaiting_fees")) talStatus[x.order_id]=x.sale_status; }); } }
     { const {data,error}=await sb.from("leadtime_requests").select("*").order("id",{ascending:false}).limit(100);
       ltReqs = error ? null : data; }
     { const {data,error}=await sb.from("takealot_recons").select("month,file_name,missing,missing_units,claim_value,claim_status,claim_ref,claim_date,downloaded_at").order("month",{ascending:false});
@@ -835,7 +841,7 @@ function renderOverview(){
   const waitUnits=units.filter(u=>!u.flag && !(u.order_id && toSend.has(u.order_id) && !booked(u)));
   const groups=[
     {s:"awaiting_fees", t:"Fees not charged yet", list:waitUnits.filter(u=>u.status==="awaiting_fees"),
-      line:u=>{ const x=u.po?ships.find(s=>s.direction==="to_takealot" && poOf(s)===u.po && !SHIP_DONE.has(s.status)):null; return `${u.order_id} · ${talStatus[u.order_id]||"–"} · ${fd(u.sold_date)} · ${R(u.gross)}${x?` · courier ${x.waybill} ${shipLabel(x.status).toLowerCase()}`:""}`; },
+      line:u=>{ const x=u.po?ships.find(s=>s.direction==="to_takealot" && poOf(s)===u.po && !SHIP_DONE.has(s.status)):null; return `${u.order_id} · ${talStatus[u.order_id]||"–"} · ${soldWhen(u)} · ${R(u.gross)}${x?` · courier ${x.waybill} ${shipLabel(x.status).toLowerCase()}`:""}`; },
       sum:L=>`${R(L.reduce((a,u)=>a+(u.gross||0),0))} in sales; fees appear once shipped`},
     {s:"return_takealot", t:"Returns pending at Takealot", list:waitUnits.filter(u=>u.status==="return_takealot"),
       line:u=>`${u.order_id||"–"}${u.return_date?` · returned ${fd(u.return_date)}`:""}`, sum:()=>"Takealot is checking if they're sellable"},
@@ -914,13 +920,13 @@ function renderLedger(){
     <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
     <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
     <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}${u.arrived_at?`<div class="tal-st">back home ${fd(u.arrived_at)}</div>`:""}</td>
-    <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${fd(u.sold_date)}</td>
+    <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${soldWhen(u)}</td>
     <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):(u.status==="awaiting_fees"?'<span class="muted">pending</span>':"")}</td>
     <td class="num">${R(u.cost)}</td><td class="num ${p<0?"neg":""}">${p==null?"":`<b>${R(p)}</b>`}</td></tr>`}).join("")}</tbody>
   <tfoot><tr><td colspan="8">${rows.length} unit${rows.length===1?"":"s"} shown</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td></tr></tfoot>`;
   $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
     <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
-    <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.arrived_at?`<span>Back home ${fd(u.arrived_at)}</span>`:""}${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
+    <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.arrived_at?`<span>Back home ${fd(u.arrived_at)}</span>`:""}${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${soldWhen(u)}</span>`:""}</div>
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
 }
@@ -941,7 +947,7 @@ function renderMatch(){
   $("#matchList").innerHTML = sales.length ? sales.map(s=>`
     <div class="match-item">
       <div><div class="t">${esc(s.product_title)}</div>
-        <div class="d">Order <span class="mono">${esc(s.order_id)}</span> · ${fd(s.order_date)} · ${esc(s.sale_status)} · ${esc(s.fulfilment_dc)}${s.po?` · PO ${esc(s.po)}`:""} · ${R(s.gross)}${s.qty>1?` · qty ${s.qty}`:""}</div>
+        <div class="d">Order <span class="mono">${esc(s.order_id)}</span> · ${soldWhen({order_id:s.order_id,sold_date:s.order_date}) } · ${esc(s.sale_status)} · ${esc(s.fulfilment_dc)}${s.po?` · PO ${esc(s.po)}`:""} · ${R(s.gross)}${s.qty>1?` · qty ${s.qty}`:""}</div>
         <div class="d warn-t">${esc(s.match_note||"")}</div></div>
       <div class="actions"><button class="btn primary small" type="button" data-pick="${esc(s.order_id)}|${esc(s.sku)}">Choose unit</button><button class="btn small" type="button" data-ignore="${esc(s.order_id)}|${esc(s.sku)}">Ignore</button></div>
     </div>`).join("") : `<div class="empty">Every Takealot sale is matched to a unit.</div>`;
