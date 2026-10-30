@@ -913,14 +913,14 @@ function renderLedger(){
   <tbody>${rows.map(u=>{const p=profit(u);return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}">
     <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
     <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
-    <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}</td>
+    <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}${u.arrived_at?`<div class="tal-st">back home ${fd(u.arrived_at)}</div>`:""}</td>
     <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${fd(u.sold_date)}</td>
     <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):(u.status==="awaiting_fees"?'<span class="muted">pending</span>':"")}</td>
     <td class="num">${R(u.cost)}</td><td class="num ${p<0?"neg":""}">${p==null?"":`<b>${R(p)}</b>`}</td></tr>`}).join("")}</tbody>
   <tfoot><tr><td colspan="8">${rows.length} unit${rows.length===1?"":"s"} shown</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td></tr></tfoot>`;
   $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
     <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
-    <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
+    <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.arrived_at?`<span>Back home ${fd(u.arrived_at)}</span>`:""}${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
 }
