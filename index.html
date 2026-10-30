@@ -1232,12 +1232,13 @@ function renderCheck(){
   pipeline.forEach(x=>{ const g=G[skuGroup[x.sku]]; if(g && DCS.includes(x.fulfilment_dc)){ g.lead=g.lead||{}; g.lead[x.fulfilment_dc]=(g.lead[x.fulfilment_dc]||0)+(x.qty||1); } });
   let issues=0;
   // lead time: what Takealot offers from your own warehouse vs new units you have at HOME
-  for(const p of live){ const g=G[p.product]; const lt=(p.takealot_stock.LEADTIME||{}).qty||0; g.ltT=(g.ltT||0)+lt; }
+  // each listing should offer at most what you have at HOME (they all draw on the same units)
+  for(const p of live){ const g=G[p.product]; const lt=(p.takealot_stock.LEADTIME||{}).qty||0; g.ltT=Math.max(g.ltT||0,lt); if(lt) g.ltN=(g.ltN||0)+1; }
   units.filter(u=>u.status==="in_stock" && u.location==="HOME" && (!u.condition||u.condition==="new")).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.home=(g.home||0)+1; });
   const leadCell=g=>{ const t=g.ltT||0, h=g.home||0;
     if(!t && !h) return `<td class="num muted">·</td>`;
-    if(t>h){ issues++; return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time</span></div><span class="pill s-return_me">${t-h} more on Takealot</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">Lower the lead-time stock on the Seller Portal to ${h}, or a customer can order a unit you don't have</div></td>`; }
-    return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time</span></div><span class="pill s-settled">${t===h?"matches":"ok"}</span>${t<h?`<div class="muted" style="font-size:12px">${h-t} at HOME not offered on lead time</div>`:""}</td>`; };
+    if(t>h){ issues++; return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time${g.ltN>1?" (highest listing)":""}</span></div><span class="pill s-return_me">${t-h} more on Takealot</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">Lower the lead-time stock on the Seller Portal to ${h}, or a customer can order a unit you don't have</div></td>`; }
+    return `<td class="num"><div>${h} <span class="muted">at HOME</span> · ${t} <span class="muted">on lead time${g.ltN>1?` (each of ${g.ltN} listings)`:""}</span></div><span class="pill s-settled">${t===h?"matches":"ok"}</span>${t<h?`<div class="muted" style="font-size:12px">${h-t} at HOME not offered on lead time</div>`:""}</td>`; };
   const rows=Object.entries(G).filter(([n,g])=>(g.ltT||0)+(g.home||0)>0 || DCS.some(dc=>(g.tal[dc]||0)+(g.way[dc]||0)+(g.app[dc]||0)>0)).sort((a,b)=>a[0].localeCompare(b[0])).map(([n,g])=>{
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
       let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;

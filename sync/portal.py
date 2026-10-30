@@ -605,7 +605,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     import re as _re
                     js = ctx.request.get("https://sellers.takealot.com/assets/main-DS7F8Hpa.js", timeout=60_000).text()
                     segs = []
-                    for key in ("customer_comment", "customerComment", "Customer Comment", "/v2/returns/", "seller_return_id}"):
+                    for key in ("leadtime_stock", "merchant_warehouse_id:", "/v2/offers/offer/", "/v2/offers/batch", "offers/offer"):
                         for m in list(_re.finditer(_re.escape(key), js))[:4]:
                             segs.append({"key": key, "text": js[max(0, m.start() - 900): m.start() + 600]})
                     (DEBUG_DIR / "recon_discovery3.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
@@ -881,6 +881,36 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
+            # ---- lead-time stock changes you asked for (debug/set_leadtime.json: [{"sku": "...", "qty": 3}, ...])
+            try:
+                req = DEBUG_DIR / "set_leadtime.json"
+                if req.exists():
+                    wanted = json.loads(req.read_text(encoding="utf-8"))
+                    req.unlink()
+                    by_sku = {str(o.get("merchant_sku")): o for o in (offers or [])}
+                    for w in wanted:
+                        o = by_sku.get(str(w["sku"]))
+                        if not o:
+                            log(f"Lead-time stock: listing {w['sku']} not found, left alone.")
+                            continue
+                        mw = ((o.get("stock") or {}).get("merchant_warehouse") or [{}])[0].get("merchant_warehouse_id")
+                        before = o.get("total_merchant_stock")
+                        r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{o['offer_id']}",
+                                              headers={**auth, "content-type": "application/json"},
+                                              data=json.dumps({"leadtime_stock": [{"merchant_warehouse_id": mw, "quantity": int(w["qty"])}]}),
+                                              timeout=60_000)
+                        body = r.text()[:300]
+                        errs = None
+                        try:
+                            errs = (r.json() or {}).get("validation_errors")
+                        except Exception:
+                            pass
+                        if r.ok and not errs:
+                            log(f"Lead-time stock: {((o.get('tsin') or {}).get('title') or w['sku'])[:60]} changed from {before} to {w['qty']}.")
+                        else:
+                            log(f"Lead-time stock: {w['sku']} NOT changed ({r.status}): {errs or body}")
+            except Exception as e:
+                log("Lead-time stock change failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
             try:
                 fetch_takealot_pos(ctx, cfg, auth, log)
