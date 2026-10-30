@@ -83,6 +83,7 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .otp-box{display:grid;gap:6px;margin-top:8px}.otp-box label{font-size:13px}
 .otp-row{display:flex;gap:6px}.otp-row input{width:120px;font:16px var(--mono);letter-spacing:2px}
 .cond{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:1px 6px;border-radius:4px;background:var(--query-soft);color:var(--query);vertical-align:1px}
+.private-box{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
 .tal-st{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
 /* tiles */
 @media (min-width:900px){ #tiles{grid-template-columns:repeat(4,1fr)!important} }
@@ -500,8 +501,19 @@ html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255
     <div class="note" id="eAudit"></div>
     <div class="form-actions">
       <button class="btn primary" type="submit" id="eSave">Save changes</button>
+      <button class="btn" type="button" id="ePrivate">Sold privately…</button>
       <div class="spacer"></div>
       <button class="btn danger" type="button" id="eDel">Delete unit</button>
+    </div>
+    <div class="private-box" id="ePS" hidden>
+      <b>Private sale</b> <span class="note">Sold outside Takealot: no Takealot fees.</span>
+      <div class="grid">
+        <div class="field"><label for="ps-price">Sold for (R)</label><input id="ps-price" inputmode="decimal" placeholder="e.g. 13500"></div>
+        <div class="field"><label for="ps-date">Date sold</label><input id="ps-date" type="date"></div>
+        <div class="field"><label for="ps-costs">Other costs (R)</label><input id="ps-costs" inputmode="decimal" placeholder="delivery, commission… (optional)"></div>
+        <div class="field"><label for="ps-buyer">Buyer / note</label><input id="ps-buyer" placeholder="optional"></div>
+      </div>
+      <div class="form-actions"><button class="btn primary" type="button" id="psSave">Record private sale</button><span class="note" id="psCalc"></span></div>
     </div>
     <div class="confirm" id="eConfirm" hidden>
       <span>Delete this unit for good? This can't be undone.</span>
@@ -565,6 +577,8 @@ const STATUS = {
   missing_query:   {label:"Missing: query with Takealot", short:"Query open"},
 };
 const SOLD = new Set(["awaiting_fees","settled"]);
+const isPrivate = u => /^PRIVATE-/.test(u.order_id||"") || u.match_method==="private";
+const stLabel = u => isPrivate(u) && SOLD.has(u.status) ? "Sold privately" : (STATUS[u.status]?.short||u.status);
 const LOCS = ["JHB","CPT","DBN","HOME"];
 const IGNORE = "__ignore__";
 const $ = s => document.querySelector(s);
@@ -895,14 +909,14 @@ function renderLedger(){
   $("#ledger").innerHTML=`<thead><tr><th>Product</th><th>Status</th><th>Supplier</th><th>Loc</th><th>Received</th><th>PO</th><th>Order ID</th><th>Sold</th><th class="num">Gross</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
   <tbody>${rows.map(u=>{const p=profit(u);return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}">
     <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}${u.sn?`<div class="muted mono-s">${esc(u.sn)}</div>`:""}</td>
-    <td><span class="pill s-${u.status}">${STATUS[u.status]?.short||esc(u.status)}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
+    <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
     <td>${esc(u.supplier)}</td><td>${esc(u.location)}</td><td class="nw">${fd(u.received)}</td>
     <td class="mono">${esc(u.po)}</td><td class="mono">${esc(u.order_id)}</td><td class="nw">${fd(u.sold_date)}</td>
     <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):(u.status==="awaiting_fees"?'<span class="muted">pending</span>':"")}</td>
     <td class="num">${R(u.cost)}</td><td class="num ${p<0?"neg":""}">${p==null?"":`<b>${R(p)}</b>`}</td></tr>`}).join("")}</tbody>
   <tfoot><tr><td colspan="8">${rows.length} unit${rows.length===1?"":"s"} shown</td><td class="num">${R(G)}</td><td class="num">${R(F)}</td><td class="num">${R(C)}</td><td class="num">${R(P)}</td></tr></tfoot>`;
   $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
-    <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${STATUS[u.status]?.short}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
+    <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
     <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${fd(u.sold_date)}</span>`:""}</div>
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
@@ -1098,6 +1112,23 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- private sales ---------------- */
+$("#ePrivate").addEventListener("click",()=>{ const box=$("#ePS"); box.hidden=!box.hidden;
+  if(!box.hidden){ $("#ps-date").value=today(); $("#ps-price").value=isPrivate(editing)&&editing.gross?editing.gross:""; $("#ps-costs").value=isPrivate(editing)&&editing.fees?editing.fees:""; psCalc(); $("#ps-price").focus(); } });
+function psCalc(){ const p=num($("#ps-price").value)||0, c=num($("#ps-costs").value)||0, cost=editing?.cost||0;
+  $("#psCalc").textContent = p ? `Profit ${R(p-c-cost)} (cost ${R(cost)})` : ""; }
+["#ps-price","#ps-costs"].forEach(id=>$(id).addEventListener("input",psCalc));
+$("#psSave").addEventListener("click",async()=>{
+  const price=num($("#ps-price").value); if(!price){ toast("Type what you sold it for"); return; }
+  const day=$("#ps-date").value||today(), costs=num($("#ps-costs").value)||0, who=$("#ps-buyer").value.trim();
+  const id = isPrivate(editing)&&editing.order_id ? editing.order_id : `PRIVATE-${day.replace(/-/g,"")}-${Math.random().toString(36).slice(2,6).toUpperCase()}`;
+  const body={ status:"settled", order_id:id, sold_date:day, gross:price, fees:costs, match_method:"private", flag:false,
+    comment:(`Sold privately on ${day} for ${R(price)}${who?` to ${who}`:""}${costs?`; other costs ${R(costs)}`:""}. `+((editing.comment||"").replace(/^Sold privately on [^.]*\.\s*/,""))).trim() };
+  $("#psSave").disabled=true;
+  const {error}=await sb.from("units").update(body).eq("id",editing.id);
+  $("#psSave").disabled=false;
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#dlg").close(); toast("Private sale recorded"); loadAll(); } });
+
 /* ---------------- removal orders ---------------- */
 const isRemoval = o => /removal|return to seller|unsellable|collect|dispos/i.test(String(o||""));
 function removalRows(){
@@ -1286,7 +1317,7 @@ function openEdit(id){
   set("e-product",u.product); set("e-status",u.status); set("e-location",u.location||"HOME"); set("e-supplier",u.supplier); set("e-type",u.stock_type||"ICASA");
   set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
   set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); set("e-cond",u.condition||"new"); $("#e-flag").checked=!!u.flag;
-  $("#eConfirm").hidden=true;
+  $("#eConfirm").hidden=true; $("#ePS").hidden=true;
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
   const sx=shipFor(u);
   $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", sx?`Courier Guy ${sx.waybill}: ${shipLabel(sx.status).toLowerCase()}${shipWhen(sx)?`, ${shipWhen(sx)}`:""}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
