@@ -1512,7 +1512,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
             # ---- lead-time stock changes asked for in the app (leadtime_requests) or via debug/set_leadtime.json
             try:
-                apply_leadtime_requests(ctx, cfg, auth, offers, log)
+                apply_leadtime_requests(ctx, cfg, auth, offers, log, sales)
             except Exception as e:
                 log("Lead-time stock change failed: " + repr(e)[:200])
             # ---- the 3 balance tiles + when each transaction first appears (to learn Takealot's hold rule)
@@ -1583,7 +1583,7 @@ def balance_snapshot(ctx, auth, log):
 WAREHOUSE_NAMES = {1: "CPT", 3: "JHB", 6: "DBN"}
 
 
-def apply_leadtime_requests(ctx, cfg, auth, offers, log):
+def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
     """Set a listing's lead-time stock on Takealot (PATCH /v2/offers/offer/{id}). Only what you asked for in the app."""
     import stockrecon_sync as S
     db = S.DB(cfg["url"], cfg["key"])
@@ -1624,6 +1624,15 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log):
                 if (u.get("condition") or "new") == "new":
                     g = group.get(u["product"], u["product"])
                     home[g] = home.get(g, 0) + 1
+            # new lead-time orders the sync hasn't put against a unit yet: those units are already sold,
+            # so don't put them back on offer (Takealot lowered the listing when the order came in)
+            linked = {str(u.get("order_id")) for u in db.select("units", "select=order_id&order_id=not.is.null")}
+            by_sku_prod = {str(p["sku"]): p.get("product") for p in prods}
+            for x in sales or []:
+                if str(x.get("sale_status") or "") in ("New Lead Time Order", "Confirmed Shipment") and str(x.get("order_id")) not in linked:
+                    g = by_sku_prod.get(str(x.get("sku")))
+                    if g in home:
+                        home[g] = max(0, home[g] - int(x.get("quantity") or 1))
         for f in rules:
             sku = str(f["sku"])
             o = by_sku.get(sku)
