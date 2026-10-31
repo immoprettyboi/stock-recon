@@ -86,7 +86,8 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .private-box{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
 .tal-st{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
 /* tiles */
-@media (min-width:900px){ #tiles{grid-template-columns:repeat(4,1fr)!important} }
+@media (min-width:900px){ #tiles{grid-template-columns:repeat(3,1fr)!important} }
+@media (min-width:1200px){ #tiles{grid-template-columns:repeat(5,1fr)!important} }
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
 .tile .lbl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
@@ -822,7 +823,8 @@ function renderOverview(){
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery costs`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">${R0(stockV)} at cost${stock.length?` · avg ${R0(stockV/stock.length)} a unit`:""}</span></div>
+    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l).length}`).join(" · ")}</span></div>
+    <div class="tile"><span class="lbl">Stock on hand at cost</span><span class="val">${R0(stockV)}</span><span class="sub">${stock.length?`what you paid for the ${stock.length} units · avg ${R0(stockV/stock.length)} a unit`:"no unsold stock"}</span></div>
     <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
 
   // ---- Needs you: only things that need an action from you
