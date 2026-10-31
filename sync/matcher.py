@@ -17,6 +17,7 @@ Rules (in order) for a sale that is not linked to a unit yet:
   If nothing fits, the sale goes on the "Needs matching" list.
 """
 from __future__ import annotations
+import re
 import csv, io, re
 from datetime import datetime
 
@@ -154,14 +155,16 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
         changed = {k: v for k, v in fields.items() if u.get(k) != v}
         if changed:
             u.update(changed)
-            updates.setdefault(u["id"], {}).update(changed)
+            if "id" in u:                                # units added in this run are saved as new rows instead
+                updates.setdefault(u["id"], {}).update(changed)
 
     # oldest orders first, so first-in-first-out follows the order sales happened
     for s in sorted(sales, key=lambda x: x["order_date"] or ""):
         if since and (s["sold_date"] or "") < since:
             continue
         k = kind(s["sale_status"])
-        linked = by_order.get(s["order_id"], [])
+        # an order can have several lines (different listings): only the units sold on this line
+        linked = [u for u in by_order.get(s["order_id"], []) if not u.get("sku") or not s["sku"] or str(u["sku"]) == str(s["sku"])]
         res = {"order_id": s["order_id"], "sku": s["sku"], "unit_ids": [], "match_status": "unmatched", "reason": ""}
         qty = max(1, s["qty"])
         per_gross = round(s["gross"] / qty, 2) if s["gross"] is not None else None
@@ -388,7 +391,8 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
         ch = {k: v for k, v in f.items() if u.get(k) != v}
         if ch:
             u.update(ch)
-            updates.setdefault(u["id"], {}).update(ch)
+            if "id" in u:                                # units added in this run are saved as new rows instead
+                updates.setdefault(u["id"], {}).update(ch)
 
     sale_of = {x["order_id"]: x for x in (sales if sales is not None else _LAST_SALES)}
     for r in returns:
@@ -396,7 +400,7 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
             r["dc"] = sale_of[r["order_id"]].get("fulfilment_dc") or ""
     for r in returns:
         k = outcome_kind(r["outcome"])
-        linked = by_order.get(r["order_id"], [])
+        linked = [u for u in by_order.get(r["order_id"], []) if not u.get("sku") or not r.get("sku") or str(u["sku"]) == str(r["sku"])]
         # repair: a unit wrongly put back in stock for a return that is still pending
         if k == "pending" and not linked:
             tag = f"Customer return (order {r['order_id']},"
@@ -408,7 +412,7 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                         match_method="import", comment=c.split("Sale reversed.", 1)[1].strip())
                     by_order.setdefault(r["order_id"], []).append(u)
                     notes.append(f"Repaired: order {r['order_id']} put back as Return: Takealot (still pending)")
-            linked = by_order.get(r["order_id"], [])
+            linked = [u for u in by_order.get(r["order_id"], []) if not u.get("sku") or not r.get("sku") or str(u["sku"]) == str(r["sku"])]
         when = r["return_date"] or ""
         if k == "unknown":
             notes.append(f"Return {r['order_id']}: outcome '{r['outcome']}' not recognised, left alone")
@@ -416,7 +420,7 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
         if not linked:
             if k == "removal":
                 # already booked in earlier (the unit's order number was cleared when it went back into stock)
-                if any(f"order {r['order_id']}" in (u.get("comment") or "") for u in units):
+                if any(re.search(rf"order {re.escape(str(r['order_id']))}\b", u.get("comment") or "") for u in units):
                     continue
                 product = sku_map.get(r["sku"])
                 if product == IGNORE_PRODUCT:
@@ -448,7 +452,8 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                                  f"stock at Takealot {r['dc']}. " + (u.get("comment") or "")).strip())
             elif k == "removal":
                 if u.get("status") == "return_me" and u.get("match_method") == "return" and u.get("location") == "HOME" and r["dc"] \
-                        and "Arrived back" not in (u.get("comment") or ""):
+                        and "Arrived back" not in (u.get("comment") or "") and not u.get("arrived_at") \
+                        and (u.get("condition") or "new") == "new" and "Faulty" not in (u.get("comment") or ""):
                     upd(u, location=r["dc"])
                 if u["status"] != "return_me" and not (u["status"] == "in_stock" and u.get("location") == "HOME"):
                     upd(u, status="return_me", return_date=r["return_date"], location=r["dc"] or u.get("location"),

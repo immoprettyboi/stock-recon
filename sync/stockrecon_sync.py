@@ -62,6 +62,11 @@ def load_config():
     return cfg
 
 
+# a stable sort for tables read in pages of 1000, so no row is skipped or read twice
+ORDER_KEYS = {"units": "id", "takealot_sales": "order_id,sku", "products": "sku", "takealot_returns": "return_id",
+              "courier_shipments": "id", "price_log": "id", "supplier_ledger": "id"}
+
+
 class DB:
     """Tiny Supabase REST client (no extra packages needed)."""
     def __init__(self, url, key):
@@ -81,7 +86,8 @@ class DB:
     def select(self, table, query="select=*"):
         rows, start = [], 0
         while True:
-            page = self._req("GET", f"{table}?{query}", headers={"Range": f"{start}-{start + 999}"})
+            q = query if ("order=" in query or table not in ORDER_KEYS) else query + "&order=" + ORDER_KEYS[table]
+            page = self._req("GET", f"{table}?{q}", headers={"Range": f"{start}-{start + 999}"})
             rows += page
             if len(page) < 1000:
                 return rows
@@ -262,7 +268,7 @@ class NeedsLogin(Exception):
 
 
 # ---------------------------------------------------------------- sync
-UNIT_FIELDS = "id,product,supplier,sku,location,received,po,order_id,status,gross,fees,sold_date,return_date,comment,flag,match_method,cost"
+UNIT_FIELDS = "id,product,supplier,sku,location,received,po,order_id,status,gross,fees,sold_date,return_date,comment,flag,match_method,cost,condition,arrived_at"
 
 
 def run_sync(cfg, csv_text: str | None = None, headless=True):
@@ -360,7 +366,8 @@ def run_sync(cfg, csv_text: str | None = None, headless=True):
         return True
     except Exception as e:
         if type(e).__name__ == "NeedsLogin":
-            msg = "Takealot login needed. On the PC, double-click LOGIN.bat in the Stock Recon Sync folder."
+            msg = ("Takealot logged out and no PIN was entered in time. It will ask for a new PIN at the next sync: "
+                   "tap Sync now and watch for the PIN box (or double-click LOGIN.bat on the PC).")
             db.patch("sync_runs", f"id=eq.{run['id']}", {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": False, "message": msg})
             log(msg)
             return False
@@ -390,7 +397,10 @@ def main():
     log(f"Stock Recon sync started. Syncing every {cfg['interval']} minutes.")
     db = DB(cfg["url"], cfg["key"])
     while True:
-        run_sync(cfg)
+        try:
+            run_sync(cfg)
+        except Exception:                             # a network blip or a bad update must never stop the loop
+            log("Sync crashed: " + traceback.format_exc()[-600:])
         # wait for the next run, but check every minute for a "Sync now" from the app
         next_sync = time.time() + cfg["interval"] * 60
         fast = False

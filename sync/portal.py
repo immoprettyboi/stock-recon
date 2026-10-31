@@ -68,6 +68,11 @@ def _enter_otp(page, cfg, log, name):
     if run_id:
         db.patch("sync_runs", f"id=eq.{run_id}", {"message": msg})
     log(f"{name}: asked for a one-time PIN (emailed to {to}); waiting for it in the app.")
+    try:                                                    # tell the phones: the sync is stuck until someone types the PIN
+        notify({"url": cfg["url"], "key": cfg["key"]}, "🔑 Takealot needs a PIN",
+               f"{name} emailed a one-time PIN to {to}. Open Stock Recon and type it in within 9 minutes.", url="./", topic="price", log=log)
+    except Exception:
+        pass
     code, end = None, time.time() + 9 * 60
     while time.time() < end and not code:
         rows = db.select("sync_runs", f"select=id,message&id=gt.{since_id}&message=like.otp:*&order=id.desc")
@@ -298,7 +303,14 @@ def takealot_recon(ctx, cfg, auth, log):
         cur = recon.get(m)
         if not cur or (done and not cur["done"]) or (done == cur["done"] and str(t.get("date_created")) > str(cur["t"].get("date_created"))):
             recon[m] = {"t": t, "done": done}
-    if prev not in have and prev not in recon and prev >= "2026-10" and now.hour >= 6:
+    stuck = False
+    if prev in recon and not recon[prev]["done"]:
+        try:
+            made = datetime.fromisoformat(str(recon[prev]["t"].get("date_created")).replace("Z", "+00:00")).replace(tzinfo=None)
+            stuck = (datetime.utcnow() - made).total_seconds() > 6 * 3600       # Takealot's report failed or got stuck
+        except Exception:
+            stuck = False
+    if prev not in have and (prev not in recon or stuck) and prev >= "2026-10" and now.hour >= 6:
         rq = ctx.request.post(f"https://{API_HOST}/v2/task/report", headers={**auth, "content-type": "application/json"},
                               data=json.dumps({"check_duplicate": True, "task_type_id": RECON_TYPE,
                                                "request_params": {"delimeter": ",", "date_from": prev}}), timeout=60_000)
@@ -386,7 +398,8 @@ def _webpush():
         _PUSH_READY = True
         return webpush, WebPushException
     except ImportError:
-        if _PUSH_READY is False:
+        import stockrecon_sync as _S
+        if _PUSH_READY is False or (time_ := getattr(_S, "_PUSH_FAILED_AT", 0)) and __import__("time").time() - time_ < 6 * 3600:
             return None, None
         import subprocess, sys
         exe = sys.executable.replace("pythonw.exe", "python.exe")
@@ -398,6 +411,7 @@ def _webpush():
             return webpush, WebPushException
         except Exception:
             _PUSH_READY = False
+            _S._PUSH_FAILED_AT = __import__("time").time()       # don't try pip again for 6 hours (portal.py is reloaded often)
             return None, None
 
 
@@ -640,7 +654,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         return
     live = _read_live(page, plid, offer_id, mine)
     if not live:
-        db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Couldn't read the Buy Box"})
+        db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso})      # keep last_action: try again next check
         return
     bb_price, bb_seller = live["price"], live["seller"]
     # how long Takealot took to put our last change live (measured, shown in the history)
@@ -667,6 +681,8 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         my_price = float(pend["price"])
     elif winning:
         my_price = bb_price
+    elif live.get("mine") is not None:
+        my_price = float(live["mine"])                     # what Takealot shows now (e.g. after a manual change)
     floor = _floor_for(db, rule, prod)
     ceiling = float(rule["ceiling_price"]) if rule.get("ceiling_price") else None
     step = max(1.0, float(rule.get("step") or 1))
@@ -678,6 +694,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     except Exception:
         changes = 0
     target, action, note = None, None, ""
+    new_phase = {"p": "fight", "since": 0}                  # default: normal fighting (reset unless the floor logic says otherwise)
     if not winning:
         want = math.floor(bb_price - step)
         if floor is None:
@@ -690,26 +707,25 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             #  1. go back up to the ceiling and let the other bot follow us up;
             #  2. if it hasn't come back up after 30 minutes, sit just above it (its price + step, never below the floor),
             #     ready to fight again as soon as it moves up past the floor.
-            la = rule.get("last_action") or ""
-            phase = "wait" if la.startswith(("Back to ceiling", "Waiting at your ceiling")) else \
-                    "follow" if la.startswith(("Following", "Staying R")) else "fight"
+            ph = (_tload().get("phase") or {}).get(sku) or {}
+            phase = ph.get("p") or "fight"
             shadow = max(math.ceil(floor), math.floor(bb_price + step))
             if phase == "fight":
                 if my_price < ceiling:
                     target, action, note = math.floor(ceiling), "reset", f"Competitor at R{bb_price:,.0f} is below your floor R{floor:,.0f}: back up to your ceiling"
                 else:
                     note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up"
+                new_phase = {"p": "wait", "since": _time.time()}
             elif phase == "wait":
-                waited = 999
-                try:
-                    waited = (datetime.utcnow() - datetime.fromisoformat(str(rule.get("last_change_at")).replace("Z", "+00:00")).replace(tzinfo=None)).total_seconds() / 60
-                except Exception:
-                    pass
+                waited = (_time.time() - float(ph.get("since") or _time.time())) / 60
                 if waited >= 30:
                     target, action, note = shadow, "follow", f"Competitor stayed at R{bb_price:,.0f} for 30 min: staying R{step:,.0f} above them"
+                    new_phase = {"p": "follow", "since": _time.time()}
                 else:
+                    new_phase = ph
                     note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up ({int(waited)} of 30 min)"
             else:
+                new_phase = ph
                 if shadow != int(my_price):
                     target, action, note = shadow, "follow", f"Following: R{step:,.0f} above the competitor at R{bb_price:,.0f}"
                 else:
@@ -731,6 +747,14 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 pass
         if quiet:
             target, action = math.floor(min(ceiling, my_price + step)), "raised"
+    if target is None and ceiling and my_price > ceiling and not waiting_live:
+        target, action, note = math.floor(ceiling), "lowered", f"Your price R{my_price:,.0f} was above your ceiling R{ceiling:,.0f}"
+    if target is not None and floor is not None and target < math.ceil(floor):
+        target, note = None, f"Your floor R{floor:,.0f} is above your ceiling R{(ceiling or 0):,.0f}: not changing the price (check the settings)"
+    tmp = _tload()
+    if (tmp.get("phase") or {}).get(sku) != new_phase and fight:
+        tmp.setdefault("phase", {})[sku] = new_phase
+        _tsave(tmp)
     upd = {"last_checked": nowiso, "bb_price": bb_price, "bb_seller": bb_seller, "winning": winning,
            "floor_used": floor, "my_price": my_price}
     cfgn = {"url": db.base.replace("/rest/v1/", ""), "key": db.h["apikey"]}
@@ -749,6 +773,9 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             upd["last_action"] = f"Daily limit of {rule.get('max_changes_day')} changes reached"
         elif not (auth or _creds_key()) or not offer_id:
             upd["last_action"] = "Not logged in to the Seller Portal and no API key: price not changed"
+        elif ((_tload().get("refused") or {}).get(sku) or {}).get("price") == int(target) and \
+                _time.time() - ((_tload().get("refused") or {}).get(sku) or {}).get("at", 0) < 600:
+            pass                                            # Takealot refused this exact price < 10 min ago: don't hammer it
         else:
             key = _creds_key()
             sent_at = _time.time()
@@ -785,15 +812,24 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
                                          "new_price": target, "action": "failed", "note": str(msg)[:300]}])
                 upd["last_action"] = f"Takealot refused the change: {str(msg)[:120]}"
-                alerts.append(("⚠️ Price change refused", f"{title}: Takealot said {str(msg)[:100]}"))
+                tmr = _tload()
+                tmr.setdefault("refused", {})[sku] = {"price": int(target), "at": _time.time()}
+                _tsave(tmr)
+                if rule.get("last_action") != upd["last_action"]:
+                    alerts.append(("⚠️ Price change refused", f"{title}: Takealot said {str(msg)[:100]}"))
     else:
         upd["last_action"] = note or ("You have the Buy Box" if winning else "Holding")
-        if note and "below your floor" in note and rule.get("last_action") != upd["last_action"]:
-            alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
+        tmf = _tload()
+        below = bool(note and "below your floor" in note)
+        if below != bool((tmf.get("below_floor") or {}).get(sku)):
+            tmf.setdefault("below_floor", {})[sku] = below
+            _tsave(tmf)
+            if below:
+                alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
     db.patch("price_rules", f"sku=eq.{sku}", upd)
     # During a fast fight, won / lost / lowered / raised would fire every few seconds and the phone mutes the app.
     # Those are rolled into one update at most every 15 minutes; the important ones (floor, ceiling, refused) always go.
-    routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered")
+    routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered", "➡️")
     alerts = [(t, b) for t, b in alerts if not t.startswith(routine)]
     # time-based summary: how much of the last 15 minutes you held the Buy Box, sent when things are settled
     tm = _tload()
@@ -1512,7 +1548,15 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
             # ---- lead-time stock changes asked for in the app (leadtime_requests) or via debug/set_leadtime.json
             try:
-                apply_leadtime_requests(ctx, cfg, auth, offers, log, sales)
+                recent = []                               # orders that came in while this sync was running
+                try:
+                    rr = ctx.request.get(f"{SALES_API}?filters=start_date%3A{date.today() - timedelta(days=1)}%2Cend_date%3A{date.today()}&page_size=100&page_number=1",
+                                         headers=auth, timeout=60_000)
+                    if rr.ok:
+                        recent = (rr.json() or {}).get("sales") or []
+                except Exception:
+                    pass
+                apply_leadtime_requests(ctx, cfg, auth, offers, log, list(sales) + recent)
             except Exception as e:
                 log("Lead-time stock change failed: " + repr(e)[:200])
             # ---- the 3 balance tiles + when each transaction first appears (to learn Takealot's hold rule)
@@ -1584,6 +1628,8 @@ WAREHOUSE_NAMES = {1: "CPT", 3: "JHB", 6: "DBN"}
 
 
 def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
+    if not offers:                                    # Takealot's offers list didn't load: try again next sync
+        return
     """Set a listing's lead-time stock on Takealot (PATCH /v2/offers/offer/{id}). Only what you asked for in the app."""
     import stockrecon_sync as S
     db = S.DB(cfg["url"], cfg["key"])
@@ -1620,6 +1666,8 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
                 if p.get("product") and p["product"] != "__ignore__":
                     group[p.get("takealot_title") or ""] = p["product"]
                     group[p["product"]] = p["product"]
+                elif p.get("takealot_title"):               # not linked to a product yet: its own group
+                    group[p["takealot_title"]] = p["takealot_title"]
             for u in db.select("units", "select=product,condition&status=eq.in_stock&location=eq.HOME"):
                 if (u.get("condition") or "new") == "new":
                     g = group.get(u["product"], u["product"])
@@ -1627,8 +1675,8 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
             # new lead-time orders the sync hasn't put against a unit yet: those units are already sold,
             # so don't put them back on offer (Takealot lowered the listing when the order came in)
             linked = {str(u.get("order_id")) for u in db.select("units", "select=order_id&order_id=not.is.null")}
-            by_sku_prod = {str(p["sku"]): p.get("product") for p in prods}
-            for x in sales or []:
+            by_sku_prod = {str(p["sku"]): (p.get("product") or p.get("takealot_title")) for p in prods}
+            for x in {str(y.get("order_id")) + ":" + str(y.get("sku")): y for y in (sales or [])}.values():
                 if str(x.get("sale_status") or "") in ("New Lead Time Order", "Confirmed Shipment") and str(x.get("order_id")) not in linked:
                     g = by_sku_prod.get(str(x.get("sku")))
                     if g in home:
@@ -1638,7 +1686,7 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
             o = by_sku.get(sku)
             if not o or sku in asked:
                 continue
-            target = home.get(f.get("product"), 0) if int(f["leadtime_fixed"]) < 0 else int(f["leadtime_fixed"])
+            target = home.get(f.get("product") or f.get("takealot_title"), 0) if int(f["leadtime_fixed"]) < 0 else int(f["leadtime_fixed"])
             if (o.get("total_merchant_stock") or 0) != target:
                 wanted.append((None, sku, target))
     except RuntimeError:
