@@ -129,6 +129,14 @@ tr.row-s-return_me td:first-child{box-shadow:inset 3px 0 var(--bad)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .filters input[type=search]{flex:1 1 220px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
+.where{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.where button{appearance:none;text-align:left;font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;cursor:pointer}
+.where button[aria-selected="true"]{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg) inset}
+.where .w-l{font:600 12px var(--body);color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.where .w-n{font:700 26px var(--body);margin-top:2px}
+.where .w-s{font-size:12.5px;color:var(--muted);margin-top:2px}
+@media (max-width:560px){.where{grid-template-columns:1fr 1fr}.where button:first-child{grid-column:1/-1}}
+html[data-look="glass"] .where button{background:rgba(255,255,255,.06)}
 .chip{appearance:none;font:600 12.5px var(--body);border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:5px 11px;cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
 .chip .n{font-family:var(--mono);font-weight:400;margin-left:4px}
@@ -407,6 +415,8 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
 
   <!-- STOCK -->
   <section id="view-stock" class="stack" hidden>
+    <div class="where" id="where" role="tablist" aria-label="Where is the stock"></div>
+    <div class="panel" id="whereSum" hidden style="padding:0"><div class="tscroll"><table id="whereTbl"></table></div></div>
     <div class="filters">
       <input type="search" id="q" placeholder="Search product, order ID, PO, serial…" aria-label="Search">
       <select id="fLoc" aria-label="Location"><option value="">All locations</option></select>
@@ -685,7 +695,7 @@ const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").le
   return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute}`; };
 // Takealot's own status for a sold unit's order, shown under "Sold, awaiting fees"
 const talLine = u => u.status==="awaiting_fees" && talStatus[u.order_id] ? talStatus[u.order_id] : "";
-let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"" };
+let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"", where:"" };
 let loaded=false;
 
 function profit(u){ if(!SOLD.has(u.status)) return null; return (u.gross||0) - (u.fees||0) - (u.cost||0); }
@@ -991,6 +1001,7 @@ function filtered(){
   const q=state.q.trim().toLowerCase();
   return units.filter(u=>{
     if(state.only && !state.only.has(u.product)) return false;
+    if(state.where && !(u.status==="in_stock" && (state.where==="home" ? u.location==="HOME" : u.location!=="HOME"))) return false;
     if(state.status && u.status!==state.status) return false;
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
@@ -1004,7 +1015,29 @@ function filtered(){
     return (a.received||"").localeCompare(b.received||"") || a.product.localeCompare(b.product);
   });
 }
+function renderWhere(){
+  const inS=units.filter(u=>u.status==="in_stock");
+  const home=inS.filter(u=>u.location==="HOME"), tal=inS.filter(u=>u.location!=="HOME");
+  const val=a=>R0(a.reduce((t,u)=>t+(Number(u.cost)||0),0));
+  const dcs=["JHB","CPT","DBN"].map(d=>[d,tal.filter(u=>u.location===d).length]).filter(x=>x[1]);
+  const btn=(k,l,n,sub)=>`<button type="button" role="tab" data-w="${k}" aria-selected="${state.where===k}"><div class="w-l">${l}</div><div class="w-n">${n}</div><div class="w-s">${sub}</div></button>`;
+  $("#where").innerHTML=btn("","All stock & sales",units.length,`${inS.length} in stock`)+
+    btn("home","🏠 At home",home.length,`${val(home)} at cost`)+
+    btn("tal","📦 At Takealot",tal.length,`${dcs.map(([d,n])=>`${d} ${n}`).join(" · ")||"none"} · ${val(tal)}`);
+  const box=$("#whereSum");
+  if(!state.where){ box.hidden=true; return; }
+  const list=state.where==="home"?home:tal, by={};
+  list.forEach(u=>{const b=by[u.product]||(by[u.product]={n:0,c:0,JHB:0,CPT:0,DBN:0,used:0}); b.n++; b.c+=Number(u.cost)||0; if(b[u.location]!=null) b[u.location]++; if(u.condition&&u.condition!=="new") b.used++;});
+  const rows=Object.entries(by).sort((a,b)=>b[1].n-a[1].n||a[0].localeCompare(b[0]));
+  const t=state.where==="tal";
+  $("#whereTbl").innerHTML=`<thead><tr><th>Product</th>${t?'<th class="num">JHB</th><th class="num">CPT</th><th class="num">DBN</th>':""}<th class="num">Units</th><th class="num">Cost value</th></tr></thead>
+    <tbody>${rows.map(([p,b])=>`<tr><td class="prod">${esc(p)}${b.used?`<span class="cond">${b.used} USED/FAULTY</span>`:""}</td>${t?`<td class="num">${b.JHB||""}</td><td class="num">${b.CPT||""}</td><td class="num">${b.DBN||""}</td>`:""}<td class="num"><b>${b.n}</b></td><td class="num">${R0(b.c)}</td></tr>`).join("")||`<tr><td class="muted">Nothing ${t?"at Takealot":"at home"} right now.</td></tr>`}</tbody>
+    ${rows.length?`<tfoot><tr><td>${rows.length} product${rows.length>1?"s":""}</td>${t?`<td class="num">${tal.filter(u=>u.location==="JHB").length||""}</td><td class="num">${tal.filter(u=>u.location==="CPT").length||""}</td><td class="num">${tal.filter(u=>u.location==="DBN").length||""}</td>`:""}<td class="num"><b>${list.length}</b></td><td class="num">${val(list)}</td></tr></tfoot>`:""}`;
+  box.hidden=false;
+}
+$("#where").addEventListener("click",e=>{const b=e.target.closest("[data-w]"); if(!b) return; state.only=null; state.where=b.dataset.w; state.status=""; state.loc=""; $("#fLoc").value=""; renderLedger();});
 function renderLedger(){
+  renderWhere();
   const counts={"":units.length}; Object.keys(STATUS).forEach(k=>counts[k]=units.filter(u=>u.status===k).length);
   $("#chips").innerHTML=[["","All"],...Object.entries(STATUS).map(([k,v])=>[k,v.label])].map(([k,l])=>`<button class="chip" type="button" data-s="${k}" aria-pressed="${state.status===k}">${esc(l)}<span class="n">${counts[k]}</span></button>`).join("");
   const rows=filtered();
@@ -1024,7 +1057,7 @@ function renderLedger(){
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
   $("#cntAll").textContent=units.length;
 }
-$("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.only=null; state.status=c.dataset.s; renderLedger();});
+$("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.only=null; state.where=""; state.status=c.dataset.s; renderLedger();});
 $("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; renderLedger();});
 $("#fLoc").addEventListener("change",e=>{state.only=null; state.loc=e.target.value; renderLedger();});
 $("#fSup").addEventListener("change",e=>{state.only=null; state.sup=e.target.value; renderLedger();});
