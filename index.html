@@ -517,7 +517,9 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
   <!-- PRICE FIGHTER -->
   <section id="view-price" class="stack" hidden>
     <div class="panel">
-      <div class="sec-head"><h2>Price fighter: win the Buy Box</h2><p id="pfSub"></p></div>
+      <div class="sec-head" style="justify-content:space-between"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><h2>Price fighter: win the Buy Box</h2><p id="pfSub"></p></div>
+        <div class="inline"><button class="btn small" type="button" id="pushBtn">Turn on phone notifications</button><button class="btn small" type="button" id="pushTest" hidden>Send a test</button></div></div>
+      <p class="note" id="pushMsg" style="margin:0"></p>
       <p class="note" style="margin:0;max-width:95ch">For each listing you switch on, the PC checks who has the Buy Box every few minutes. If a competitor has it, your price goes to <b>their price minus your step</b>, but never below your <b>floor</b>. When you hold the Buy Box it can creep back up towards your <b>ceiling</b>. <b>Watch</b> only shows what it would do; <b>Fight</b> changes your price on Takealot. The <b>auto floor</b> is your dearest unit's cost plus Takealot's fees (from your recent sales) plus your minimum profit.</p>
       <div class="tscroll"><table id="pfTable"></table></div>
     </div>
@@ -702,7 +704,7 @@ let channel=null;
 async function start(session){
   if(me && me.id===session.user.id) return;
   me=session.user; $("#login").hidden=true; $("#app").hidden=false;
-  try{ const v=localStorage.getItem("sr-view"); if(v) setView(v); }catch(e){}
+  try{ const q=new URLSearchParams(location.search).get("view"); const v=q||localStorage.getItem("sr-view"); if(v) setView(v); }catch(e){}
   await loadAll();
   if(channel) sb.removeChannel(channel);
   channel = sb.channel("live")
@@ -1255,6 +1257,35 @@ $("#pfTable").addEventListener("click",async e=>{
   if(row.mode==="fight" && row.enabled && !confirm(`Fight mode changes your price on Takealot automatically for ${products.find(x=>x.sku===row.sku)?.takealot_title||row.sku}. Never below ${row.floor_mode==="manual"?R0(row.floor_price):"the auto floor"}. Switch it on?`)) return;
   b.disabled=true; const {error}=await sb.from("price_rules").upsert(row,{onConflict:"sku"}); b.disabled=false;
   toast(error?(/price_rules/.test(errMsg(error))?"Run 13_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)):(row.enabled?`Saved. The PC checks it within a minute (${row.mode==="fight"?"fight":"watch"} mode).`:"Saved (switched off)")); loadAll(); });
+
+/* ---------------- phone notifications (web push) ---------------- */
+const VAPID_PUBLIC="BG-ApUAMuMmh1k0_B_nVbogIKDJoc56wjMjq5Dl6Xckgr7TY8jp6tdR3nKRHsRishIqHeAC2wgV-pnzVgm8JwF8";
+const b64u = s => { const p="=".repeat((4-s.length%4)%4), b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")); return Uint8Array.from(b,c=>c.charCodeAt(0)); };
+async function pushState(){
+  const btn=$("#pushBtn"); if(!btn) return;
+  if(!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)){ btn.disabled=true; $("#pushMsg").textContent="This browser can't show notifications. On Android, open the app from its home-screen icon in Chrome."; return; }
+  const reg=await navigator.serviceWorker.ready, sub=await reg.pushManager.getSubscription();
+  btn.textContent = sub ? "Notifications on ✓ (turn off)" : "Turn on phone notifications"; btn.dataset.on = sub ? "1" : "";
+  $("#pushTest").hidden=!sub;
+  $("#pushMsg").textContent = Notification.permission==="denied" ? "Notifications are blocked for this app. Allow them in the phone's settings (Apps → Chrome / Stock Recon → Notifications), then try again." : sub ? "You'll get a notification when a price changes or you win / lose the Buy Box." : "";
+}
+$("#pushBtn").addEventListener("click",async()=>{
+  try{
+    const reg=await navigator.serviceWorker.ready; let sub=await reg.pushManager.getSubscription();
+    if($("#pushBtn").dataset.on){ if(sub){ await sb.from("push_subscriptions").delete().eq("endpoint",sub.endpoint); await sub.unsubscribe(); } toast("Notifications off on this device"); return pushState(); }
+    const perm=await Notification.requestPermission(); if(perm!=="granted"){ toast("Notifications weren't allowed"); return pushState(); }
+    sub = sub || await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:b64u(VAPID_PUBLIC) });
+    const j=sub.toJSON();
+    const {error}=await sb.from("push_subscriptions").upsert({ endpoint:j.endpoint, keys:j.keys, user_email:me?.email||null, device:navigator.userAgent.slice(0,120), topics:["price"] },{onConflict:"endpoint"});
+    if(error){ toast(/push_subscriptions/.test(errMsg(error))?"Run 14_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)); return; }
+    toast("Notifications on for this device"); pushState();
+  }catch(e){ toast("Couldn't turn on notifications: "+(e.message||e)); }
+});
+$("#pushTest").addEventListener("click",async()=>{
+  const {error}=await sb.from("sync_runs").insert({ requested:true, message:"push-test" });
+  toast(error?"Couldn't ask the PC: "+errMsg(error):"Test sent to the PC. It arrives within a minute.");
+});
+setTimeout(()=>pushState().catch(()=>{}),1500);
 
 /* ---------------- debtors: what you owe each supplier ---------------- */
 function supplierOwed(sup){

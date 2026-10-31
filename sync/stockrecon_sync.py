@@ -402,7 +402,16 @@ def main():
             except Exception as e:
                 log("Price fighter: " + repr(e)[:200])
             try:
-                req = db.select("sync_runs", "select=id&requested=is.true&finished_at=is.null")
+                req = db.select("sync_runs", "select=id,message&requested=is.true&finished_at=is.null")
+                tests = [r for r in req if (r.get("message") or "") == "push-test"]
+                if tests:                                  # "Send a test" in the app: just a notification, no sync
+                    import importlib, portal as _pn
+                    importlib.reload(_pn)
+                    _pn.notify(cfg, "🔔 Test from Stock Recon", "Notifications are working on this phone.", url="./?view=price", log=log)
+                    db.patch("sync_runs", f"id=in.({','.join(str(r['id']) for r in tests)})",
+                             {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": True, "message": "Test notification sent"})
+                    log("Test notification sent.")
+                    req = [r for r in req if r not in tests]
                 if req:
                     ids = ",".join(str(r["id"]) for r in req)
                     db.patch("sync_runs", f"id=in.({ids})", {"finished_at": datetime.utcnow().isoformat() + "Z",

@@ -373,6 +373,72 @@ def receive_returns(cfg, rows, log):
                 log(f"  Arrived on {x['waybill']}: {u['product']} (order {u.get('order_id') or '-'}) is at HOME, waiting for you to check it.")
 
 
+# ---------------------------------------------------------------- phone notifications (web push)
+_PUSH_READY = None
+
+
+def _webpush():
+    """pywebpush, installed on first use."""
+    global _PUSH_READY
+    try:
+        from pywebpush import webpush, WebPushException
+        _PUSH_READY = True
+        return webpush, WebPushException
+    except ImportError:
+        if _PUSH_READY is False:
+            return None, None
+        import subprocess, sys
+        exe = sys.executable.replace("pythonw.exe", "python.exe")
+        try:
+            subprocess.run([exe, "-m", "pip", "install", "--quiet", "pywebpush"], timeout=300, check=False,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            from pywebpush import webpush, WebPushException
+            _PUSH_READY = True
+            return webpush, WebPushException
+        except Exception:
+            _PUSH_READY = False
+            return None, None
+
+
+def notify(cfg, title, body, url="./", topic="price", log=None):
+    """Send a notification to every phone that switched notifications on in the app."""
+    import stockrecon_sync as S
+    key_file = HERE / "vapid_private.pem"
+    if not key_file.exists():
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        subs = db.select("push_subscriptions", "select=endpoint,keys,topics")
+    except RuntimeError:
+        return                                            # before 14_database_update.sql
+    subs = [x for x in subs if topic in (x.get("topics") or ["price"])]
+    if not subs:
+        return
+    webpush, WebPushException = _webpush()
+    if not webpush:
+        if log:
+            log("Notifications: couldn't install pywebpush.")
+        return
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": topic})
+    for x in subs:
+        try:
+            webpush(subscription_info={"endpoint": x["endpoint"], "keys": x["keys"]}, data=payload,
+                    vapid_private_key=str(key_file), vapid_claims={"sub": "mailto:stockrecon@example.com"}, ttl=3600)
+            db.patch("push_subscriptions", f"endpoint=eq.{quote(x['endpoint'], safe='')}", {"last_sent_at": datetime.utcnow().isoformat() + "Z"})
+        except WebPushException as e:
+            code = getattr(getattr(e, "response", None), "status_code", None)
+            if code in (404, 410):                         # the phone unsubscribed / app removed
+                try:
+                    db._req("DELETE", f"push_subscriptions?endpoint=eq.{quote(x['endpoint'], safe='')}", None, {"Prefer": "return=minimal"})
+                except Exception:
+                    pass
+            elif log:
+                log(f"Notification failed ({code}): {str(e)[:120]}")
+        except Exception as e:
+            if log:
+                log("Notification failed: " + repr(e)[:150])
+
+
 # ---------------------------------------------------------------- price fighter
 def _due(rule, now):
     lc = rule.get("last_checked")
@@ -548,6 +614,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             target, action = math.floor(min(ceiling, my_price + step)), "raised"
     upd = {"last_checked": nowiso, "bb_price": bb_price, "bb_seller": bb_seller, "winning": winning,
            "floor_used": floor, "my_price": my_price}
+    cfgn = {"url": db.base.replace("/rest/v1/", ""), "key": db.h["apikey"]}
+    alerts = []
+    if rule.get("winning") is not None and bool(rule.get("winning")) != winning:
+        alerts.append(("✅ You won the Buy Box" if winning else "❌ You lost the Buy Box",
+                       f"{title} · Buy Box R{bb_price:,.0f}" + ("" if winning else f" (you R{my_price:,.0f})")))
     if target is not None and int(target) != int(my_price):
         if not fight:
             action = "would_" + ("lower" if action in ("lowered", "at_floor") else "raise")
@@ -575,14 +646,24 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 st["OFFER"] = {**offer, "price": int(target)}
                 db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
                 log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}).")
+                alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "🔻 Down to your floor"),
+                               f"{title}: R{my_price:,.0f} → R{target:,.0f} · Buy Box was R{bb_price:,.0f}"))
             else:
                 msg = (errs[0].get("message") if errs and isinstance(errs[0], dict) else errs) or r.text()[:150]
                 db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
                                          "new_price": target, "action": "failed", "note": str(msg)[:300]}])
                 upd["last_action"] = f"Takealot refused the change: {str(msg)[:120]}"
+                alerts.append(("⚠️ Price change refused", f"{title}: Takealot said {str(msg)[:100]}"))
     else:
         upd["last_action"] = note or ("You have the Buy Box" if winning else "Holding")
+        if note and "below your floor" in note and rule.get("last_action") != upd["last_action"]:
+            alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
     db.patch("price_rules", f"sku=eq.{sku}", upd)
+    for t, b in alerts:
+        try:
+            notify(cfgn, t, b, url="./?view=price", topic="price", log=log)
+        except Exception as e:
+            log("Notification failed: " + repr(e)[:120])
 
 
 def test_logins(p, cfg, log):

@@ -3,3 +3,4 @@ sync/sync_log.txt
 sync/exports/
 sync/debug/
 __pycache__/
+*.pem
