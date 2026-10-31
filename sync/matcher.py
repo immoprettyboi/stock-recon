@@ -434,7 +434,13 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
             continue
         for u in linked:
             if k == "pending":
-                if u["status"] not in ("return_takealot", "return_me"):
+                c = u.get("comment") or ""
+                if u["status"] == "return_takealot" and u.get("flag") and "as Returned. Check" in c:
+                    # the sales list only said "Returned"; the returns list now says Takealot is putting it back in stock
+                    upd(u, return_date=r["return_date"], flag=False,
+                        comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: pending sellable "
+                                 f"stock at Takealot {r['dc']}. " + c.split("coming back to you?", 1)[-1]).strip())
+                elif u["status"] not in ("return_takealot", "return_me"):
                     upd(u, status="return_takealot", return_date=r["return_date"], flag=False,
                         comment=(f"Customer return (order {r['order_id']}, {r['reason']}), {when}: pending sellable "
                                  f"stock at Takealot {r['dc']}. " + (u.get("comment") or "")).strip())
