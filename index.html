@@ -431,7 +431,7 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
         <div class="field"><label for="a-qty">Quantity</label><input id="a-qty" type="number" min="1" max="200" value="1" required></div>
         <div class="field"><label for="a-cost">Cost per unit (R)</label><input id="a-cost" type="number" min="0" step="0.01" required placeholder="11500"></div>
         <div class="field"><label for="a-supplier">Supplier</label><input id="a-supplier" list="dl-suppliers" required placeholder="Pick one, or type a new name"><span class="hint" id="supHint"></span></div>
-        <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid</option><option value="owe">No, I owe the supplier</option></select><span class="hint" id="paidHint"></span></div>
+        <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid now</option><option value="owe">No, I owe the supplier</option><option value="upfront">Already paid upfront (before it arrived)</option></select><span class="hint" id="paidHint"></span></div>
         <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
         <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
         <div class="field"><label for="a-type">Type of stock</label><select id="a-type"><option>ICASA</option><option>TDRA</option></select></div>
@@ -1213,7 +1213,7 @@ function renderDebtors(){
   $("#cntDebt").textContent = total>0 ? R0(total) : "";
   t.innerHTML=`<thead><tr><th>Supplier</th><th class="num">You owe</th><th>Counting since</th><th>Last payment</th><th></th></tr></thead><tbody>${rows.sort((a,b)=>b.bal-a.bal).map(r=>`<tr>
       <td>${esc(r.n)}</td>
-      <td class="num">${r.anchor||r.owe.length||r.paid.length?`<b class="${r.bal>0.005?"neg":r.bal<-0.005?"pos":""}">${R(r.bal)}</b>${r.bal<-0.005?'<div class="tal-st">they owe you (overpaid)</div>':""}`:'<span class="muted">not set</span>'}</td>
+      <td class="num">${r.anchor||r.owe.length||r.paid.length?`<b class="${r.bal>0.005?"neg":r.bal<-0.005?"pos":""}">${R(r.bal)}</b>${r.bal<-0.005?`<div class="tal-st">paid upfront: ${R(-r.bal)} of stock still to come</div>`:""}`:'<span class="muted">not set</span>'}</td>
       <td class="nw">${r.anchor?`${fd(r.anchor.date)} · ${R(r.anchor.amount)}${r.bought.length?`<div class="tal-st">+ ${r.bought.length} unit${r.bought.length>1?"s":""} added since (${R(r.bought.reduce((a,u)=>a+u.cost,0))})</div>`:""}`:'<span class="muted">–</span>'}</td>
       <td class="nw">${r.lastPay?`${fd(r.lastPay.date)} · ${R(r.lastPay.amount)}`:'<span class="muted">–</span>'}</td>
       <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button></td></tr>`).join("")}</tbody>
@@ -1628,7 +1628,10 @@ function addHints(){
   const sup=$("#a-supplier").value.trim(), known=units.some(u=>(u.supplier||"").toLowerCase()===sup.toLowerCase()) || (ledger||[]).some(r=>r.supplier.toLowerCase()===sup.toLowerCase());
   $("#supHint").textContent = sup && !known ? `New supplier: "${sup}" will be added` : "";
   const total=(parseInt($("#a-qty").value,10)||0)*(num($("#a-cost").value)||0);
-  $("#paidHint").textContent = $("#a-paid").value==="owe" ? (total?`${R(total)} goes onto Debtors for ${sup||"this supplier"}`:"Goes onto Debtors") : "Not added to Debtors";
+  const v=$("#a-paid").value, cr=sup?supplierOwed(sup).bal:0;
+  $("#paidHint").textContent = v==="owe" ? (total?`${R(total)} goes onto Debtors for ${sup||"this supplier"}`:"Goes onto Debtors")
+    : v==="upfront" ? (cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}`:`Record the upfront payment in Debtors first (Payment I made), so this stock is set against it`)
+    : "Not added to Debtors";
 }
 ["#a-supplier","#a-qty","#a-cost","#a-paid"].forEach(id=>{ $(id).addEventListener("input",addHints); $(id).addEventListener("change",addHints); });
 
