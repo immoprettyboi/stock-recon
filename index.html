@@ -1238,7 +1238,7 @@ function renderPrice(){
       <td class="num"><input data-f="ceiling_price" inputmode="decimal" value="${r.ceiling_price??""}" placeholder="none" style="width:90px"></td>
       <td><select data-f="floor_action" title="What to do when the competitor goes below your floor"><option value="ceiling" ${r.floor_action!=="hold"?"selected":""}>Back to ceiling, fight again</option><option value="hold" ${r.floor_action==="hold"?"selected":""}>Hold at floor</option></select></td>
       <td class="num"><input data-f="step" inputmode="decimal" value="${r.step??1}" style="width:60px"></td>
-      <td class="num nw"><select data-f="check_minutes">${[1,2,5,10,15,30,60].map(m=>`<option value="${m}" ${(r.check_minutes||1)==m?"selected":""}>${m} min</option>`).join("")}</select></td>
+      <td class="num nw"><select data-f="check_minutes">${[0,1,2,5,10,15,30,60].map(m=>`<option value="${m}" ${(r.check_minutes??1)==m?"selected":""}>${m?m+" min":"Every 4 sec"}</option>`).join("")}</select></td>
       <td class="nw"><input type="checkbox" data-f="raise_when_winning" ${r.raise_when_winning!==false?"checked":""}> every <select data-f="raise_every_minutes">${[30,60,120,240].map(m=>`<option value="${m}" ${(r.raise_every_minutes||120)==m?"selected":""}>${m<60?m+" min":m/60+" h"}</option>`).join("")}</select></td>
       <td class="num"><input data-f="max_changes_day" inputmode="numeric" value="${r.max_changes_day??20}" style="width:55px"></td>
       <td class="nw"><button class="btn primary small" type="button" data-pfsave="${k}">Save</button> <button class="btn small" type="button" data-pfhist="${k}">History</button></td></tr>`; }).join("")}</tbody>`;

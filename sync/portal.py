@@ -449,7 +449,11 @@ def _due(rule, now):
         t = datetime.fromisoformat(str(lc).replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return True
-    return (now - t).total_seconds() >= max(1, int(rule.get("check_minutes") or 10)) * 60 - 25
+    cm = rule.get("check_minutes")
+    cm = 10 if cm is None else int(cm)
+    if cm <= 0:                                            # continuous: every few seconds
+        return (now - t).total_seconds() >= 3
+    return (now - t).total_seconds() >= cm * 60 - 25
 
 
 def price_tick(cfg, log, force=False):
@@ -479,7 +483,7 @@ def price_tick(cfg, log, force=False):
                     if h:
                         auth.update(h)
             page.on("request", on_req)
-            if any(r.get("mode") == "fight" for r in due):
+            if any(r.get("mode") == "fight" for r in due) and not _creds_key():
                 page.goto(SALES_URL, wait_until="domcontentloaded", timeout=90_000)
                 for _ in range(40):
                     if auth or "/login" in page.url:
@@ -491,11 +495,24 @@ def price_tick(cfg, log, force=False):
                 tk.goto("https://www.takealot.com/", wait_until="domcontentloaded", timeout=60_000)
             except Exception:
                 pass
-            for r in due:
+            import time as _time
+            t_end = _time.time() + 25                     # continuous listings: keep checking every ~4 s until the next tick
+            while True:
+                for r in due:
+                    try:
+                        _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
+                    except Exception as e:
+                        log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
+                if _time.time() > t_end - 4:
+                    break
+                _time.sleep(4)
                 try:
-                    _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
-                except Exception as e:
-                    log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
+                    rules = db.select("price_rules", "select=*&enabled=is.true")
+                except Exception:
+                    break
+                due = [r for r in rules if r.get("check_minutes") is not None and int(r["check_minutes"]) <= 0]
+                if not due:
+                    break
         finally:
             ctx.close()
 
@@ -619,38 +636,34 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     if not plid:
         db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Listing not found on Takealot yet (next sync)"})
         return
-    got = {}
-    try:                                                   # fast: ask Takealot's own product API from inside the page
-        got = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop`,
-                                  {credentials: "include"}); return r.ok ? await r.json() : {}; }""", str(plid)) or {}
-    except Exception:
-        got = {}
-    if not (got.get("buybox") or {}).get("items"):         # slower fallback: open the product page
-        def on_resp(r):
-            try:
-                if "/product-details/PLID" in r.url and "json" in (r.headers.get("content-type") or "") and not got.get("buybox"):
-                    got.update(r.json())
-            except Exception:
-                pass
-        pg = ctx.new_page()
-        pg.on("response", on_resp)
-        try:
-            pg.goto(f"https://www.takealot.com/x/PLID{plid}", wait_until="domcontentloaded", timeout=60_000)
-            for _ in range(30):
-                if got.get("buybox"):
-                    break
-                pg.wait_for_timeout(500)
-        finally:
-            pg.close()
-    items = ((got.get("buybox") or {}).get("items")) or []
-    item = next((i for i in items if i.get("is_selected")), items[0] if items else None)
-    if not item:
+    live = _read_live(page, plid, offer_id, mine)
+    if not live:
         db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Couldn't read the Buy Box"})
         return
-    bb_price, bb_seller = float(item.get("price") or 0), str(item.get("sponsored_ads_seller_id") or "")
+    bb_price, bb_seller = live["price"], live["seller"]
+    # how long Takealot took to put our last change live (measured, shown in the history)
+    import time as _time
+    tm = _tload()
+    pend = (tm.get("pending") or {}).get(sku)
+    if pend and live["mine"] is not None and int(live["mine"]) == int(pend["price"]):
+        delay = int(_time.time() - pend["sent"])
+        tm.setdefault("rounds", []).append({"sku": sku, "sent": pend["sent"], "live": int(_time.time()), "via": pend.get("via"),
+                                            "delay": delay, "won": bb_seller == mine})
+        tm["pending"].pop(sku, None)
+        _tsave(tm)
+        try:
+            db.patch("price_log", f"sku=eq.{sku}&new_price=eq.{int(pend['price'])}&at=gt.{(datetime.utcnow() - timedelta(minutes=30)).isoformat()}Z",
+                     {"note": f"live on Takealot after {delay // 60}m{delay % 60:02d}s via {pend.get('via', 'portal')}" +
+                              (" · ✅ you got the Buy Box" if bb_seller == mine else " · competitor still ahead")})
+        except Exception:
+            pass
     winning = bb_seller == mine
     my_price = float(rule.get("my_price") or offer.get("price") or 0)
-    if winning:
+    pend = (_tload().get("pending") or {}).get(sku)
+    waiting_live = bool(pend and _time.time() - pend["sent"] < 900)     # our last change isn't live on Takealot yet
+    if waiting_live:
+        my_price = float(pend["price"])
+    elif winning:
         my_price = bb_price
     floor = _floor_for(db, rule, prod)
     ceiling = float(rule["ceiling_price"]) if rule.get("ceiling_price") else None
@@ -705,7 +718,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             note = f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}: holding at the floor"
         if target is not None and ceiling and target > ceiling:
             target = math.floor(ceiling)
-    elif rule.get("raise_when_winning") and ceiling and my_price < ceiling:
+    elif rule.get("raise_when_winning") and ceiling and my_price < ceiling and not waiting_live:
         lc = rule.get("last_change_at")
         quiet = True
         if lc:
@@ -732,40 +745,21 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                                          "new_price": target, "action": action, "note": note or "watch mode"}])
         elif changes >= int(rule.get("max_changes_day") or 20):
             upd["last_action"] = f"Daily limit of {rule.get('max_changes_day')} changes reached"
-        elif not auth or not offer_id:
-            upd["last_action"] = "Not logged in to the Seller Portal: price not changed"
+        elif not (auth or _creds_key()) or not offer_id:
+            upd["last_action"] = "Not logged in to the Seller Portal and no API key: price not changed"
         else:
-            # ---- sniper: wait until just before Takealot's next price update, then send
-            import time as _time
-            tm = _tload()
-            lead = int(tm.get("lead") or 30)
-            nxt, period = None, None   # measured: each change goes live ~4.5-5.5 min after sending (no fixed batches), so send at once
-            sent_at, snipe_note = None, ""
-            if nxt and action in ("lowered", "at_floor", "follow"):
-                last_sig = None
-                while _time.time() < nxt - lead and _time.time() < nxt + 5:
-                    live = _read_live(page, plid, offer_id, mine)
-                    if live:
-                        if last_sig and live["sig"] != last_sig:          # a batch just went live: learn from it
-                            _tadd(tm, _time.time())
-                            nxt, period = _next_publish(tm, _time.time())
-                        last_sig = live["sig"]
-                        if live["seller"] == mine:                       # we won it meanwhile: nothing to do
-                            target = None
-                            break
-                        if action == "lowered":                          # aim at their latest price
-                            t2 = math.floor(live["price"] - step)
-                            if floor is not None and t2 >= floor:
-                                target = min(target, t2)
-                    page.wait_for_timeout(4000)
-                snipe_note = f"sent {int(max(0, nxt - _time.time()))}s before Takealot's update" if target is not None else ""
-            if target is None:
-                upd["last_action"] = "You won the Buy Box while waiting"
-                db.patch("price_rules", f"sku=eq.{sku}", upd)
-                return
+            key = _creds_key()
             sent_at = _time.time()
-            r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{offer_id}", headers={**auth, "content-type": "application/json"},
-                                  data=json.dumps({"selling_price": int(target)}), timeout=60_000)
+            if key:                                         # Takealot Seller API
+                via = "API"
+                r = ctx.request.patch(f"https://seller-api.takealot.com/v2/offers/offer/ID{offer_id}",
+                                      headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+                                      data=json.dumps({"selling_price": int(target)}), timeout=30_000)
+            else:                                           # logged-in Seller Portal
+                via = "portal"
+                r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{offer_id}", headers={**auth, "content-type": "application/json"},
+                                      data=json.dumps({"selling_price": int(target)}), timeout=60_000)
+            snipe_note = f"via {via}"
             errs = None
             try:
                 errs = (r.json() or {}).get("validation_errors")
@@ -779,37 +773,9 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 st["OFFER"] = {**offer, "price": int(target)}
                 db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
                 log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}){' · ' + snipe_note if snipe_note else ''}.")
-                # watch until the new price is live: learn the update times and whether the competitor answered in time
-                try:
-                    limit = sent_at + (period or 420) + 120
-                    while _time.time() < limit:
-                        page.wait_for_timeout(3000)
-                        live = _read_live(page, plid, offer_id, mine)
-                        if not live or live["mine"] is None or int(live["mine"]) != int(target):
-                            continue
-                        pub = _time.time()
-                        _tadd(tm, pub)
-                        beaten = live["seller"] != mine and live["other_min"] is not None and live["other_min"] < target
-                        missed = bool(nxt) and pub > nxt + 45
-                        if beaten:
-                            tm["lead"] = max(4, lead - 8)               # they still answered in the same update: send later
-                        elif missed:
-                            tm["lead"] = min(150, lead + 15)            # we missed the update: send earlier
-                        tm.setdefault("rounds", []).append({"sent": int(sent_at), "live": int(pub), "lead": lead,
-                                                            "won": live["seller"] == mine, "beaten_same_update": beaten})
-                        res = (f"live after {int(pub - sent_at)}s · " + ("✅ you hold the Buy Box" if live["seller"] == mine
-                               else "competitor answered in the same update" if beaten else "competitor didn't answer in time"))
-                        db.patch("price_log", f"sku=eq.{sku}&at=gt.{(datetime.utcnow() - timedelta(minutes=20)).isoformat()}Z&new_price=eq.{int(target)}",
-                                 {"note": ((note + " · ") if note else "") + (snipe_note + " · " if snipe_note else "") + res})
-                        upd["winning"] = live["seller"] == mine
-                        upd["bb_seller"], upd["bb_price"] = live["seller"], live["price"]
-                        upd["last_action"] = f"R{target:,.0f} live · " + ("you have the Buy Box" if live["seller"] == mine else res)
-                        if live["seller"] == mine:
-                            alerts.append(("✅ You won the Buy Box", f"{title} at R{target:,.0f}"))
-                        break
-                    _tsave(tm)
-                except Exception as e:
-                    log("Price fighter timing: " + repr(e)[:150])
+                tm = _tload()
+                tm.setdefault("pending", {})[sku] = {"price": int(target), "sent": int(sent_at), "via": via}
+                _tsave(tm)
                 alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "↩️ Back up to your ceiling" if action == "reset" else "➡️ Staying just above the competitor" if action == "follow" else "🔻 Down to your floor"),
                                f"{title}: R{my_price:,.0f} → R{target:,.0f} · Buy Box was R{bb_price:,.0f}"))
             else:
@@ -862,6 +828,15 @@ def test_logins(p, cfg, log):
                 ctx.close()
     finally:
         browser.close()
+
+
+def _creds_key():
+    import configparser
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    k = (c.get("takealot_api_key") or "").strip()
+    return "" if "PASTE" in k.upper() else k
 
 
 def auto_login(page, site, log, ok_check, timeout_s=40, cfg=None):
@@ -1055,6 +1030,33 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 takealot_recon(ctx, cfg, auth, log)
             except Exception as e:
                 log("Takealot stock recon couldn't be read: " + repr(e)[:200])
+
+            # ---- one-off: try the Takealot Seller API key (debug/api_probe.txt)
+            try:
+                if (DEBUG_DIR / "api_probe.txt").exists():
+                    (DEBUG_DIR / "api_probe.txt").unlink()
+                    key = _creds_key()
+                    out = {}
+                    oid = "231380523"
+                    for name, url, hdr in (
+                        ("v2_offer_ID", f"https://seller-api.takealot.com/v2/offers/offer/ID{oid}", {"Authorization": f"Key {key}"}),
+                        ("v2_offer_plain", f"https://seller-api.takealot.com/v2/offers/offer/{oid}", {"Authorization": f"Key {key}"}),
+                        ("v2_offers", "https://seller-api.takealot.com/v2/offers?page_number=1&page_size=2", {"Authorization": f"Key {key}"}),
+                        ("mkt_offers_key", "https://marketplace-api.takealot.com/v1/offers?limit=2", {"Authorization": f"Key {key}"}),
+                        ("mkt_offers_bearer", "https://marketplace-api.takealot.com/v1/offers?limit=2", {"Authorization": f"Bearer {key}"}),
+                        ("mkt_offers_xkey", "https://marketplace-api.takealot.com/v1/offers?limit=2", {"X-API-Key": key}),
+                        ("mkt_docs", "https://marketplace-api.takealot.com/v1/openapi.json", {}),
+                    ):
+                        try:
+                            r = ctx.request.get(url, headers=hdr, timeout=30_000)
+                            out[name] = {"status": r.status, "body": r.text()[:6000],
+                                         "headers": {k: v for k, v in r.headers.items() if k.lower().startswith("x-ratelimit")}}
+                        except Exception as e:
+                            out[name] = {"error": repr(e)[:200]}
+                    (DEBUG_DIR / "api_probe.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
+                    log("API probe saved.")
+            except Exception as e:
+                log("API probe failed: " + repr(e)[:200])
 
             # ---- one-off: read how the portal asks for a report (debug/recon_discover3.txt)
             try:
