@@ -922,7 +922,7 @@ function renderOverview(){
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
   const booked=u=>u.po && ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender"].includes(x.status));
-  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
+  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${(pipeline.find(x=>x.order_id===u.order_id)||{}).fulfilment_dc||u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
