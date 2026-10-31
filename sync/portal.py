@@ -535,6 +535,80 @@ def _floor_for(db, rule, prod):
     return math.ceil((cost + float(rule.get("min_profit") or 0)) / max(0.5, 1 - ratio))
 
 
+# ---- sniper timing: Takealot publishes price changes in batches. Learn when, and send ours just before the cut-off.
+TIMING_FILE = DEBUG_DIR / "publish_times.json"
+
+
+def _tload():
+    try:
+        return json.loads(TIMING_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"times": [], "lead": 30, "rounds": []}
+
+
+def _tsave(t):
+    try:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        t["times"] = sorted(set(int(x) for x in t.get("times", [])))[-200:]
+        t["rounds"] = t.get("rounds", [])[-100:]
+        TIMING_FILE.write_text(json.dumps(t, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _tadd(t, ts):
+    ts = int(ts)
+    if not any(abs(ts - x) < 20 for x in t.get("times", [])):      # one batch = one moment
+        t.setdefault("times", []).append(ts)
+
+
+def _period(times):
+    ts = sorted(times)
+    d = [b - a for a, b in zip(ts, ts[1:]) if 150 <= b - a <= 3600]
+    if len(d) < 2:
+        return None
+    base = min(d)
+    vals = sorted(x / max(1, round(x / base)) for x in d)
+    p = vals[len(vals) // 2]
+    return p if 150 <= p <= 900 else None
+
+
+def _next_publish(t, now):
+    times = t.get("times") or []
+    p = _period(times)
+    if not p:
+        return None, None
+    last = max(times)
+    n = max(1, math.ceil((now - last) / p))
+    nxt = last + n * p
+    while nxt - now < 4:
+        nxt += p
+    return nxt, p
+
+
+def _read_live(page, plid, offer_id, mine):
+    """(Buy Box seller, Buy Box price, your live price or None, cheapest other price, signature) from takealot.com."""
+    try:
+        j = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop`,
+                                  {credentials: "include", cache: "no-store"}); return r.ok ? await r.json() : {}; }""", str(plid)) or {}
+    except Exception:
+        return None
+    items = ((j.get("buybox") or {}).get("items")) or []
+    it = next((i for i in items if i.get("is_selected")), items[0] if items else None)
+    if not it:
+        return None
+    seller, price = str(it.get("sponsored_ads_seller_id") or ""), float(it.get("price") or 0)
+    others = []
+    for c in ((j.get("other_offers") or {}).get("conditions") or []):
+        for o in c.get("items") or []:
+            others.append((str(o.get("product_id") or ""), float(o.get("price") or 0)))
+    mine_live = price if seller == mine else next((p for pid, p in others if pid == str(offer_id)), None)
+    other_min = min([p for pid, p in others if pid != str(offer_id)] + ([price] if seller != mine else []), default=None)
+    sig = f"{seller}:{price}|" + ",".join(f"{pid}:{p}" for pid, p in sorted(others))
+    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig}
+
+
+
 def _fight_one(ctx, page, db, rule, prod, auth, log):
     import math
     sku = rule["sku"]
@@ -661,6 +735,35 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         elif not auth or not offer_id:
             upd["last_action"] = "Not logged in to the Seller Portal: price not changed"
         else:
+            # ---- sniper: wait until just before Takealot's next price update, then send
+            import time as _time
+            tm = _tload()
+            lead = int(tm.get("lead") or 30)
+            nxt, period = _next_publish(tm, _time.time())
+            sent_at, snipe_note = None, ""
+            if nxt and action in ("lowered", "at_floor", "follow"):
+                last_sig = None
+                while _time.time() < nxt - lead and _time.time() < nxt + 5:
+                    live = _read_live(page, plid, offer_id, mine)
+                    if live:
+                        if last_sig and live["sig"] != last_sig:          # a batch just went live: learn from it
+                            _tadd(tm, _time.time())
+                            nxt, period = _next_publish(tm, _time.time())
+                        last_sig = live["sig"]
+                        if live["seller"] == mine:                       # we won it meanwhile: nothing to do
+                            target = None
+                            break
+                        if action == "lowered":                          # aim at their latest price
+                            t2 = math.floor(live["price"] - step)
+                            if floor is not None and t2 >= floor:
+                                target = min(target, t2)
+                    page.wait_for_timeout(4000)
+                snipe_note = f"sent {int(max(0, nxt - _time.time()))}s before Takealot's update" if target is not None else ""
+            if target is None:
+                upd["last_action"] = "You won the Buy Box while waiting"
+                db.patch("price_rules", f"sku=eq.{sku}", upd)
+                return
+            sent_at = _time.time()
             r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{offer_id}", headers={**auth, "content-type": "application/json"},
                                   data=json.dumps({"selling_price": int(target)}), timeout=60_000)
             errs = None
@@ -675,7 +778,38 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 st = dict(prod.get("takealot_stock") or {})
                 st["OFFER"] = {**offer, "price": int(target)}
                 db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
-                log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}).")
+                log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}){' · ' + snipe_note if snipe_note else ''}.")
+                # watch until the new price is live: learn the update times and whether the competitor answered in time
+                try:
+                    limit = sent_at + (period or 420) + 120
+                    while _time.time() < limit:
+                        page.wait_for_timeout(3000)
+                        live = _read_live(page, plid, offer_id, mine)
+                        if not live or live["mine"] is None or int(live["mine"]) != int(target):
+                            continue
+                        pub = _time.time()
+                        _tadd(tm, pub)
+                        beaten = live["seller"] != mine and live["other_min"] is not None and live["other_min"] < target
+                        missed = bool(nxt) and pub > nxt + 45
+                        if beaten:
+                            tm["lead"] = max(4, lead - 8)               # they still answered in the same update: send later
+                        elif missed:
+                            tm["lead"] = min(150, lead + 15)            # we missed the update: send earlier
+                        tm.setdefault("rounds", []).append({"sent": int(sent_at), "live": int(pub), "lead": lead,
+                                                            "won": live["seller"] == mine, "beaten_same_update": beaten})
+                        res = (f"live after {int(pub - sent_at)}s · " + ("✅ you hold the Buy Box" if live["seller"] == mine
+                               else "competitor answered in the same update" if beaten else "competitor didn't answer in time"))
+                        db.patch("price_log", f"sku=eq.{sku}&at=gt.{(datetime.utcnow() - timedelta(minutes=20)).isoformat()}Z&new_price=eq.{int(target)}",
+                                 {"note": ((note + " · ") if note else "") + (snipe_note + " · " if snipe_note else "") + res})
+                        upd["winning"] = live["seller"] == mine
+                        upd["bb_seller"], upd["bb_price"] = live["seller"], live["price"]
+                        upd["last_action"] = f"R{target:,.0f} live · " + ("you have the Buy Box" if live["seller"] == mine else res)
+                        if live["seller"] == mine:
+                            alerts.append(("✅ You won the Buy Box", f"{title} at R{target:,.0f}"))
+                        break
+                    _tsave(tm)
+                except Exception as e:
+                    log("Price fighter timing: " + repr(e)[:150])
                 alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "↩️ Back up to your ceiling" if action == "reset" else "➡️ Staying just above the competitor" if action == "follow" else "🔻 Down to your floor"),
                                f"{title}: R{my_price:,.0f} → R{target:,.0f} · Buy Box was R{bb_price:,.0f}"))
             else:
@@ -929,7 +1063,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     import re as _re
                     js = ctx.request.get("https://sellers.takealot.com/assets/main-DS7F8Hpa.js", timeout=60_000).text()
                     segs = []
-                    for key in ("leadtime_stock", "merchant_warehouse_id:", "/v2/offers/offer/", "/v2/offers/batch", "offers/offer"):
+                    for key in ("buybox", "buy_box", "BuyBox", "competitor", "lowest_price", "winning"):
                         for m in list(_re.finditer(_re.escape(key), js))[:4]:
                             segs.append({"key": key, "text": js[max(0, m.start() - 900): m.start() + 600]})
                     (DEBUG_DIR / "recon_discovery3.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
