@@ -467,8 +467,9 @@ def price_tick(cfg, log, force=False):
         return                                            # before 13_database_update.sql
     now = datetime.utcnow()
     due = [r for r in rules if force or _due(r, now)]
+    fast = any(r.get("check_minutes") is not None and int(r["check_minutes"]) <= 0 for r in rules)
     if not due:
-        return
+        return fast
     prods = {p["sku"]: p for p in db.select("products", "select=sku,product,takealot_title,takealot_stock")}
     from playwright.sync_api import sync_playwright
     import stockrecon_sync as SS
@@ -496,16 +497,16 @@ def price_tick(cfg, log, force=False):
             except Exception:
                 pass
             import time as _time
-            t_end = _time.time() + 25                     # continuous listings: keep checking every ~4 s until the next tick
+            t_end = _time.time() + 85                     # continuous listings: keep checking every ~2 s, one browser for 85 s
             while True:
                 for r in due:
                     try:
                         _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
                     except Exception as e:
                         log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
-                if _time.time() > t_end - 4:
+                if _time.time() > t_end - 2:
                     break
-                _time.sleep(4)
+                _time.sleep(2)
                 try:
                     rules = db.select("price_rules", "select=*&enabled=is.true")
                 except Exception:
@@ -515,6 +516,7 @@ def price_tick(cfg, log, force=False):
                     break
         finally:
             ctx.close()
+    return fast
 
 
 def _floor_for(db, rule, prod):

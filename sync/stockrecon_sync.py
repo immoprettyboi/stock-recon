@@ -392,14 +392,17 @@ def main():
     while True:
         run_sync(cfg)
         # wait for the next run, but check every minute for a "Sync now" from the app
-        for _ in range(cfg["interval"] * 2):          # every 30 seconds: price fighter + "Sync now" check
-            time.sleep(30)
+        next_sync = time.time() + cfg["interval"] * 60
+        fast = False
+        while time.time() < next_sync:                # price fighter + "Sync now" check
+            time.sleep(1 if fast else 30)             # a listing on "Every 4 sec": no pause between checks
             # price fighter: checks the listings you switched on, each at its own interval
             try:
                 import importlib, portal as _pp
                 importlib.reload(_pp)
-                _pp.price_tick(cfg, log)
+                fast = bool(_pp.price_tick(cfg, log))
             except Exception as e:
+                fast = False
                 log("Price fighter: " + repr(e)[:200])
             try:
                 req = db.select("sync_runs", "select=id,message&requested=is.true&finished_at=is.null")
