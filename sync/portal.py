@@ -1280,6 +1280,93 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 log("Removal order discovery failed: " + repr(e)[:200])
 
             # ---- one-off: how a return's details (customer comment) load (debug/return_discover.txt)
+            # ---- one-off: dump our sales + units for checking against the transactions (debug/sales_dump.txt)
+            try:
+                if (DEBUG_DIR / "sales_dump.txt").exists():
+                    (DEBUG_DIR / "sales_dump.txt").unlink()
+                    import stockrecon_sync as S
+                    dbx = S.DB(cfg["url"], cfg["key"])
+                    out = {}
+                    for t, q in (("takealot_sales", "select=*"), ("units", "select=id,product,sku,status,order_id,cost,gross,fees,sold_date,location,source"),
+                                 ("takealot_returns", "select=return_id,rrn,order_id,sku,dc,reason,outcome,return_date")):
+                        rows, off = [], 0
+                        while True:
+                            b = dbx.select(t, f"{q}&limit=1000&offset={off}")
+                            rows += b
+                            if len(b) < 1000:
+                                break
+                            off += 1000
+                        for r in rows:
+                            r.pop("raw", None)
+                        out[t] = rows
+                    (DEBUG_DIR / "sales_dump.json").write_text(json.dumps(out, default=str), encoding="utf-8")
+                    log("Sales dump saved.")
+            except Exception as e:
+                log("Sales dump failed: " + repr(e)[:200])
+            # ---- one-off: all transactions of the last 90 days (debug/txn_discover2.txt)
+            try:
+                if (DEBUG_DIR / "txn_discover2.txt").exists():
+                    days = (DEBUG_DIR / "txn_discover2.txt").read_text(encoding="utf-8").strip()
+                    days = int(days) if days.isdigit() else 90
+                    (DEBUG_DIR / "txn_discover2.txt").unlink()
+                    d_to = datetime.now().date()
+                    d_from = d_to - timedelta(days=days)
+                    allt, pn, info = [], 1, {}
+                    while pn < 100:
+                        r = ctx.request.get(f"https://{API_HOST}/v1/seller/transactions?date_from={d_from}&date_to={d_to}&page_size=100&page_number={pn}",
+                                            headers=auth, timeout=60_000)
+                        info[f"p{pn}"] = r.status
+                        if not r.ok:
+                            info["err"] = r.text()[:500]
+                            break
+                        j = r.json()
+                        allt += j.get("transactions") or []
+                        if len(allt) >= (j.get("page_summary") or {}).get("total", 0) or not j.get("transactions"):
+                            break
+                        pn += 1
+                    (DEBUG_DIR / "txn_all.json").write_text(json.dumps({"info": info, "from": str(d_from), "to": str(d_to), "transactions": allt}, indent=1), encoding="utf-8")
+                    log(f"Transactions discovery: {len(allt)} rows saved.")
+            except Exception as e:
+                log("Transactions discovery 2 failed: " + repr(e)[:200])
+            # ---- one-off: the Seller Portal transactions page (debug/txn_discover.txt)
+            try:
+                if (DEBUG_DIR / "txn_discover.txt").exists():
+                    (DEBUG_DIR / "txn_discover.txt").unlink()
+                    calls, out = [], {}
+                    def lis6(r):
+                        try:
+                            if "seller-api" in r.url and r.request.resource_type in ("xhr", "fetch"):
+                                ct = r.headers.get("content-type", "")
+                                calls.append({"url": r.url, "status": r.status, "body": r.text()[:40000] if "json" in ct else ""})
+                        except Exception:
+                            pass
+                    page.on("response", lis6)
+                    page.goto("https://sellers.takealot.com/", wait_until="domcontentloaded", timeout=90_000)
+                    page.wait_for_timeout(6000)
+                    out["links"] = page.eval_on_selector_all("a[href]", "els => els.map(e => [e.innerText.trim().slice(0,40), e.getAttribute('href')])")[:300]
+                    hrefs = [h for t, h in out["links"] if h and ("transaction" in h.lower() or "transaction" in (t or "").lower())]
+                    tried = []
+                    for u in hrefs[:1] + ["/finance/transactions", "/account/transactions", "/transactions", "/payments/transactions"]:
+                        url = u if u.startswith("http") else "https://sellers.takealot.com" + u
+                        calls.clear()
+                        page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+                        page.wait_for_timeout(9000)
+                        txt = page.inner_text("body")
+                        tried.append({"url": url, "final": page.url, "len": len(txt)})
+                        if "isbursement" in txt or "ransaction" in txt[:3000]:
+                            break
+                    out["tried"] = tried
+                    out["url"] = page.url
+                    page.set_viewport_size({"width": 1600, "height": 1200})
+                    page.wait_for_timeout(1500)
+                    page.screenshot(path=str(DEBUG_DIR / "txn_page.png"), full_page=True)
+                    out["page_text"] = page.inner_text("body")[:20000]
+                    out["calls"] = list(calls)
+                    page.remove_listener("response", lis6)
+                    (DEBUG_DIR / "txn_discovery.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+                    log("Transactions page discovery saved.")
+            except Exception as e:
+                log("Transactions page discovery failed: " + repr(e)[:200])
             try:
                 if (DEBUG_DIR / "return_discover.txt").exists():
                     (DEBUG_DIR / "return_discover.txt").unlink()
@@ -1428,6 +1515,11 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 apply_leadtime_requests(ctx, cfg, auth, offers, log)
             except Exception as e:
                 log("Lead-time stock change failed: " + repr(e)[:200])
+            # ---- the 3 balance tiles + when each transaction first appears (to learn Takealot's hold rule)
+            try:
+                balance_snapshot(ctx, auth, log)
+            except Exception as e:
+                log("Balance snapshot failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
             try:
                 fetch_takealot_pos(ctx, cfg, auth, log)
@@ -1442,6 +1534,50 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             return sales, returns
         finally:
             ctx.close()
+
+
+BALANCE_LOG = DEBUG_DIR / "balance_log.jsonl"
+
+
+def balance_snapshot(ctx, auth, log):
+    """Every sync (about every 30 min): Current / Held back / Available, plus every transaction not seen before,
+    with the time it first appeared. Saved to debug/balance_log.jsonl."""
+    if not auth:
+        return
+    seen = set()
+    try:
+        for line in BALANCE_LOG.read_text(encoding="utf-8").splitlines():
+            seen.update(json.loads(line).get("new_ids") or [])
+    except Exception:
+        pass
+    r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
+    if not r.ok:
+        return
+    bal = (r.json() or {}).get("balances") or {}
+    d_to = datetime.now().date()
+    d_from = d_to - timedelta(days=4)
+    new, pn = [], 1
+    while pn < 20:
+        q = ctx.request.get(f"https://{API_HOST}/v1/seller/transactions?date_from={d_from}&date_to={d_to}&page_size=100&page_number={pn}",
+                            headers=auth, timeout=60_000)
+        if not q.ok:
+            break
+        j = q.json()
+        rows = j.get("transactions") or []
+        for x in rows:
+            if x["transaction_log_id"] not in seen:
+                new.append(x)
+        if not rows or pn * 100 >= (j.get("page_summary") or {}).get("total", 0):
+            break
+        pn += 1
+    snap = {"at": datetime.now().isoformat(timespec="seconds"), "current": bal.get("current"), "held_back": bal.get("held_back"),
+            "available": bal.get("available"), "new_ids": [x["transaction_log_id"] for x in new],
+            "new": [{"id": x["transaction_log_id"], "date": x["date_created"], "type": x["transaction_type"]["description"],
+                     "ref": x["reference"], "amount": x["inc_vat"]} for x in new]}
+    with open(BALANCE_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(snap) + "\n")
+    log(f"Takealot balance: current R{float(bal.get('current') or 0):,.2f}, held back R{float(bal.get('held_back') or 0):,.2f}, "
+        f"available R{float(bal.get('available') or 0):,.2f} ({len(new)} new transactions).")
 
 
 WAREHOUSE_NAMES = {1: "CPT", 3: "JHB", 6: "DBN"}
