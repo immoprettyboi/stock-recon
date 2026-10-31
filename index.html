@@ -86,7 +86,8 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .private-box{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
 .tal-st{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
 /* tiles */
-@media (min-width:900px){ #tiles{grid-template-columns:repeat(3,1fr)!important} }
+@media (min-width:700px){ #tiles{grid-template-columns:repeat(2,1fr)!important} }
+@media (min-width:1100px){ #tiles{grid-template-columns:repeat(5,1fr)!important} }
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
 .tile .lbl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
@@ -377,6 +378,20 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
         <button class="btn small" type="button" id="adamSet">Update balance</button>
       </div>
       <div class="tscroll"><table id="expTable"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Salaries & expenses</h2><p id="opexSub">Taken off the month's profit</p></div>
+      <form class="grid" id="opexForm" autocomplete="off">
+        <div class="field"><label for="ox-date">Date</label><input id="ox-date" type="date" required></div>
+        <div class="field"><label for="ox-type">Type</label><select id="ox-type">
+          <option value="Salary">Salary / wages</option><option>Rent</option><option>Electricity & water</option><option>Phone & internet</option>
+          <option>Packaging</option><option>Fuel & transport</option><option>Bank charges</option><option>Software & subscriptions</option><option>Other</option></select></div>
+        <div class="field"><label for="ox-desc">Who / what</label><input id="ox-desc" placeholder="e.g. Sipho, October salary" required></div>
+        <div class="field"><label for="ox-amt">Amount (R)</label><input id="ox-amt" inputmode="decimal" placeholder="e.g. 6500" required></div>
+        <label class="note inline wide"><input type="checkbox" id="ox-monthly"> Every month (copy it with "Repeat monthly costs")</label>
+        <div class="form-actions"><button class="btn primary" type="submit">Add</button><button class="btn" type="button" id="opexRepeat">Repeat monthly costs from last month</button><span class="note" id="opexMsg"></span></div>
+      </form>
+      <div class="tscroll"><table id="opexTable"></table></div>
     </div>
     <div class="panel">
       <div class="sec-head"><h2>Returns</h2><p id="retSub">From Takealot's View Returns, by return date</p></div>
@@ -816,14 +831,17 @@ function renderOverview(){
   const monthRets = rets.filter(r=>state.month==="all" || String(r.return_date).slice(0,7)===state.month);
   const rKind = o => { o=String(o||"").toLowerCase(); return /removal|return to seller|unsellable|collect|dispos/.test(o)?"removal":/pending/.test(o)?"pending":/sellable/.test(o)?"sellable":"other"; };
   const rk = {sellable:0,pending:0,removal:0,other:0}; monthRets.forEach(r=>rk[rKind(r.outcome)]+=(r.qty||1));
-  const monthExp = expenses.filter(e=>e.category!=="adam_balance" && e.category!=="delivery_other" && (state.month==="all" || String(e.date).slice(0,7)===state.month));
-  const X = monthExp.reduce((a,e)=>a+e.amount,0);
+  const inM = e => state.month==="all" || String(e.date).slice(0,7)===state.month;
+  const monthExp = expenses.filter(e=>DELIV_CATS.has(e.category) && inM(e));
+  const monthOpex = expenses.filter(e=>OPEX_CATS.has(e.category) && inM(e));
+  const XD = monthExp.reduce((a,e)=>a+e.amount,0), XO = monthOpex.reduce((a,e)=>a+e.amount,0), X = XD+XO;
   $("#tiles").innerHTML = `
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
     <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${X?` − ${R0(X)} delivery costs`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
-    <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery costs`:`no sales in ${esc(mLabel)}`}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${XD?` − ${R0(XD)} delivery`:""}${XO?` − ${R0(XO)} salaries & expenses`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery, salaries & expenses`:`no sales in ${esc(mLabel)}`}</span></div>
+    <div class="tile"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l).length}`).join(" · ")}</span></div>
     <div class="tile"><span class="lbl">Stock on hand at cost</span><span class="val">${R0(stockV)}</span><span class="sub">${stock.length?`what you paid for the ${stock.length} units · avg ${R0(stockV/stock.length)} a unit`:"no unsold stock"}</span></div>
@@ -903,7 +921,8 @@ function renderOverview(){
                     : `<span class="muted">${k==="sellable"?"unit back in stock / resold":"no unit linked"}</span>`;
       return `<tr><td class="nw">${fd(r.return_date)}</td><td>${esc(r.title)}</td><td class="mono">${esc(r.order_id)}</td><td>${esc(r.reason)}${r.customer_comment&&!/^Return for customer cancellation/i.test(r.customer_comment)?`<div class="tal-st" style="white-space:normal;max-width:320px">“${esc(r.customer_comment)}”</div>`:""}</td><td><span class="pill ${pill}">${esc(outLabel(r.outcome))}</span></td><td>${app}</td></tr>`; }).join("")}</tbody>`
     : `<tbody><tr><td class="muted">${rets.length?`No returns in ${esc(mLabel)}.`:"Returns appear here after the next sync (run 8_database_update.sql in Supabase first)."}</td></tr></tbody>`;
-  $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(X)}</td></tr></tfoot>`
+  renderOpex(monthOpex, XO, mLabel);
+  $("#expTable").innerHTML = monthExp.length ? `<thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead><tbody>${monthExp.map(e=>`<tr><td class="nw">${fd(e.date)}</td><td>${esc(String(e.description).replace(/\s*\(topup\(stitch\)\)/i," (paid online)").replace(/\s*\(manual\)/i," (manual payment)"))}</td><td class="num">${R(e.amount)}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="2">Total for ${esc(mLabel)}</td><td class="num">${R(XD)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No delivery costs in ${esc(mLabel)}.</td></tr></tbody>`;
 }
 $("#retTable").addEventListener("click",e=>{const b=e.target.closest("[data-id]"); if(b) openEdit(b.dataset.id);});
@@ -1140,6 +1159,45 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   const po=poOf(x); state.q = x.direction==="to_takealot" ? po : ""; $("#q").value=state.q;
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
+
+/* ---------------- salaries & expenses ---------------- */
+const DELIV_CATS=new Set(["courier_topup","adam_delivery"]), OPEX_CATS=new Set(["salary","expense"]);
+function opexMonth(){ return state.month && state.month!=="all" ? state.month : today().slice(0,7); }
+function renderOpex(list, total, mLabel){
+  const t=$("#opexTable"); if(!t) return;
+  if(!$("#ox-date").value || $("#ox-date").value.slice(0,7)!==opexMonth()) $("#ox-date").value = opexMonth()===today().slice(0,7) ? today() : `${opexMonth()}-28`;
+  const sal=list.filter(e=>e.category==="salary").reduce((a,e)=>a+e.amount,0);
+  $("#opexSub").textContent = list.length ? `${esc(mLabel)}: salaries ${R(sal)} · other ${R(total-sal)} · taken off the month's profit` : "Taken off the month's profit";
+  t.innerHTML = list.length ? `<thead><tr><th>Date</th><th>Type</th><th>Who / what</th><th class="num">Amount</th><th></th></tr></thead><tbody>${[...list].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(e=>`<tr>
+      <td class="nw">${fd(e.date)}</td><td>${esc((e.raw||{}).type||(e.category==="salary"?"Salary":"Other"))}${(e.raw||{}).monthly?' <span class="tal-st" style="display:inline">· monthly</span>':""}</td>
+      <td>${esc(e.description)}</td><td class="num">${R(e.amount)}</td>
+      <td class="nw"><button class="btn small" type="button" data-oxdel="${esc(e.id)}">Remove</button></td></tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="3">Total for ${esc(mLabel)}</td><td class="num">${R(total)}</td><td></td></tr></tfoot>`
+    : `<tbody><tr><td class="muted">No salaries or expenses added for ${esc(mLabel)} yet.</td></tr></tbody>`;
+}
+$("#opexForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const amt=num($("#ox-amt").value); if(!amt){ toast("Type the amount"); return; }
+  const type=$("#ox-type").value, row={ id:`opex-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, date:$("#ox-date").value||today(),
+    category:type==="Salary"?"salary":"expense", amount:amt, description:$("#ox-desc").value.trim(), source:"app",
+    raw:{ type, monthly:$("#ox-monthly").checked, by:me?.email||null } };
+  const {error}=await sb.from("expenses").insert(row);
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#ox-desc").value=""; $("#ox-amt").value=""; $("#ox-monthly").checked=false; toast(`${type} added: ${R(amt)}`); loadAll(); } });
+$("#opexTable").addEventListener("click",async e=>{ const b=e.target.closest("[data-oxdel]"); if(!b) return;
+  if(b.dataset.sure!=="1"){ b.dataset.sure="1"; b.textContent="Tap again to remove"; b.classList.add("danger"); return; }
+  const {error}=await sb.from("expenses").delete().eq("id",b.dataset.oxdel);
+  if(error) toast("Couldn't remove: "+errMsg(error)); else { toast("Removed"); loadAll(); } });
+$("#opexRepeat").addEventListener("click",async()=>{
+  const m=opexMonth(), [y,mo]=m.split("-").map(Number), prev=mo===1?`${y-1}-12`:`${y}-${String(mo-1).padStart(2,"0")}`;
+  const src=expenses.filter(e=>OPEX_CATS.has(e.category) && (e.raw||{}).monthly && String(e.date).slice(0,7)===prev);
+  if(!src.length){ toast(`Nothing marked "every month" in ${MONL[+prev.slice(5)-1]} to copy`); return; }
+  const have=new Set(expenses.filter(e=>OPEX_CATS.has(e.category) && String(e.date).slice(0,7)===m).map(e=>(e.raw||{}).type+"|"+e.description));
+  const days=new Date(y,mo,0).getDate();
+  const rows=src.filter(e=>!have.has((e.raw||{}).type+"|"+e.description)).map(e=>({ id:`opex-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    date:`${m}-${String(Math.min(+String(e.date).slice(8,10),days)).padStart(2,"0")}`, category:e.category, amount:e.amount, description:e.description, source:"app",
+    raw:{...(e.raw||{}), copied_from:e.id} }));
+  if(!rows.length){ toast("Already copied for this month"); return; }
+  const {error}=await sb.from("expenses").insert(rows);
+  if(error) toast("Couldn't copy: "+errMsg(error)); else { toast(`${rows.length} monthly cost${rows.length>1?"s":""} copied to ${MONL[mo-1]}`); loadAll(); } });
 
 /* ---------------- private sales ---------------- */
 $("#ePrivate").addEventListener("click",()=>{ const box=$("#ePS"); box.hidden=!box.hidden;

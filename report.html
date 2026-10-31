@@ -197,6 +197,8 @@ function render(m){
     if(ad) return {how:`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>`, cost:ad.amount};
     return {how:`<span class="muted">not recorded</span>`, cost:null}; };
   const topups=S.exp.filter(e=>e.category==="courier_topup"), adamD=S.exp.filter(e=>e.category==="adam_delivery");
+  const opex=S.exp.filter(e=>e.category==="salary"||e.category==="expense").sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const XD=[...topups,...adamD].reduce((a,e)=>a+e.amount,0), XO=opex.reduce((a,e)=>a+e.amount,0);
   const anchor=D.expenses.find(e=>e.id==="adam-balance");
   const adamBal=anchor?Number((anchor.raw||{}).balance||0)-D.expenses.filter(e=>e.category==="adam_delivery" && e.created_at>anchor.created_at).reduce((a,e)=>a+e.amount,0):null;
   const LOCS=["JHB","CPT","DBN","HOME"];
@@ -234,7 +236,7 @@ function render(m){
 
   <div class="hero">
     <div><div class="lbl">Profit after all costs</div><div class="big ${S.N<0?"neg":""}">${R(S.N)}</div>${delta(S.N,P0.N)}</div>
-    <p>${n?`You sold <b>${n} unit${n===1?"":"s"}</b> for <b>${R(S.G)}</b>. After Takealot's fees of ${R(S.F)}, the ${R(S.C)} the units cost you${S.X?` and ${R(S.X)} in delivery costs`:""}, you kept <b>${R(S.N)}</b>, a <b>${pct(margin)}</b> margin.${top?` <b>${esc(top.k)}</b> earned the most (${R(top.P)} from ${top.n} sold).`:""}`:`No sales recorded in ${mLabel(m)}.`}</p>
+    <p>${n?`You sold <b>${n} unit${n===1?"":"s"}</b> for <b>${R(S.G)}</b>. After Takealot's fees of ${R(S.F)}, the ${R(S.C)} the units cost you${S.X?` and ${R(S.X)} in delivery${XO?", salaries and expenses":" costs"}`:""}, you kept <b>${R(S.N)}</b>, a <b>${pct(margin)}</b> margin.${top?` <b>${esc(top.k)}</b> earned the most (${R(top.P)} from ${top.n} sold).`:""}`:`No sales recorded in ${mLabel(m)}.`}</p>
   </div>
 
   <div class="kpis">
@@ -243,7 +245,7 @@ function render(m){
     <div class="kpi"><div class="l">Takealot fees</div><div class="v">${R(S.F)}</div><div class="s">${pct(S.G?S.F/S.G:0)} of sales</div></div>
     <div class="kpi"><div class="l">Cost of units</div><div class="v">${R(S.C)}</div><div class="s">${pct(S.G?S.C/S.G:0)} of sales</div></div>
     <div class="kpi"><div class="l">Profit from sales</div><div class="v">${R(S.P)}</div><div class="s">before delivery</div></div>
-    <div class="kpi"><div class="l">Delivery costs</div><div class="v">${R(S.X)}</div><div class="s">Courier top-ups & Adam</div></div>
+    <div class="kpi"><div class="l">Running costs</div><div class="v">${R(S.X)}</div><div class="s">delivery ${R(XD)} · salaries & expenses ${R(XO)}</div></div>
     <div class="kpi"><div class="l">Avg sale price</div><div class="v">${n?R(S.G/n):"–"}</div><div class="s">avg cost ${n?R(S.C/n):"–"}</div></div>
     <div class="kpi"><div class="l">Avg profit / unit</div><div class="v">${n?R(S.P/n):"–"}</div><div class="s">from sales</div></div>
   </div>
@@ -271,11 +273,14 @@ function render(m){
     ${pos.length?`<div class="tw"><table><thead><tr><th>PO</th><th>To</th><th>Due</th><th class="n">Sent</th><th class="n">Received</th><th>Delivered by</th><th class="n">Cost</th></tr></thead><tbody>${pos.map(p=>{ const d=deliv(p); return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td class="n">${p.qty_sending??""}</td><td class="n">${p.qty_received??"–"}</td><td>${d.how}</td><td class="n">${d.cost!=null?R(d.cost):""}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="3">${pos.length} PO${pos.length===1?"":"s"}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_sending||0),0)}</td><td class="n">${pos.reduce((a,p)=>a+(p.qty_received||0),0)}</td><td></td><td class="n">${R(pos.reduce((a,p)=>a+(deliv(p).cost||0),0))}</td></tr></tfoot></table></div>`:`<p class="note">No POs due this month.</p>`}
     <div class="cols" style="margin-top:22px">
-      <div><h2 style="font-size:17px">Delivery costs</h2><p class="sub">Taken off this month's profit.</p>
+      <div><h2 style="font-size:17px">Running costs</h2><p class="sub">Taken off this month's profit.</p>
         <div class="stat-list">
           ${topups.map(e=>`<div><span>Courier Guy top-up · ${fd(e.date)}</span><span>${R(e.amount)}</span></div>`).join("")}
           ${adamD.map(e=>`<div><span>Adam · PO ${esc((e.raw||{}).po||"")} · ${fd(e.date)}</span><span>${R(e.amount)}</span></div>`).join("")}
-          <div style="border-bottom:1px solid var(--ink)"><span><b>Total</b></span><span>${R(S.X)}</span></div>
+          <div style="border-bottom:1px solid var(--ink)"><span><b>Total delivery</b></span><span>${R(XD)}</span></div>
+          ${opex.length?`<div style="margin-top:14px;border:0"><span><b>Salaries & expenses</b></span><span></span></div>
+          ${opex.map(e=>`<div><span>${esc((e.raw||{}).type||"Expense")} · ${esc(e.description)} · ${fd(e.date)}</span><span>${R(e.amount)}</span></div>`).join("")}
+          <div style="border-bottom:1px solid var(--ink)"><span><b>Total salaries & expenses</b></span><span>${R(XO)}</span></div>`:""}
         </div></div>
       <div><h2 style="font-size:17px">Adam's PS5</h2><p class="sub">R600 a delivery plus R14 a wrapped unit, taken off what he owes.</p>
         <div class="callout">${adamBal==null?"Balance not set yet.":adamBal>=0?`Adam still owes <b>${R(adamBal)}</b> after ${D.expenses.filter(e=>e.category==="adam_delivery").length} deliver${D.expenses.filter(e=>e.category==="adam_delivery").length===1?"y":"ies"}.`:`The PS5 is paid off; you now owe Adam <b>${R(-adamBal)}</b>.`}</div></div>
