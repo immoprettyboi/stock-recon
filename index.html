@@ -290,6 +290,11 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
 .tscroll::-webkit-scrollbar-thumb{background:var(--accent);border-radius:99px}
 .tscroll::-webkit-scrollbar-track{background:var(--sunk);border-radius:99px}
 .tscroll{scrollbar-color:var(--accent) var(--sunk)}
+/* ---------- column names stay visible while scrolling: each table scrolls inside its own box ---------- */
+.tscroll{max-height:calc(100vh - 150px);max-height:calc(100dvh - 150px);overflow:auto}
+.tscroll thead th{position:sticky;top:0;z-index:2;background:var(--surface);box-shadow:0 1px 0 var(--line)}
+html[data-look="glass"] .tscroll thead th{background:#141b38}
+@media print{.tscroll{max-height:none;overflow:visible}}
 </style>
 </head>
 <body>
