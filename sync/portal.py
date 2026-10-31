@@ -743,7 +743,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             if rule.get("last_action") != upd["last_action"]:          # log it once, not every check
                 db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
                                          "new_price": target, "action": action, "note": note or "watch mode"}])
-        elif changes >= int(rule.get("max_changes_day") or 20):
+        elif int(rule.get("max_changes_day") or 0) > 0 and changes >= int(rule["max_changes_day"]):
             upd["last_action"] = f"Daily limit of {rule.get('max_changes_day')} changes reached"
         elif not (auth or _creds_key()) or not offer_id:
             upd["last_action"] = "Not logged in to the Seller Portal and no API key: price not changed"

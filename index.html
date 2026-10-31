@@ -1240,7 +1240,7 @@ function renderPrice(){
       <td class="num"><input data-f="step" inputmode="decimal" value="${r.step??1}" style="width:60px"></td>
       <td class="num nw"><select data-f="check_minutes">${[0,1,2,5,10,15,30,60].map(m=>`<option value="${m}" ${(r.check_minutes??1)==m?"selected":""}>${m?m+" min":"Every 4 sec"}</option>`).join("")}</select></td>
       <td class="nw"><input type="checkbox" data-f="raise_when_winning" ${r.raise_when_winning!==false?"checked":""}> every <select data-f="raise_every_minutes">${[30,60,120,240].map(m=>`<option value="${m}" ${(r.raise_every_minutes||120)==m?"selected":""}>${m<60?m+" min":m/60+" h"}</option>`).join("")}</select></td>
-      <td class="num"><input data-f="max_changes_day" inputmode="numeric" value="${r.max_changes_day??20}" style="width:55px"></td>
+      <td class="num"><input data-f="max_changes_day" inputmode="numeric" value="${(r.max_changes_day??20)||""}" placeholder="No limit" title="Leave empty or 0 for no limit" style="width:70px"></td>
       <td class="nw"><button class="btn primary small" type="button" data-pfsave="${k}">Save</button> <button class="btn small" type="button" data-pfhist="${k}">History</button></td></tr>`; }).join("")}</tbody>`;
 }
 $("#pfTable").addEventListener("change",e=>{ const s=e.target.closest('[data-f="floor_mode"]'); if(!s) return; const tr=s.closest("tr");
@@ -1258,7 +1258,7 @@ $("#pfTable").addEventListener("click",async e=>{
   const row={ sku:b.dataset.pfsave, enabled:g("enabled").checked, mode:g("mode").value, floor_mode:g("floor_mode").value,
     min_profit:n("min_profit")??0, floor_price:n("floor_price"), ceiling_price:n("ceiling_price"), step:Math.max(1,n("step")??1),
     check_minutes:+g("check_minutes").value, raise_when_winning:g("raise_when_winning").checked, raise_every_minutes:+g("raise_every_minutes").value,
-    max_changes_day:Math.max(1,parseInt(g("max_changes_day").value,10)||20), floor_action:g("floor_action").value, last_checked:null, updated_at:new Date().toISOString() };
+    max_changes_day:Math.max(0,parseInt(g("max_changes_day").value,10)||0), floor_action:g("floor_action").value, last_checked:null, updated_at:new Date().toISOString() };
   if(row.floor_action==="ceiling" && row.enabled && !row.ceiling_price){ toast("Set a ceiling price: it's where the price goes back up to after the floor"); return; }
   if(row.floor_mode==="manual" && !row.floor_price){ toast("Type a floor price, or use the auto floor"); return; }
   if(row.mode==="fight" && row.enabled && !confirm(`Fight mode changes your price on Takealot automatically for ${products.find(x=>x.sku===row.sku)?.takealot_title||row.sku}. Never below ${row.floor_mode==="manual"?R0(row.floor_price):"the auto floor"}. Switch it on?`)) return;
