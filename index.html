@@ -525,7 +525,7 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
       <div class="sec-head" style="justify-content:space-between"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><h2>Price fighter: win the Buy Box</h2><p id="pfSub"></p></div>
         <div class="inline"><button class="btn small" type="button" id="pushBtn">Turn on phone notifications</button><button class="btn small" type="button" id="pushTest" hidden>Send a test</button></div></div>
       <p class="note" id="pushMsg" style="margin:0"></p>
-      <p class="note" style="margin:0;max-width:95ch">For each listing you switch on, the PC checks who has the Buy Box every few minutes. If a competitor has it, your price goes to <b>their price minus your step</b>, but never below your <b>floor</b>. When you hold the Buy Box it can creep back up towards your <b>ceiling</b>. <b>Watch</b> only shows what it would do; <b>Fight</b> changes your price on Takealot. The <b>auto floor</b> is your dearest unit's cost plus Takealot's fees (from your recent sales) plus your minimum profit.</p>
+      <p class="note" style="margin:0;max-width:95ch">For each listing you switch on, the PC checks who has the Buy Box every few minutes. If a competitor has it, your price goes to <b>their price minus your step</b>, but never below your <b>floor</b>. If they go under your floor, it either <b>goes back up to your ceiling</b> (so a competitor's bot can follow you up, then the fight starts again) or holds at the floor. When you hold the Buy Box it can creep back up towards your <b>ceiling</b>. <b>Watch</b> only shows what it would do; <b>Fight</b> changes your price on Takealot. The <b>auto floor</b> is your dearest unit's cost plus Takealot's fees (from your recent sales) plus your minimum profit.</p>
       <div class="tscroll"><table id="pfTable"></table></div>
     </div>
     <div class="panel" id="pfHistPanel" hidden>
@@ -1224,7 +1224,7 @@ function renderPrice(){
   const on=pfRules.filter(r=>r.enabled), losing=on.filter(r=>r.winning===false).length;
   $("#pfSub").textContent = on.length ? `${on.length} listing${on.length>1?"s":""} switched on · ${on.filter(r=>r.winning).length} with the Buy Box${losing?` · ${losing} without`:""}` : "Switch a listing on to start";
   $("#cntPf").textContent = losing||"";
-  t.innerHTML=`<thead><tr><th>Listing</th><th class="num">Your price</th><th>Buy Box</th><th class="num">Floor</th><th>On</th><th>Mode</th><th>Floor rule</th><th class="num">Ceiling</th><th class="num">Step</th><th class="num">Check every</th><th>Raise when winning</th><th class="num">Max / day</th><th></th></tr></thead><tbody>${list.map(p=>{
+  t.innerHTML=`<thead><tr><th>Listing</th><th class="num">Your price</th><th>Buy Box</th><th class="num">Floor</th><th>On</th><th>Mode</th><th>Floor rule</th><th class="num">Ceiling</th><th>At the floor</th><th class="num">Step</th><th class="num">Check every</th><th>Raise when winning</th><th class="num">Max / day</th><th></th></tr></thead><tbody>${list.map(p=>{
     const r=pfRules.find(x=>x.sku===p.sku)||{}, o=p.takealot_stock.OFFER||{}, k=esc(p.sku);
     const bb = r.last_checked ? (r.winning?`<span class="pill s-settled">You</span> R ${Math.round(r.bb_price).toLocaleString("en-ZA")}`:`<span class="pill s-return_me">Competitor</span> R ${Math.round(r.bb_price||0).toLocaleString("en-ZA")}`)+`<div class="tal-st">${esc(r.last_action||"")} · ${ago(r.last_checked)}</div>` : '<span class="muted">not checked yet</span>';
     return `<tr data-pf="${k}">
@@ -1236,6 +1236,7 @@ function renderPrice(){
       <td class="nw"><select data-f="floor_mode"><option value="auto" ${r.floor_mode!=="manual"?"selected":""}>Auto: min profit R</option><option value="manual" ${r.floor_mode==="manual"?"selected":""}>Fixed floor R</option></select>
         <input data-f="min_profit" inputmode="decimal" value="${r.min_profit??500}" style="width:80px" ${r.floor_mode==="manual"?"hidden":""}><input data-f="floor_price" inputmode="decimal" value="${r.floor_price??""}" style="width:90px" placeholder="floor" ${r.floor_mode==="manual"?"":"hidden"}></td>
       <td class="num"><input data-f="ceiling_price" inputmode="decimal" value="${r.ceiling_price??""}" placeholder="none" style="width:90px"></td>
+      <td><select data-f="floor_action" title="What to do when the competitor goes below your floor"><option value="ceiling" ${r.floor_action!=="hold"?"selected":""}>Back to ceiling, fight again</option><option value="hold" ${r.floor_action==="hold"?"selected":""}>Hold at floor</option></select></td>
       <td class="num"><input data-f="step" inputmode="decimal" value="${r.step??1}" style="width:60px"></td>
       <td class="num nw"><select data-f="check_minutes">${[1,2,5,10,15,30,60].map(m=>`<option value="${m}" ${(r.check_minutes||1)==m?"selected":""}>${m} min</option>`).join("")}</select></td>
       <td class="nw"><input type="checkbox" data-f="raise_when_winning" ${r.raise_when_winning!==false?"checked":""}> every <select data-f="raise_every_minutes">${[30,60,120,240].map(m=>`<option value="${m}" ${(r.raise_every_minutes||120)==m?"selected":""}>${m<60?m+" min":m/60+" h"}</option>`).join("")}</select></td>
@@ -1249,7 +1250,7 @@ $("#pfTable").addEventListener("click",async e=>{
   if(b.dataset.pfhist){ const sku=b.dataset.pfhist, p=products.find(x=>x.sku===sku);
     const {data,error}=await sb.from("price_log").select("*").eq("sku",sku).order("at",{ascending:false}).limit(100);
     $("#pfHistPanel").hidden=false; $("#pfHistTitle").textContent=`Price history · ${p?.takealot_title||sku}`;
-    const lbl={lowered:"Lowered",raised:"Raised",at_floor:"Down to floor",would_lower:"Would lower (watch)",would_raise:"Would raise (watch)",failed:"Takealot refused"};
+    const lbl={lowered:"Lowered",raised:"Raised",at_floor:"Down to floor",reset:"Back to ceiling",would_reset:"Would go back to ceiling (watch)",would_lower:"Would lower (watch)",would_raise:"Would raise (watch)",failed:"Takealot refused"};
     $("#pfHist").innerHTML = error ? `<tbody><tr><td class="muted">${esc(errMsg(error))}</td></tr></tbody>` : data.length ? `<thead><tr><th>When</th><th>What</th><th class="num">From</th><th class="num">To</th><th class="num">Buy Box</th><th>Note</th></tr></thead><tbody>${data.map(x=>`<tr><td class="nw">${soldWhen({sold_date:x.at})}</td><td>${esc(lbl[x.action]||x.action)}</td><td class="num">${R0(x.my_price||0)}</td><td class="num">${R0(x.new_price||0)}</td><td class="num">${R0(x.bb_price||0)}</td><td>${esc(x.note||"")}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">No changes yet.</td></tr></tbody>`;
     $("#pfHistPanel").scrollIntoView({behavior:"smooth"}); return; }
   if(!b.dataset.pfsave) return;
@@ -1257,11 +1258,12 @@ $("#pfTable").addEventListener("click",async e=>{
   const row={ sku:b.dataset.pfsave, enabled:g("enabled").checked, mode:g("mode").value, floor_mode:g("floor_mode").value,
     min_profit:n("min_profit")??0, floor_price:n("floor_price"), ceiling_price:n("ceiling_price"), step:Math.max(1,n("step")??1),
     check_minutes:+g("check_minutes").value, raise_when_winning:g("raise_when_winning").checked, raise_every_minutes:+g("raise_every_minutes").value,
-    max_changes_day:Math.max(1,parseInt(g("max_changes_day").value,10)||20), last_checked:null, updated_at:new Date().toISOString() };
+    max_changes_day:Math.max(1,parseInt(g("max_changes_day").value,10)||20), floor_action:g("floor_action").value, last_checked:null, updated_at:new Date().toISOString() };
+  if(row.floor_action==="ceiling" && row.enabled && !row.ceiling_price){ toast("Set a ceiling price: it's where the price goes back up to after the floor"); return; }
   if(row.floor_mode==="manual" && !row.floor_price){ toast("Type a floor price, or use the auto floor"); return; }
   if(row.mode==="fight" && row.enabled && !confirm(`Fight mode changes your price on Takealot automatically for ${products.find(x=>x.sku===row.sku)?.takealot_title||row.sku}. Never below ${row.floor_mode==="manual"?R0(row.floor_price):"the auto floor"}. Switch it on?`)) return;
   b.disabled=true; const {error}=await sb.from("price_rules").upsert(row,{onConflict:"sku"}); b.disabled=false;
-  toast(error?(/price_rules/.test(errMsg(error))?"Run 13_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)):(row.enabled?`Saved. The PC checks it within a minute (${row.mode==="fight"?"fight":"watch"} mode).`:"Saved (switched off)")); loadAll(); });
+  toast(error?(/floor_action/.test(errMsg(error))?"Run 15_database_update.sql in Supabase first":/price_rules/.test(errMsg(error))?"Run 13_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)):(row.enabled?`Saved. The PC checks it within a minute (${row.mode==="fight"?"fight":"watch"} mode).`:"Saved (switched off)")); loadAll(); });
 
 /* ---------------- phone notifications (web push) ---------------- */
 const VAPID_PUBLIC="BG-ApUAMuMmh1k0_B_nVbogIKDJoc56wjMjq5Dl6Xckgr7TY8jp6tdR3nKRHsRishIqHeAC2wgV-pnzVgm8JwF8";
