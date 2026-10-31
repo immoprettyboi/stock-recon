@@ -326,6 +326,7 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
       <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
       <button class="tab" role="tab" aria-selected="false" data-view="ship">Shipments <span class="n" id="cntShip"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="expenses">Salaries & expenses</button>
+      <button class="tab" role="tab" aria-selected="false" data-view="debtors">Debtors <span class="n" id="cntDebt"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="removals">Removal orders <span class="n badge" id="cntRem"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
@@ -489,6 +490,28 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
     </div>
   </section>
 
+  <!-- DEBTORS -->
+  <section id="view-debtors" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Debtors: suppliers you owe</h2><p id="debtSub"></p></div>
+      <p class="note" style="margin:0;max-width:90ch">Set each supplier's <b>balance</b> once (what you owe them today). After that, new stock you add with that supplier and a cost is added to what you owe automatically, and every <b>payment</b> you record is taken off.</p>
+      <form class="grid" id="debtForm" autocomplete="off">
+        <div class="field"><label for="dt-sup">Supplier</label><input id="dt-sup" list="dl-suppliers" required placeholder="e.g. Neemo"></div>
+        <div class="field"><label for="dt-kind">What</label><select id="dt-kind">
+          <option value="payment">Payment I made</option><option value="owe">Amount I now owe (invoice / extra)</option><option value="balance">Set what I owe today (balance)</option></select></div>
+        <div class="field"><label for="dt-amt">Amount (R)</label><input id="dt-amt" inputmode="decimal" required placeholder="e.g. 50000"></div>
+        <div class="field"><label for="dt-date">Date</label><input id="dt-date" type="date"></div>
+        <div class="field wide"><label for="dt-note">Note</label><input id="dt-note" placeholder="optional, e.g. EFT ref, invoice number"></div>
+        <div class="form-actions"><button class="btn primary" type="submit">Save</button><span class="note" id="debtMsg"></span></div>
+      </form>
+      <div class="tscroll"><table id="debtTable"></table></div>
+    </div>
+    <div class="panel" id="debtHistPanel" hidden>
+      <div class="sec-head"><h2 id="debtHistTitle">History</h2></div>
+      <div class="tscroll"><table id="debtHist"></table></div>
+    </div>
+  </section>
+
   <!-- REMOVAL ORDERS -->
   <section id="view-removals" class="stack" hidden>
     <div class="panel">
@@ -633,7 +656,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[];
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
   const p=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
@@ -709,6 +732,8 @@ async function loadAll(){
       for(let i=0;i<ids.length;i+=150){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
         if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(units.some(u=>u.order_id===x.order_id && u.status==="awaiting_fees")) talStatus[x.order_id]=x.sale_status; }); } }
+    { const {data,error}=await sb.from("supplier_ledger").select("*").order("created_at",{ascending:true});
+      ledger = error ? null : data.map(r=>({...r, amount:Number(r.amount)||0})); }
     { const {data,error}=await sb.from("leadtime_requests").select("*").order("id",{ascending:false}).limit(100);
       ltReqs = error ? null : data; }
     { const {data,error}=await sb.from("takealot_recons").select("month,file_name,missing,missing_units,claim_value,claim_status,claim_ref,claim_date,downloaded_at").order("month",{ascending:false});
@@ -736,7 +761,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","ship","expenses","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","ship","expenses","debtors","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -1166,6 +1191,61 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- debtors: what you owe each supplier ---------------- */
+function supplierOwed(sup){
+  const rows=(ledger||[]).filter(r=>r.supplier.toLowerCase()===sup.toLowerCase());
+  const anchor=[...rows].reverse().find(r=>r.kind==="balance");
+  const after=r=>!anchor || r.created_at>anchor.created_at;
+  const bought=anchor ? units.filter(u=>(u.supplier||"").toLowerCase()===sup.toLowerCase() && u.created_at>anchor.created_at && (u.cost||0)>0) : [];
+  const owe=rows.filter(r=>r.kind==="owe" && after(r)), paid=rows.filter(r=>r.kind==="payment" && after(r));
+  const bal=(anchor?anchor.amount:0)+bought.reduce((a,u)=>a+u.cost,0)+owe.reduce((a,r)=>a+r.amount,0)-paid.reduce((a,r)=>a+r.amount,0);
+  return {anchor, bought, owe, paid, bal, lastPay:[...rows].reverse().find(r=>r.kind==="payment")};
+}
+function renderDebtors(){
+  const t=$("#debtTable"); if(!t) return;
+  if(!$("#dt-date").value) $("#dt-date").value=today();
+  if(ledger===null){ t.innerHTML=`<tbody><tr><td class="muted">Run 12_database_update.sql in Supabase to switch this on.</td></tr></tbody>`; $("#debtSub").textContent=""; return; }
+  const names=[...new Set([...units.map(u=>u.supplier).filter(Boolean), ...ledger.map(r=>r.supplier)])].sort((a,b)=>a.localeCompare(b));
+  const rows=names.map(n=>({n,...supplierOwed(n)}));
+  const tracked=rows.filter(r=>r.anchor||r.owe.length||r.paid.length), total=tracked.reduce((a,r)=>a+Math.max(0,r.bal),0);
+  $("#debtSub").textContent = tracked.length ? `You owe ${R(total)} across ${tracked.filter(r=>r.bal>0.005).length} supplier${tracked.filter(r=>r.bal>0.005).length===1?"":"s"}` : "Set a supplier's balance to start";
+  $("#cntDebt").textContent = total>0 ? R0(total) : "";
+  t.innerHTML=`<thead><tr><th>Supplier</th><th class="num">You owe</th><th>Counting since</th><th>Last payment</th><th></th></tr></thead><tbody>${rows.sort((a,b)=>b.bal-a.bal).map(r=>`<tr>
+      <td>${esc(r.n)}</td>
+      <td class="num">${r.anchor||r.owe.length||r.paid.length?`<b class="${r.bal>0.005?"neg":r.bal<-0.005?"pos":""}">${R(r.bal)}</b>${r.bal<-0.005?'<div class="tal-st">they owe you (overpaid)</div>':""}`:'<span class="muted">not set</span>'}</td>
+      <td class="nw">${r.anchor?`${fd(r.anchor.date)} · ${R(r.anchor.amount)}${r.bought.length?`<div class="tal-st">+ ${r.bought.length} unit${r.bought.length>1?"s":""} added since (${R(r.bought.reduce((a,u)=>a+u.cost,0))})</div>`:""}`:'<span class="muted">–</span>'}</td>
+      <td class="nw">${r.lastPay?`${fd(r.lastPay.date)} · ${R(r.lastPay.amount)}`:'<span class="muted">–</span>'}</td>
+      <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button></td></tr>`).join("")}</tbody>
+    <tfoot><tr><td>Total you owe</td><td class="num">${R(total)}</td><td colspan="3"></td></tr></tfoot>`;
+  if(state.debtHist) showDebtHist(state.debtHist);
+}
+function showDebtHist(n){
+  state.debtHist=n; const r=supplierOwed(n), rows=(ledger||[]).filter(x=>x.supplier.toLowerCase()===n.toLowerCase());
+  const items=[...rows.map(x=>({d:x.date, at:x.created_at, what:x.kind==="balance"?"Balance set":x.kind==="owe"?"Amount owed":"Payment", note:x.note, amt:x.kind==="payment"?-x.amount:x.amount, id:x.id, counts:!r.anchor||x.created_at>=r.anchor.created_at})),
+    ...r.bought.map(u=>({d:u.received||String(u.created_at).slice(0,10), at:u.created_at, what:"Stock added", note:u.product, amt:u.cost, counts:true}))].sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  $("#debtHistPanel").hidden=false; $("#debtHistTitle").textContent=`History · ${n} · owe ${R(r.bal)}`;
+  $("#debtHist").innerHTML = items.length ? `<thead><tr><th>Date</th><th>What</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${items.map(i=>`<tr class="${i.counts?"":"muted"}">
+      <td class="nw">${fd(i.d)}</td><td>${esc(i.what)}${i.counts?"":' <span class="tal-st" style="display:inline">(before the latest balance)</span>'}</td><td>${esc(i.note||"")}</td>
+      <td class="num">${i.what==="Balance set"?"= ":""}${R(i.what==="Balance set"?i.amt:i.amt)}</td>
+      <td>${i.id?`<button class="btn small" type="button" data-ddel="${i.id}">Remove</button>`:""}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">Nothing recorded for ${esc(n)} yet.</td></tr></tbody>`;
+}
+$("#debtTable").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return;
+  const n=b.dataset.dpay||b.dataset.dset||b.dataset.dhist;
+  if(b.dataset.dhist){ showDebtHist(n); $("#debtHistPanel").scrollIntoView({behavior:"smooth"}); return; }
+  $("#dt-sup").value=n; $("#dt-kind").value=b.dataset.dpay?"payment":"balance"; $("#dt-date").value=today();
+  if(b.dataset.dset) $("#dt-amt").value=Math.max(0,Math.round(supplierOwed(n).bal*100)/100)||""; else $("#dt-amt").value="";
+  $("#debtForm").scrollIntoView({behavior:"smooth"}); $("#dt-amt").focus(); });
+$("#debtForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const amt=num($("#dt-amt").value), sup=$("#dt-sup").value.trim(), kind=$("#dt-kind").value;
+  if(!sup){ toast("Type the supplier's name"); return; } if(amt==null || (kind!=="balance" && !amt)){ toast("Type the amount"); return; }
+  const {error}=await sb.from("supplier_ledger").insert({ supplier:sup, kind, amount:amt, date:$("#dt-date").value||today(), note:$("#dt-note").value.trim(), created_by:me?.email||null });
+  if(error) toast(/supplier_ledger/.test(errMsg(error))?"Run 12_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error));
+  else { toast(kind==="payment"?`Payment of ${R(amt)} to ${sup} saved`:kind==="owe"?`${R(amt)} added to what you owe ${sup}`:`${sup}: balance set to ${R(amt)}`); $("#dt-amt").value=""; $("#dt-note").value=""; state.debtHist=sup; loadAll(); } });
+$("#debtHist").addEventListener("click",async e=>{ const b=e.target.closest("[data-ddel]"); if(!b) return;
+  if(b.dataset.sure!=="1"){ b.dataset.sure="1"; b.textContent="Tap again to remove"; b.classList.add("danger"); return; }
+  const {error}=await sb.from("supplier_ledger").delete().eq("id",b.dataset.ddel);
+  if(error) toast("Couldn't remove: "+errMsg(error)); else { toast("Removed"); loadAll(); } });
+
 /* ---------------- salaries & expenses ---------------- */
 const DELIV_CATS=new Set(["courier_topup","adam_delivery"]), OPEX_CATS=new Set(["salary","expense"]);
 function opexMonth(){ return state.month && state.month!=="all" ? state.month : today().slice(0,7); }
@@ -1461,7 +1541,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */
