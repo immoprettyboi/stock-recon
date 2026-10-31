@@ -739,7 +739,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             import time as _time
             tm = _tload()
             lead = int(tm.get("lead") or 30)
-            nxt, period = _next_publish(tm, _time.time())
+            nxt, period = None, None   # measured: each change goes live ~4.5-5.5 min after sending (no fixed batches), so send at once
             sent_at, snipe_note = None, ""
             if nxt and action in ("lowered", "at_floor", "follow"):
                 last_sig = None
@@ -1061,9 +1061,18 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 if (DEBUG_DIR / "recon_discover3.txt").exists():
                     (DEBUG_DIR / "recon_discover3.txt").unlink()
                     import re as _re
-                    js = ctx.request.get("https://sellers.takealot.com/assets/main-DS7F8Hpa.js", timeout=60_000).text()
-                    segs = []
-                    for key in ("buybox", "buy_box", "BuyBox", "competitor", "lowest_price", "winning"):
+                    import re as _re2
+                    home = ctx.request.get("https://sellers.takealot.com/", timeout=60_000).text()
+                    mains = _re2.findall(r'/assets/(main-[A-Za-z0-9_-]+\.js)', home) or ["main-DS7F8Hpa.js"]
+                    js = ctx.request.get(f"https://sellers.takealot.com/assets/{mains[0]}", timeout=60_000).text()
+                    chunks = sorted(set(_re2.findall(r'assets/([A-Za-z0-9_.-]+\.js)', js)))
+                    for c in chunks[:400]:
+                        try:
+                            js += "\n/*" + c + "*/\n" + ctx.request.get(f"https://sellers.takealot.com/assets/{c}", timeout=30_000).text()
+                        except Exception:
+                            pass
+                    segs = [{"key": "chunks", "text": " ".join(chunks)[:3000]}]
+                    for key in ("buybox", "buy_box", "BuyBox", "buyBox", "competitor", "lowest_price", "lowestPrice", "winning_price", "competitive"):
                         for m in list(_re.finditer(_re.escape(key), js))[:4]:
                             segs.append({"key": key, "text": js[max(0, m.start() - 900): m.start() + 600]})
                     (DEBUG_DIR / "recon_discovery3.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
