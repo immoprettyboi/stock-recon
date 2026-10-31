@@ -585,7 +585,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     # how many real changes in the last 24 h
     since = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
     try:
-        changes = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised,at_floor,reset)&at=gt.{since}"))
+        changes = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised,at_floor,reset,follow)&at=gt.{since}"))
     except Exception:
         changes = 0
     target, action, note = None, None, ""
@@ -597,11 +597,34 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             if want < my_price or my_price == 0:
                 target, action = want, "lowered"
         elif (rule.get("floor_action") or "ceiling") == "ceiling" and ceiling:
-            # can't win without going under the floor: go back up to the ceiling and let the other bot follow us up
-            if my_price < ceiling:
-                target, action, note = math.floor(ceiling), "reset", f"Competitor at R{bb_price:,.0f} is below your floor R{floor:,.0f}: back up to your ceiling"
+            # can't win without going under the floor:
+            #  1. go back up to the ceiling and let the other bot follow us up;
+            #  2. if it hasn't come back up after 30 minutes, sit just above it (its price + step, never below the floor),
+            #     ready to fight again as soon as it moves up past the floor.
+            la = rule.get("last_action") or ""
+            phase = "wait" if la.startswith(("Back to ceiling", "Waiting at your ceiling")) else \
+                    "follow" if la.startswith(("Following", "Staying R")) else "fight"
+            shadow = max(math.ceil(floor), math.floor(bb_price + step))
+            if phase == "fight":
+                if my_price < ceiling:
+                    target, action, note = math.floor(ceiling), "reset", f"Competitor at R{bb_price:,.0f} is below your floor R{floor:,.0f}: back up to your ceiling"
+                else:
+                    note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up"
+            elif phase == "wait":
+                waited = 999
+                try:
+                    waited = (datetime.utcnow() - datetime.fromisoformat(str(rule.get("last_change_at")).replace("Z", "+00:00")).replace(tzinfo=None)).total_seconds() / 60
+                except Exception:
+                    pass
+                if waited >= 30:
+                    target, action, note = shadow, "follow", f"Competitor stayed at R{bb_price:,.0f} for 30 min: staying R{step:,.0f} above them"
+                else:
+                    note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up ({int(waited)} of 30 min)"
             else:
-                note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up"
+                if shadow != int(my_price):
+                    target, action, note = shadow, "follow", f"Following: R{step:,.0f} above the competitor at R{bb_price:,.0f}"
+                else:
+                    note = f"Staying R{step:,.0f} above the competitor (R{bb_price:,.0f}), ready to fight when they go back up"
         elif my_price > floor:
             target, action, note = math.ceil(floor), "at_floor", f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}"
         else:
@@ -628,7 +651,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                        f"{title} · Buy Box R{bb_price:,.0f}" + ("" if winning else f" (you R{my_price:,.0f})")))
     if target is not None and int(target) != int(my_price):
         if not fight:
-            action = "would_" + ("lower" if action in ("lowered", "at_floor") else "reset" if action == "reset" else "raise")
+            action = "would_" + ("lower" if action in ("lowered", "at_floor") else "reset" if action == "reset" else "follow" if action == "follow" else "raise")
             upd["last_action"] = f"Would change R{my_price:,.0f} → R{target:,.0f} (watch mode)"
             if rule.get("last_action") != upd["last_action"]:          # log it once, not every check
                 db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
@@ -648,12 +671,12 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             if r.ok and not errs:
                 db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
                                          "new_price": target, "action": action, "note": note}])
-                upd.update(my_price=target, last_change_at=nowiso, last_action=(f"Back to ceiling R{target:,.0f} (competitor below your floor)" if action == "reset" else f"{'Lowered' if action != 'raised' else 'Raised'} R{my_price:,.0f} → R{target:,.0f}"))
+                upd.update(my_price=target, last_change_at=nowiso, last_action=(f"Back to ceiling R{target:,.0f} (competitor below your floor)" if action == "reset" else f"Following: R{target:,.0f}, just above the competitor (R{bb_price:,.0f})" if action == "follow" else f"{'Lowered' if action != 'raised' else 'Raised'} R{my_price:,.0f} → R{target:,.0f}"))
                 st = dict(prod.get("takealot_stock") or {})
                 st["OFFER"] = {**offer, "price": int(target)}
                 db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
                 log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}).")
-                alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "↩️ Back up to your ceiling" if action == "reset" else "🔻 Down to your floor"),
+                alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "↩️ Back up to your ceiling" if action == "reset" else "➡️ Staying just above the competitor" if action == "follow" else "🔻 Down to your floor"),
                                f"{title}: R{my_price:,.0f} → R{target:,.0f} · Buy Box was R{bb_price:,.0f}"))
             else:
                 msg = (errs[0].get("message") if errs and isinstance(errs[0], dict) else errs) or r.text()[:150]
