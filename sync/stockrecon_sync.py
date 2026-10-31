@@ -392,8 +392,8 @@ def main():
     while True:
         run_sync(cfg)
         # wait for the next run, but check every minute for a "Sync now" from the app
-        for _ in range(cfg["interval"]):
-            time.sleep(60)
+        for _ in range(cfg["interval"] * 2):          # every 30 seconds: price fighter + "Sync now" check
+            time.sleep(30)
             # price fighter: checks the listings you switched on, each at its own interval
             try:
                 import importlib, portal as _pp

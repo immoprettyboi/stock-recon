@@ -382,7 +382,7 @@ def _due(rule, now):
         t = datetime.fromisoformat(str(lc).replace("Z", "+00:00")).replace(tzinfo=None)
     except Exception:
         return True
-    return (now - t).total_seconds() >= max(3, int(rule.get("check_minutes") or 10)) * 60 - 20
+    return (now - t).total_seconds() >= max(1, int(rule.get("check_minutes") or 10)) * 60 - 25
 
 
 def price_tick(cfg, log, force=False):
@@ -418,9 +418,15 @@ def price_tick(cfg, log, force=False):
                     if auth or "/login" in page.url:
                         break
                     page.wait_for_timeout(500)
+            # one takealot.com page; each listing's Buy Box is then read with a quick in-page request (well under a second)
+            tk = ctx.new_page()
+            try:
+                tk.goto("https://www.takealot.com/", wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
             for r in due:
                 try:
-                    _fight_one(ctx, page, db, r, prods.get(r["sku"]) or {}, auth, log)
+                    _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
                 except Exception as e:
                     log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
         finally:
@@ -473,22 +479,28 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Listing not found on Takealot yet (next sync)"})
         return
     got = {}
-    def on_resp(r):
+    try:                                                   # fast: ask Takealot's own product API from inside the page
+        got = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop`,
+                                  {credentials: "include"}); return r.ok ? await r.json() : {}; }""", str(plid)) or {}
+    except Exception:
+        got = {}
+    if not (got.get("buybox") or {}).get("items"):         # slower fallback: open the product page
+        def on_resp(r):
+            try:
+                if "/product-details/PLID" in r.url and "json" in (r.headers.get("content-type") or "") and not got.get("buybox"):
+                    got.update(r.json())
+            except Exception:
+                pass
+        pg = ctx.new_page()
+        pg.on("response", on_resp)
         try:
-            if "/product-details/PLID" in r.url and "json" in (r.headers.get("content-type") or "") and not got:
-                got.update(r.json())
-        except Exception:
-            pass
-    pg = ctx.new_page()
-    pg.on("response", on_resp)
-    try:
-        pg.goto(f"https://www.takealot.com/x/PLID{plid}", wait_until="domcontentloaded", timeout=60_000)
-        for _ in range(30):
-            if got:
-                break
-            pg.wait_for_timeout(500)
-    finally:
-        pg.close()
+            pg.goto(f"https://www.takealot.com/x/PLID{plid}", wait_until="domcontentloaded", timeout=60_000)
+            for _ in range(30):
+                if got.get("buybox"):
+                    break
+                pg.wait_for_timeout(500)
+        finally:
+            pg.close()
     items = ((got.get("buybox") or {}).get("items")) or []
     item = next((i for i in items if i.get("is_selected")), items[0] if items else None)
     if not item:
