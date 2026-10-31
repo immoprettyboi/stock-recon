@@ -789,6 +789,24 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         if note and "below your floor" in note and rule.get("last_action") != upd["last_action"]:
             alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
     db.patch("price_rules", f"sku=eq.{sku}", upd)
+    # During a fast fight, won / lost / lowered / raised would fire every few seconds and the phone mutes the app.
+    # Those are rolled into one update at most every 15 minutes; the important ones (floor, ceiling, refused) always go.
+    routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered")
+    important = [(t, b) for t, b in alerts if not t.startswith(routine)]
+    if len(important) != len(alerts):
+        tm = _tload()
+        last = (tm.get("last_routine") or {}).get(sku, 0)
+        if _time.time() - last >= 15 * 60:
+            try:
+                n = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised)&at=gt.{(datetime.utcnow() - timedelta(minutes=15)).isoformat()}Z"))
+            except Exception:
+                n = 0
+            price_now = upd.get("my_price") or my_price
+            important.insert(0, (("✅ You have the Buy Box" if winning else "❌ Competitor has the Buy Box"),
+                                 f"{title}: you R{price_now:,.0f} · Buy Box R{bb_price:,.0f}" + (f" · {n} price changes in the last 15 min" if n else "")))
+            tm.setdefault("last_routine", {})[sku] = int(_time.time())
+            _tsave(tm)
+    alerts = important
     for t, b in alerts:
         try:
             notify(cfgn, t, b, url="./?view=price", topic="price", log=log)
