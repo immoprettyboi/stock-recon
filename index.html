@@ -270,6 +270,22 @@ html[data-look="glass"] .tab[aria-selected="true"]{border-bottom-color:#6f9bff;t
 html[data-look="glass"] .panel{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.035))}
 html[data-look="glass"] .sync{background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.035))}
 .look-btn{font-size:12px}
+/* ---------- horizontal scrolling for wide tables: a bar that stays at the bottom of the screen, with arrows ---------- */
+.hbar{position:sticky;bottom:calc(8px + env(safe-area-inset-bottom,0px));z-index:3;display:flex;align-items:center;gap:6px;margin-top:6px;padding:6px 8px;border:1px solid var(--line);border-radius:999px;background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,.18)}
+html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.hbar[hidden]{display:none!important}
+.hbar button{appearance:none;flex:none;width:32px;height:28px;border-radius:999px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);font:700 15px var(--body);cursor:pointer;line-height:1}
+.hbar button:hover{background:var(--accent);color:var(--accent-ink)}
+.hbar .track{flex:1;overflow-x:auto;overflow-y:hidden;height:14px}
+.hbar .track div{height:1px}
+.hbar .track::-webkit-scrollbar{height:10px}
+.hbar .track::-webkit-scrollbar-track{background:var(--sunk);border-radius:99px}
+.hbar .track::-webkit-scrollbar-thumb{background:var(--accent);border-radius:99px}
+.hbar .track{scrollbar-color:var(--accent) var(--sunk);scrollbar-width:auto}
+.tscroll::-webkit-scrollbar{height:10px}
+.tscroll::-webkit-scrollbar-thumb{background:var(--accent);border-radius:99px}
+.tscroll::-webkit-scrollbar-track{background:var(--sunk);border-radius:99px}
+.tscroll{scrollbar-color:var(--accent) var(--sunk)}
 </style>
 </head>
 <body>
@@ -1138,6 +1154,31 @@ $("#psSave").addEventListener("click",async()=>{
   $("#psSave").disabled=false;
   if(error) toast("Couldn't save: "+errMsg(error)); else { $("#dlg").close(); toast("Private sale recorded"); loadAll(); } });
 
+
+/* ---------------- horizontal scroll bars for wide tables ---------------- */
+function setupHBars(){
+  document.querySelectorAll(".tscroll").forEach(el=>{
+    let bar=el.nextElementSibling;
+    if(!bar || !bar.classList || !bar.classList.contains("hbar")){
+      bar=document.createElement("div"); bar.className="hbar"; bar.hidden=true;
+      bar.innerHTML=`<button type="button" aria-label="Scroll left">‹</button><div class="track"><div></div></div><button type="button" aria-label="Scroll right">›</button>`;
+      el.after(bar);
+      const track=bar.querySelector(".track"); let from=null, t0=0;
+      const k=()=>Math.max(1,track.scrollWidth-track.clientWidth)/Math.max(1,el.scrollWidth-el.clientWidth);
+      track.addEventListener("scroll",()=>{ if(from==="el" && Date.now()-t0<120) return; from="track"; t0=Date.now(); el.scrollLeft=track.scrollLeft/k(); });
+      el.addEventListener("scroll",()=>{ if(from==="track" && Date.now()-t0<120) return; from="el"; t0=Date.now(); track.scrollLeft=el.scrollLeft*k(); });
+      const [l,r]=bar.querySelectorAll("button");
+      l.addEventListener("click",()=>el.scrollBy({left:-Math.max(200,el.clientWidth*.6),behavior:"smooth"}));
+      r.addEventListener("click",()=>el.scrollBy({left: Math.max(200,el.clientWidth*.6),behavior:"smooth"}));
+    }
+    const wide=el.scrollWidth>el.clientWidth+4 && el.offsetParent!==null;
+    bar.hidden=!wide;
+    if(wide){ const track=bar.querySelector(".track"); track.firstElementChild.style.width=(el.scrollWidth*(track.clientWidth/el.clientWidth))+"px"; track.scrollLeft=el.scrollLeft*(track.scrollWidth-track.clientWidth)/Math.max(1,el.scrollWidth-el.clientWidth); }
+  });
+}
+let hbT; const hbLater=()=>{ clearTimeout(hbT); hbT=setTimeout(setupHBars,80); };
+window.addEventListener("resize",hbLater);
+new MutationObserver(hbLater).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:["hidden"]});
 /* ---------------- removal orders ---------------- */
 const isRemoval = o => /removal|return to seller|unsellable|collect|dispos/i.test(String(o||""));
 function removalRows(){
