@@ -1172,7 +1172,7 @@ function setupHBars(){
       r.addEventListener("click",()=>el.scrollBy({left: Math.max(200,el.clientWidth*.6),behavior:"smooth"}));
     }
     const wide=el.scrollWidth>el.clientWidth+4 && el.offsetParent!==null;
-    bar.hidden=!wide;
+    if(bar.hidden!==!wide) bar.hidden=!wide;
     if(wide){ const track=bar.querySelector(".track"); track.firstElementChild.style.width=(el.scrollWidth*(track.clientWidth/el.clientWidth))+"px"; track.scrollLeft=el.scrollLeft*(track.scrollWidth-track.clientWidth)/Math.max(1,el.scrollWidth-el.clientWidth); }
   });
 }
