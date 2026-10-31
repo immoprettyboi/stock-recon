@@ -921,7 +921,7 @@ function renderOverview(){
   const unlinked=products.filter(p=>!p.product).length;
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
-  const booked=u=>u.po && ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && x.status!=="cancelled");
+  const booked=u=>u.po && ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender"].includes(x.status));
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
@@ -1560,7 +1560,7 @@ function renderCheck(){
   units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
   // units on a shipment Takealot rejected: Takealot keeps counting them "on the way" until it closes the PO
   // (counted until Takealot closes the PO, also after the units are back home)
-  const rejDc=u=>{ if(DCS.includes(u.location)) return u.location; const p=pos.find(x=>x.po===u.po); const w=String(p?.warehouse||p?.facility||"").slice(0,3).toUpperCase(); return DCS.includes(w)?w:null; };
+  const rejDc=u=>{ if(DCS.includes(u.location)) return u.location; const po=u.po||((u.comment||"").match(/\(PO (\d+)\)/)||[])[1]; const p=pos.find(x=>x.po===po); const w=String(p?.warehouse||p?.facility||"").slice(0,3).toUpperCase(); return DCS.includes(w)?w:null; };
   units.filter(u=>/Takealot rejected/.test(u.comment||"") && (u.status==="return_me" || (u.status==="in_stock" && u.location==="HOME"))).forEach(u=>{ const dc=rejDc(u), g=G[grp(u.product)]; if(g&&dc){ g.rej=g.rej||{}; g.rej[dc]=(g.rej[dc]||0)+1; } });
   units.filter(u=>u.status==="missing_query" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g){ g.q=g.q||{}; g.q[u.location]=(g.q[u.location]||0)+1; } });
   // units sold on lead-time orders and sent in: Takealot still counts them as on the way / being received

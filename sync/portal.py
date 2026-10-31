@@ -356,7 +356,7 @@ def receive_returns(cfg, rows, log):
         for u in mine:
             c = (u.get("comment") or "").strip()
             if "Takealot rejected" in c:
-                body = {"status": "in_stock", "location": "HOME", "flag": False, "updated_at": now,
+                body = {"status": "in_stock", "location": "HOME", "flag": False, "updated_at": now, "po": "",
                         "comment": (c + f" Arrived back {day} on {x['waybill']}: in stock at HOME.").strip()}
                 try:
                     db.patch("units", f"id=eq.{u['id']}", body | {"arrived_at": day})

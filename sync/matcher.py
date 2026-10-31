@@ -265,6 +265,8 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
                 fields["po"] = s["po"]
                 fields["location"] = s["fulfilment_dc"]
             if method == "leadtime-home":
+                if u.get("po"):                          # an old PO (e.g. a shipment Takealot sent back) no longer applies
+                    fields["po"] = ""
                 fields["comment"] = (f"Lead-time order for {s['fulfilment_dc']}: send this unit in. "
                                      + (u.get("comment") or "")).strip()
             upd(u, **fields)
