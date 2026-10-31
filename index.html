@@ -1613,7 +1613,8 @@ $("#addForm").addEventListener("submit", async e=>{
   $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
   // debtors: make sure counting has started for this supplier, so this stock is included
   if(ledger!==null && total>0 && !supplierOwed(base.supplier).anchor){
-    await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"balance", amount:0, date:today(), note:"Started counting with new stock", created_by:me?.email||null });
+    const b0=Math.round(supplierOwed(base.supplier).bal*100)/100;      // keeps any upfront payment / amounts already recorded
+    await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"balance", amount:b0, date:today(), note:"Started counting with new stock", created_by:me?.email||null });
   }
   const {error}=await sb.from("units").insert(rows);
   if(!error && ledger!==null && paid && total>0){
