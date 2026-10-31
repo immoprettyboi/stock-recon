@@ -606,7 +606,7 @@ def _next_publish(t, now):
 def _read_live(page, plid, offer_id, mine):
     """(Buy Box seller, Buy Box price, your live price or None, cheapest other price, signature) from takealot.com."""
     try:
-        j = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop`,
+        j = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop&_=${Date.now()}`,
                                   {credentials: "include", cache: "no-store"}); return r.ok ? await r.json() : {}; }""", str(plid)) or {}
     except Exception:
         return None
