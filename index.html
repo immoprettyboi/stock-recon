@@ -430,7 +430,8 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
         <div class="field wide"><label for="a-product">Product</label><input id="a-product" list="dl-products" required placeholder="e.g. Playstation 5 Slim Digital"></div>
         <div class="field"><label for="a-qty">Quantity</label><input id="a-qty" type="number" min="1" max="200" value="1" required></div>
         <div class="field"><label for="a-cost">Cost per unit (R)</label><input id="a-cost" type="number" min="0" step="0.01" required placeholder="11500"></div>
-        <div class="field"><label for="a-supplier">Supplier</label><input id="a-supplier" list="dl-suppliers" required></div>
+        <div class="field"><label for="a-supplier">Supplier</label><input id="a-supplier" list="dl-suppliers" required placeholder="Pick one, or type a new name"><span class="hint" id="supHint"></span></div>
+        <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid</option><option value="owe">No, I owe the supplier</option></select><span class="hint" id="paidHint"></span></div>
         <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
         <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
         <div class="field"><label for="a-type">Type of stock</label><select id="a-type"><option>ICASA</option><option>TDRA</option></select></div>
@@ -1531,7 +1532,7 @@ $("#prodTable").addEventListener("change", async e=>{
 
 /* ---------------- lists + render ---------------- */
 function renderLists(){
-  const prods=[...new Set(units.map(u=>u.product))].sort(), sups=[...new Set(units.map(u=>u.supplier).filter(Boolean))].sort();
+  const prods=[...new Set(units.map(u=>u.product))].sort(), sups=[...new Set([...units.map(u=>u.supplier), ...(ledger||[]).map(r=>r.supplier)].filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   $("#dl-products").innerHTML=prods.map(p=>`<option value="${esc(p)}">`).join("");
   $("#dl-suppliers").innerHTML=sups.map(p=>`<option value="${esc(p)}">`).join("");
   const kl=$("#fLoc").value, ks=$("#fSup").value;
@@ -1608,12 +1609,28 @@ $("#addForm").addEventListener("submit", async e=>{
   const base={ product:$("#a-product").value.trim(), supplier:$("#a-supplier").value.trim(), location:$("#a-location").value, stock_type:$("#a-type").value,
     received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app" };
   const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
+  const paid=$("#a-paid").value==="paid", total=qty*base.cost;
   $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
+  // debtors: make sure counting has started for this supplier, so this stock is included
+  if(ledger!==null && total>0 && !supplierOwed(base.supplier).anchor){
+    await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"balance", amount:0, date:today(), note:"Started counting with new stock", created_by:me?.email||null });
+  }
   const {error}=await sb.from("units").insert(rows);
+  if(!error && ledger!==null && paid && total>0){
+    await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"payment", amount:total, date:base.received||today(), note:`Paid on purchase: ${qty} × ${base.product}`, created_by:me?.email||null });
+  }
   $("#addBtn").disabled=false; $("#addMsg").textContent="";
   if(error){ $("#addMsg").textContent="Couldn't save: "+errMsg(error); return; }
-  toast(`Added ${qty} × ${base.product}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
+  toast(`Added ${qty} × ${base.product}${total>0?(paid?" · paid":` · ${R(total)} added to what you owe ${base.supplier}`):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
 });
+
+function addHints(){
+  const sup=$("#a-supplier").value.trim(), known=units.some(u=>(u.supplier||"").toLowerCase()===sup.toLowerCase()) || (ledger||[]).some(r=>r.supplier.toLowerCase()===sup.toLowerCase());
+  $("#supHint").textContent = sup && !known ? `New supplier: "${sup}" will be added` : "";
+  const total=(parseInt($("#a-qty").value,10)||0)*(num($("#a-cost").value)||0);
+  $("#paidHint").textContent = $("#a-paid").value==="owe" ? (total?`${R(total)} goes onto Debtors for ${sup||"this supplier"}`:"Goes onto Debtors") : "Not added to Debtors";
+}
+["#a-supplier","#a-qty","#a-cost","#a-paid"].forEach(id=>{ $(id).addEventListener("input",addHints); $(id).addEventListener("change",addHints); });
 
 /* ---------------- boot ---------------- */
 render();
