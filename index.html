@@ -327,6 +327,7 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
       <button class="tab" role="tab" aria-selected="false" data-view="ship">Shipments <span class="n" id="cntShip"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="expenses">Salaries & expenses</button>
       <button class="tab" role="tab" aria-selected="false" data-view="debtors">Debtors <span class="n" id="cntDebt"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="price">Price fighter <span class="n" id="cntPf"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="removals">Removal orders <span class="n badge" id="cntRem"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
@@ -513,6 +514,19 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
     </div>
   </section>
 
+  <!-- PRICE FIGHTER -->
+  <section id="view-price" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Price fighter: win the Buy Box</h2><p id="pfSub"></p></div>
+      <p class="note" style="margin:0;max-width:95ch">For each listing you switch on, the PC checks who has the Buy Box every few minutes. If a competitor has it, your price goes to <b>their price minus your step</b>, but never below your <b>floor</b>. When you hold the Buy Box it can creep back up towards your <b>ceiling</b>. <b>Watch</b> only shows what it would do; <b>Fight</b> changes your price on Takealot. The <b>auto floor</b> is your dearest unit's cost plus Takealot's fees (from your recent sales) plus your minimum profit.</p>
+      <div class="tscroll"><table id="pfTable"></table></div>
+    </div>
+    <div class="panel" id="pfHistPanel" hidden>
+      <div class="sec-head"><h2 id="pfHistTitle">Price history</h2></div>
+      <div class="tscroll"><table id="pfHist"></table></div>
+    </div>
+  </section>
+
   <!-- REMOVAL ORDERS -->
   <section id="view-removals" class="stack" hidden>
     <div class="panel">
@@ -657,7 +671,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toISOString().slice(0,10);
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null;
+let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
   const p=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
@@ -733,6 +747,8 @@ async function loadAll(){
       for(let i=0;i<ids.length;i+=150){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
         if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(units.some(u=>u.order_id===x.order_id && u.status==="awaiting_fees")) talStatus[x.order_id]=x.sale_status; }); } }
+    { const {data,error}=await sb.from("price_rules").select("*");
+      pfRules = error ? null : data; }
     { const {data,error}=await sb.from("supplier_ledger").select("*").order("created_at",{ascending:true});
       ledger = error ? null : data.map(r=>({...r, amount:Number(r.amount)||0})); }
     { const {data,error}=await sb.from("leadtime_requests").select("*").order("id",{ascending:false}).limit(100);
@@ -762,7 +778,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","ship","expenses","debtors","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","ship","expenses","debtors","price","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -1192,6 +1208,54 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- price fighter ---------------- */
+function renderPrice(){
+  const t=$("#pfTable"); if(!t) return;
+  if(pfRules===null){ t.innerHTML=`<tbody><tr><td class="muted">Run 13_database_update.sql in Supabase, then stop and start the sync on the PC (STOP.bat, then START.bat), to switch this on.</td></tr></tbody>`; return; }
+  const list=products.filter(p=>p.takealot_stock && (p.takealot_stock.OFFER||{}).offer_id && p.product!==IGNORE && /buyable/i.test(p.takealot_status||""))
+    .sort((a,b)=>(a.takealot_title||"").localeCompare(b.takealot_title||""));
+  const on=pfRules.filter(r=>r.enabled), losing=on.filter(r=>r.winning===false).length;
+  $("#pfSub").textContent = on.length ? `${on.length} listing${on.length>1?"s":""} switched on · ${on.filter(r=>r.winning).length} with the Buy Box${losing?` · ${losing} without`:""}` : "Switch a listing on to start";
+  $("#cntPf").textContent = losing||"";
+  t.innerHTML=`<thead><tr><th>Listing</th><th class="num">Your price</th><th>Buy Box</th><th class="num">Floor</th><th>On</th><th>Mode</th><th>Floor rule</th><th class="num">Ceiling</th><th class="num">Step</th><th class="num">Check every</th><th>Raise when winning</th><th class="num">Max / day</th><th></th></tr></thead><tbody>${list.map(p=>{
+    const r=pfRules.find(x=>x.sku===p.sku)||{}, o=p.takealot_stock.OFFER||{}, k=esc(p.sku);
+    const bb = r.last_checked ? (r.winning?`<span class="pill s-settled">You</span> R ${Math.round(r.bb_price).toLocaleString("en-ZA")}`:`<span class="pill s-return_me">Competitor</span> R ${Math.round(r.bb_price||0).toLocaleString("en-ZA")}`)+`<div class="tal-st">${esc(r.last_action||"")} · ${ago(r.last_checked)}</div>` : '<span class="muted">not checked yet</span>';
+    return `<tr data-pf="${k}">
+      <td class="prod">${esc(p.takealot_title)}<div class="tal-st mono">${k}</div></td>
+      <td class="num">${R0(r.my_price||o.price||0)}</td><td style="min-width:200px">${bb}</td>
+      <td class="num">${r.floor_used?R0(r.floor_used):'<span class="muted">–</span>'}</td>
+      <td><input type="checkbox" data-f="enabled" ${r.enabled?"checked":""} aria-label="Switch on"></td>
+      <td><select data-f="mode"><option value="watch" ${r.mode!=="fight"?"selected":""}>Watch</option><option value="fight" ${r.mode==="fight"?"selected":""}>Fight</option></select></td>
+      <td class="nw"><select data-f="floor_mode"><option value="auto" ${r.floor_mode!=="manual"?"selected":""}>Auto: min profit R</option><option value="manual" ${r.floor_mode==="manual"?"selected":""}>Fixed floor R</option></select>
+        <input data-f="min_profit" inputmode="decimal" value="${r.min_profit??500}" style="width:80px" ${r.floor_mode==="manual"?"hidden":""}><input data-f="floor_price" inputmode="decimal" value="${r.floor_price??""}" style="width:90px" placeholder="floor" ${r.floor_mode==="manual"?"":"hidden"}></td>
+      <td class="num"><input data-f="ceiling_price" inputmode="decimal" value="${r.ceiling_price??""}" placeholder="none" style="width:90px"></td>
+      <td class="num"><input data-f="step" inputmode="decimal" value="${r.step??1}" style="width:60px"></td>
+      <td class="num nw"><select data-f="check_minutes">${[5,10,15,30,60].map(m=>`<option value="${m}" ${(r.check_minutes||10)==m?"selected":""}>${m} min</option>`).join("")}</select></td>
+      <td class="nw"><input type="checkbox" data-f="raise_when_winning" ${r.raise_when_winning!==false?"checked":""}> every <select data-f="raise_every_minutes">${[30,60,120,240].map(m=>`<option value="${m}" ${(r.raise_every_minutes||120)==m?"selected":""}>${m<60?m+" min":m/60+" h"}</option>`).join("")}</select></td>
+      <td class="num"><input data-f="max_changes_day" inputmode="numeric" value="${r.max_changes_day??20}" style="width:55px"></td>
+      <td class="nw"><button class="btn primary small" type="button" data-pfsave="${k}">Save</button> <button class="btn small" type="button" data-pfhist="${k}">History</button></td></tr>`; }).join("")}</tbody>`;
+}
+$("#pfTable").addEventListener("change",e=>{ const s=e.target.closest('[data-f="floor_mode"]'); if(!s) return; const tr=s.closest("tr");
+  tr.querySelector('[data-f="min_profit"]').hidden=s.value==="manual"; tr.querySelector('[data-f="floor_price"]').hidden=s.value!=="manual"; });
+$("#pfTable").addEventListener("click",async e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.pfhist){ const sku=b.dataset.pfhist, p=products.find(x=>x.sku===sku);
+    const {data,error}=await sb.from("price_log").select("*").eq("sku",sku).order("at",{ascending:false}).limit(100);
+    $("#pfHistPanel").hidden=false; $("#pfHistTitle").textContent=`Price history · ${p?.takealot_title||sku}`;
+    const lbl={lowered:"Lowered",raised:"Raised",at_floor:"Down to floor",would_lower:"Would lower (watch)",would_raise:"Would raise (watch)",failed:"Takealot refused"};
+    $("#pfHist").innerHTML = error ? `<tbody><tr><td class="muted">${esc(errMsg(error))}</td></tr></tbody>` : data.length ? `<thead><tr><th>When</th><th>What</th><th class="num">From</th><th class="num">To</th><th class="num">Buy Box</th><th>Note</th></tr></thead><tbody>${data.map(x=>`<tr><td class="nw">${soldWhen({sold_date:x.at})}</td><td>${esc(lbl[x.action]||x.action)}</td><td class="num">${R0(x.my_price||0)}</td><td class="num">${R0(x.new_price||0)}</td><td class="num">${R0(x.bb_price||0)}</td><td>${esc(x.note||"")}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">No changes yet.</td></tr></tbody>`;
+    $("#pfHistPanel").scrollIntoView({behavior:"smooth"}); return; }
+  if(!b.dataset.pfsave) return;
+  const tr=b.closest("tr"), g=f=>tr.querySelector(`[data-f="${f}"]`), n=f=>{ const v=num(g(f).value); return v==null?null:v; };
+  const row={ sku:b.dataset.pfsave, enabled:g("enabled").checked, mode:g("mode").value, floor_mode:g("floor_mode").value,
+    min_profit:n("min_profit")??0, floor_price:n("floor_price"), ceiling_price:n("ceiling_price"), step:Math.max(1,n("step")??1),
+    check_minutes:+g("check_minutes").value, raise_when_winning:g("raise_when_winning").checked, raise_every_minutes:+g("raise_every_minutes").value,
+    max_changes_day:Math.max(1,parseInt(g("max_changes_day").value,10)||20), last_checked:null, updated_at:new Date().toISOString() };
+  if(row.floor_mode==="manual" && !row.floor_price){ toast("Type a floor price, or use the auto floor"); return; }
+  if(row.mode==="fight" && row.enabled && !confirm(`Fight mode changes your price on Takealot automatically for ${products.find(x=>x.sku===row.sku)?.takealot_title||row.sku}. Never below ${row.floor_mode==="manual"?R0(row.floor_price):"the auto floor"}. Switch it on?`)) return;
+  b.disabled=true; const {error}=await sb.from("price_rules").upsert(row,{onConflict:"sku"}); b.disabled=false;
+  toast(error?(/price_rules/.test(errMsg(error))?"Run 13_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)):(row.enabled?`Saved. The PC checks it within a minute (${row.mode==="fight"?"fight":"watch"} mode).`:"Saved (switched off)")); loadAll(); });
+
 /* ---------------- debtors: what you owe each supplier ---------------- */
 function supplierOwed(sup){
   const rows=(ledger||[]).filter(r=>r.supplier.toLowerCase()===sup.toLowerCase());
@@ -1542,7 +1606,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */

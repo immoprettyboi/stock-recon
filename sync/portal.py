@@ -9,6 +9,7 @@ This file is reloaded on every sync run, so updates apply without restarting.
 """
 from __future__ import annotations
 import json
+from urllib.parse import quote
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -370,6 +371,206 @@ def receive_returns(cfg, rows, log):
                 except RuntimeError:
                     db.patch("units", f"id=eq.{u['id']}", body)          # before 10_database_update.sql
                 log(f"  Arrived on {x['waybill']}: {u['product']} (order {u.get('order_id') or '-'}) is at HOME, waiting for you to check it.")
+
+
+# ---------------------------------------------------------------- price fighter
+def _due(rule, now):
+    lc = rule.get("last_checked")
+    if not lc:
+        return True
+    try:
+        t = datetime.fromisoformat(str(lc).replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return True
+    return (now - t).total_seconds() >= max(3, int(rule.get("check_minutes") or 10)) * 60 - 20
+
+
+def price_tick(cfg, log, force=False):
+    """Called every minute between syncs. Checks the Buy Box of each listing you switched on (when it's due) and,
+    in fight mode, changes your price within your floor / ceiling. Watch mode only records what it would do."""
+    import math, stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        rules = db.select("price_rules", "select=*&enabled=is.true")
+    except RuntimeError:
+        return                                            # before 13_database_update.sql
+    now = datetime.utcnow()
+    due = [r for r in rules if force or _due(r, now)]
+    if not due:
+        return
+    prods = {p["sku"]: p for p in db.select("products", "select=sku,product,takealot_title,takealot_stock")}
+    from playwright.sync_api import sync_playwright
+    import stockrecon_sync as SS
+    with sync_playwright() as p:
+        ctx = launch(p, cfg, True, SS.PROFILE_DIR, SS.DOWNLOADS)
+        try:
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            auth = {}
+            def on_req(req):
+                if API_HOST in req.url and not auth:
+                    h = {k: v for k, v in req.headers.items() if k.lower() in ("authorization", "x-api-key", "x-csrftoken", "x-xsrf-token", "accept")}
+                    if h:
+                        auth.update(h)
+            page.on("request", on_req)
+            if any(r.get("mode") == "fight" for r in due):
+                page.goto(SALES_URL, wait_until="domcontentloaded", timeout=90_000)
+                for _ in range(40):
+                    if auth or "/login" in page.url:
+                        break
+                    page.wait_for_timeout(500)
+            for r in due:
+                try:
+                    _fight_one(ctx, page, db, r, prods.get(r["sku"]) or {}, auth, log)
+                except Exception as e:
+                    log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
+        finally:
+            ctx.close()
+
+
+def _floor_for(db, rule, prod):
+    if rule.get("floor_mode") == "manual" and rule.get("floor_price"):
+        return float(rule["floor_price"])
+    group = prod.get("product") or prod.get("takealot_title")
+    titles = {prod.get("takealot_title"), group}
+    try:
+        others = db.select("products", f"select=takealot_title&product=eq.{quote(group or '')}")
+        titles |= {o["takealot_title"] for o in others}
+    except Exception:
+        pass
+    costs = []
+    for t in [x for x in titles if x]:
+        try:
+            costs += [float(u["cost"]) for u in db.select("units", f"select=cost&status=eq.in_stock&product=eq.{quote(t)}") if float(u.get("cost") or 0) > 0]
+        except Exception:
+            pass
+    if not costs:
+        for t in [x for x in titles if x]:
+            try:
+                costs += [float(u["cost"]) for u in db.select("units", f"select=cost,received&product=eq.{quote(t)}&order=received.desc&limit=5") if float(u.get("cost") or 0) > 0]
+            except Exception:
+                pass
+    if not costs:
+        return None
+    cost = max(costs)                                       # the dearest unit you might sell, to be safe
+    ratio = 0.12
+    try:
+        ss = [x for x in db.select("takealot_sales", f"select=gross,fees&sku=eq.{rule['sku']}&fees=gt.0&order=order_date.desc&limit=10") if float(x.get("gross") or 0) > 0]
+        if ss:
+            ratio = sum(float(x["fees"]) / float(x["gross"]) for x in ss) / len(ss)
+    except Exception:
+        pass
+    return math.ceil((cost + float(rule.get("min_profit") or 0)) / max(0.5, 1 - ratio))
+
+
+def _fight_one(ctx, page, db, rule, prod, auth, log):
+    import math
+    sku = rule["sku"]
+    offer = (prod.get("takealot_stock") or {}).get("OFFER") or {}
+    plid, offer_id, mine = offer.get("plid"), offer.get("offer_id"), f"M{offer.get('merchant_id') or 29853221}"
+    title = (prod.get("takealot_title") or sku)[:50]
+    nowiso = datetime.utcnow().isoformat() + "Z"
+    if not plid:
+        db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Listing not found on Takealot yet (next sync)"})
+        return
+    got = {}
+    def on_resp(r):
+        try:
+            if "/product-details/PLID" in r.url and "json" in (r.headers.get("content-type") or "") and not got:
+                got.update(r.json())
+        except Exception:
+            pass
+    pg = ctx.new_page()
+    pg.on("response", on_resp)
+    try:
+        pg.goto(f"https://www.takealot.com/x/PLID{plid}", wait_until="domcontentloaded", timeout=60_000)
+        for _ in range(30):
+            if got:
+                break
+            pg.wait_for_timeout(500)
+    finally:
+        pg.close()
+    items = ((got.get("buybox") or {}).get("items")) or []
+    item = next((i for i in items if i.get("is_selected")), items[0] if items else None)
+    if not item:
+        db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Couldn't read the Buy Box"})
+        return
+    bb_price, bb_seller = float(item.get("price") or 0), str(item.get("sponsored_ads_seller_id") or "")
+    winning = bb_seller == mine
+    my_price = float(rule.get("my_price") or offer.get("price") or 0)
+    if winning:
+        my_price = bb_price
+    floor = _floor_for(db, rule, prod)
+    ceiling = float(rule["ceiling_price"]) if rule.get("ceiling_price") else None
+    step = max(1.0, float(rule.get("step") or 1))
+    fight = rule.get("mode") == "fight"
+    # how many real changes in the last 24 h
+    since = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
+    try:
+        changes = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised,at_floor)&at=gt.{since}"))
+    except Exception:
+        changes = 0
+    target, action, note = None, None, ""
+    if not winning:
+        want = math.floor(bb_price - step)
+        if floor is None:
+            note = "No cost found for this product, so no floor: not changing the price"
+        elif want >= floor:
+            if want < my_price or my_price == 0:
+                target, action = want, "lowered"
+        elif my_price > floor:
+            target, action, note = math.ceil(floor), "at_floor", f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}"
+        else:
+            note = f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}: holding at the floor"
+        if target is not None and ceiling and target > ceiling:
+            target = math.floor(ceiling)
+    elif rule.get("raise_when_winning") and ceiling and my_price < ceiling:
+        lc = rule.get("last_change_at")
+        quiet = True
+        if lc:
+            try:
+                quiet = (datetime.utcnow() - datetime.fromisoformat(str(lc).replace("Z", "+00:00")).replace(tzinfo=None)).total_seconds() \
+                        >= int(rule.get("raise_every_minutes") or 120) * 60
+            except Exception:
+                pass
+        if quiet:
+            target, action = math.floor(min(ceiling, my_price + step)), "raised"
+    upd = {"last_checked": nowiso, "bb_price": bb_price, "bb_seller": bb_seller, "winning": winning,
+           "floor_used": floor, "my_price": my_price}
+    if target is not None and int(target) != int(my_price):
+        if not fight:
+            action = "would_" + ("lower" if action in ("lowered", "at_floor") else "raise")
+            upd["last_action"] = f"Would change R{my_price:,.0f} → R{target:,.0f} (watch mode)"
+            if rule.get("last_action") != upd["last_action"]:          # log it once, not every check
+                db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
+                                         "new_price": target, "action": action, "note": note or "watch mode"}])
+        elif changes >= int(rule.get("max_changes_day") or 20):
+            upd["last_action"] = f"Daily limit of {rule.get('max_changes_day')} changes reached"
+        elif not auth or not offer_id:
+            upd["last_action"] = "Not logged in to the Seller Portal: price not changed"
+        else:
+            r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{offer_id}", headers={**auth, "content-type": "application/json"},
+                                  data=json.dumps({"selling_price": int(target)}), timeout=60_000)
+            errs = None
+            try:
+                errs = (r.json() or {}).get("validation_errors")
+            except Exception:
+                pass
+            if r.ok and not errs:
+                db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
+                                         "new_price": target, "action": action, "note": note}])
+                upd.update(my_price=target, last_change_at=nowiso, last_action=f"{'Lowered' if action != 'raised' else 'Raised'} R{my_price:,.0f} → R{target:,.0f}")
+                st = dict(prod.get("takealot_stock") or {})
+                st["OFFER"] = {**offer, "price": int(target)}
+                db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
+                log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}).")
+            else:
+                msg = (errs[0].get("message") if errs and isinstance(errs[0], dict) else errs) or r.text()[:150]
+                db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
+                                         "new_price": target, "action": "failed", "note": str(msg)[:300]}])
+                upd["last_action"] = f"Takealot refused the change: {str(msg)[:120]}"
+    else:
+        upd["last_action"] = note or ("You have the Buy Box" if winning else "Holding")
+    db.patch("price_rules", f"sku=eq.{sku}", upd)
 
 
 def test_logins(p, cfg, log):
@@ -881,6 +1082,50 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 save_offer_stock(cfg, offers, log)
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
+            # ---- one-off: what the public Takealot product page says about prices / other sellers (debug/price_discover.txt)
+            try:
+                if (DEBUG_DIR / "price_discover.txt").exists():
+                    plid = (DEBUG_DIR / "price_discover.txt").read_text(encoding="utf-8").strip() or "100972862"
+                    if not plid.isdigit():
+                        plid = "100972862"
+                    (DEBUG_DIR / "price_discover.txt").unlink()
+                    out = {}
+                    for name, u in (("details11", f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}?platform=desktop&display_credit=false"),
+                                    ("details10", f"https://api.takealot.com/rest/v-1-10-0/product-details/PLID{plid}?platform=desktop"),
+                                    ("offers11", f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}/offers?platform=desktop"),
+                                    ("offers_ol", f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}/other-offers?platform=desktop")):
+                        try:
+                            r = ctx.request.get(u, timeout=30_000)
+                            out[name] = {"status": r.status, "body": r.text()[:60000]}
+                        except Exception as e:
+                            out[name] = {"error": repr(e)[:200]}
+                    # the public page itself: record the data calls it makes
+                    calls = []
+                    def lis5(r):
+                        try:
+                            if "api.takealot.com" in r.url and "json" in (r.headers.get("content-type") or ""):
+                                calls.append({"url": r.url, "status": r.status, "body": r.text()[:30000]})
+                        except Exception:
+                            pass
+                    pg2 = ctx.new_page()
+                    pg2.on("response", lis5)
+                    pg2.goto(f"https://www.takealot.com/x/PLID{plid}", wait_until="domcontentloaded", timeout=90_000)
+                    pg2.wait_for_timeout(8000)
+                    import re as _re
+                    out["calls_before_click"] = len(calls)
+                    try:
+                        pg2.get_by_text(_re.compile(r"other (offers|sellers)", _re.I)).first.click(timeout=6000); pg2.wait_for_timeout(6000)
+                        out["clicked"] = True
+                    except Exception as e:
+                        out["click_error"] = repr(e)[:150]
+                    out["page_text"] = pg2.inner_text("body")[:6000]
+                    out["page_calls"] = calls
+                    pg2.close()
+                    (DEBUG_DIR / "price_discovery.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+                    log("Price discovery saved.")
+            except Exception as e:
+                log("Price discovery failed: " + repr(e)[:200])
+
             # ---- lead-time stock changes asked for in the app (leadtime_requests) or via debug/set_leadtime.json
             try:
                 apply_leadtime_requests(ctx, cfg, auth, offers, log)
@@ -1018,6 +1263,9 @@ def save_offer_stock(cfg, offers, log):
             name = WAREHOUSE_NAMES.get(w.get("takealot_warehouse_id"), str(w.get("takealot_warehouse_id")))
             stock[name] = {"qty": w.get("quantity") or 0, "on_way": w.get("stock_on_way") or 0,
                            "receiving": w.get("stock_in_receiving") or 0, "sold_30d": w.get("quantity_sold_30_days") or 0}
+        # for the price fighter: how to find this listing on takealot.com and change its price
+        stock["OFFER"] = {"offer_id": o.get("offer_id"), "plid": ((o.get("tsin") or {}).get("productline_id")),
+                          "price": o.get("selling_price"), "merchant_id": o.get("merchant_id")}
         # lead-time stock: what you offer from your own warehouse (HOME)
         stock["LEADTIME"] = {"qty": o.get("total_merchant_stock") or 0,
                              "days": ((o.get("leadtime_days") or {}).get("minimum"))}

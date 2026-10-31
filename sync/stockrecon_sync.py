@@ -394,6 +394,13 @@ def main():
         # wait for the next run, but check every minute for a "Sync now" from the app
         for _ in range(cfg["interval"]):
             time.sleep(60)
+            # price fighter: checks the listings you switched on, each at its own interval
+            try:
+                import importlib, portal as _pp
+                importlib.reload(_pp)
+                _pp.price_tick(cfg, log)
+            except Exception as e:
+                log("Price fighter: " + repr(e)[:200])
             try:
                 req = db.select("sync_runs", "select=id&requested=is.true&finished_at=is.null")
                 if req:
