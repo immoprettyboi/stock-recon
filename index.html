@@ -325,6 +325,7 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
       <button class="tab" role="tab" aria-selected="false" data-view="match">Needs matching <span class="n badge" id="cntMatch"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="add">Add stock</button>
       <button class="tab" role="tab" aria-selected="false" data-view="ship">Shipments <span class="n" id="cntShip"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="expenses">Salaries & expenses</button>
       <button class="tab" role="tab" aria-selected="false" data-view="removals">Removal orders <span class="n badge" id="cntRem"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
@@ -378,20 +379,6 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
         <button class="btn small" type="button" id="adamSet">Update balance</button>
       </div>
       <div class="tscroll"><table id="expTable"></table></div>
-    </div>
-    <div class="panel">
-      <div class="sec-head"><h2>Salaries & expenses</h2><p id="opexSub">Taken off the month's profit</p></div>
-      <form class="grid" id="opexForm" autocomplete="off">
-        <div class="field"><label for="ox-date">Date</label><input id="ox-date" type="date" required></div>
-        <div class="field"><label for="ox-type">Type</label><select id="ox-type">
-          <option value="Salary">Salary / wages</option><option>Rent</option><option>Electricity & water</option><option>Phone & internet</option>
-          <option>Packaging</option><option>Fuel & transport</option><option>Bank charges</option><option>Software & subscriptions</option><option>Other</option></select></div>
-        <div class="field"><label for="ox-desc">Who / what</label><input id="ox-desc" placeholder="e.g. Sipho, October salary" required></div>
-        <div class="field"><label for="ox-amt">Amount (R)</label><input id="ox-amt" inputmode="decimal" placeholder="e.g. 6500" required></div>
-        <label class="note inline wide"><input type="checkbox" id="ox-monthly"> Every month (copy it with "Repeat monthly costs")</label>
-        <div class="form-actions"><button class="btn primary" type="submit">Add</button><button class="btn" type="button" id="opexRepeat">Repeat monthly costs from last month</button><span class="note" id="opexMsg"></span></div>
-      </form>
-      <div class="tscroll"><table id="opexTable"></table></div>
     </div>
     <div class="panel">
       <div class="sec-head"><h2>Returns</h2><p id="retSub">From Takealot's View Returns, by return date</p></div>
@@ -481,6 +468,24 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
       <div class="sec-head"><h2>Takealot's monthly Stock Recon</h2><p id="reconSub">Downloaded by the PC on the 1st of every month</p></div>
       <p class="note" style="margin:0;max-width:80ch">Takealot releases a Stock Recon for each month. Any stock Takealot lost or wrote off shows here with the amount you can claim. To get reimbursed, e-mail Takealot the recon file (Download) with an invoice for the claim value, then set the status to <b>Claimed</b> and later <b>Paid</b>.</p>
       <div class="tscroll"><table id="reconTable"></table></div>
+    </div>
+  </section>
+
+  <!-- SALARIES & EXPENSES -->
+  <section id="view-expenses" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Salaries & expenses</h2><p id="opexSub">Taken off the month's profit</p></div>
+      <form class="grid" id="opexForm" autocomplete="off">
+        <div class="field"><label for="ox-date">Date</label><input id="ox-date" type="date" required></div>
+        <div class="field"><label for="ox-type">Type</label><select id="ox-type">
+          <option value="Salary">Salary / wages</option><option>Rent</option><option>Electricity & water</option><option>Phone & internet</option>
+          <option>Packaging</option><option>Fuel & transport</option><option>Bank charges</option><option>Software & subscriptions</option><option>Other</option></select></div>
+        <div class="field"><label for="ox-desc">Who / what</label><input id="ox-desc" placeholder="e.g. Sipho, October salary" required></div>
+        <div class="field"><label for="ox-amt">Amount (R)</label><input id="ox-amt" inputmode="decimal" placeholder="e.g. 6500" required></div>
+        <label class="note inline wide"><input type="checkbox" id="ox-monthly"> Every month (copy it with "Repeat monthly costs")</label>
+        <div class="form-actions"><button class="btn primary" type="submit">Add</button><button class="btn" type="button" id="opexRepeat">Repeat monthly costs from last month</button><span class="note" id="opexMsg"></span></div>
+      </form>
+      <div class="tscroll"><table id="opexTable"></table></div>
     </div>
   </section>
 
@@ -722,6 +727,7 @@ function buildMonths(){
   sel.value=state.month;
 }
 $("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
+$("#tiles").addEventListener("click",e=>{ const t=e.target.closest("[data-go]"); if(t) setView(t.dataset.go); });
 { const setLookBtn=()=>$("#lookBtn").textContent=document.documentElement.dataset.look==="glass"?"Classic look":"Glass look"; setLookBtn();
   $("#lookBtn").addEventListener("click",()=>{ const n=document.documentElement.dataset.look==="glass"?"classic":"glass"; document.documentElement.dataset.look=n; try{localStorage.setItem("sr-look",n);}catch(e){} setLookBtn(); renderChart(); }); }
 $("#openReport").addEventListener("click",()=>window.open(`report.html${state.month&&state.month!=="all"?`?m=${state.month}`:""}`,"_blank"));
@@ -730,7 +736,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","match","add","ship","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","match","add","ship","expenses","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
 }
@@ -841,7 +847,7 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
     <div class="tile hero"><span class="lbl">Profit</span><span class="val">${R0(P-X)}</span><span class="sub">${R0(P)} from sales${XD?` − ${R0(XD)} delivery`:""}${XO?` − ${R0(XO)} salaries & expenses`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
     <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery, salaries & expenses`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
+    <div class="tile" data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l).length}`).join(" · ")}</span></div>
     <div class="tile"><span class="lbl">Stock on hand at cost</span><span class="val">${R0(stockV)}</span><span class="sub">${stock.length?`what you paid for the ${stock.length} units · avg ${R0(stockV/stock.length)} a unit`:"no unsold stock"}</span></div>
