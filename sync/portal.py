@@ -303,11 +303,21 @@ def takealot_recon(ctx, cfg, auth, log):
         cur = recon.get(m)
         if not cur or (done and not cur["done"]) or (done == cur["done"] and str(t.get("date_created")) > str(cur["t"].get("date_created"))):
             recon[m] = {"t": t, "done": done}
+    try:                                                     # keep the latest reports list for checking
+        (DEBUG_DIR / "recon_tasks.json").write_text(json.dumps((r.json() or {}).get("tasks") or [], indent=1)[:200000], encoding="utf-8")
+    except Exception:
+        pass
+    if prev in recon and not recon[prev]["done"] and prev not in have:
+        t0 = recon[prev]["t"]
+        why = (t0.get("result") or {}).get("message") or (t0.get("task_status") or {}).get("task_status_type_id")
+        log(f"Takealot stock recon: the {prev} report isn't available yet (Takealot: {why}). Trying again every hour.")
     stuck = False
     if prev in recon and not recon[prev]["done"]:
         try:
             made = datetime.fromisoformat(str(recon[prev]["t"].get("date_created")).replace("Z", "+00:00")).replace(tzinfo=None)
-            stuck = (datetime.utcnow() - made).total_seconds() > 6 * 3600       # Takealot's report failed or got stuck
+            failed = (recon[prev]["t"].get("task_status") or {}).get("task_status_type_id") == 5
+            # failed (usually: Takealot hasn't released the month yet) -> ask again after an hour; stuck -> after 6 hours
+            stuck = (datetime.now() - made).total_seconds() > (3600 if failed else 6 * 3600)   # Takealot's times are SA time
         except Exception:
             stuck = False
     if prev not in have and (prev not in recon or stuck) and prev >= "2026-10" and now.hour >= 6:
