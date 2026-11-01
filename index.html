@@ -1561,7 +1561,12 @@ function renderCheck(){
   // units on a shipment Takealot rejected: Takealot keeps counting them "on the way" until it closes the PO
   // (counted until Takealot closes the PO, also after the units are back home)
   const rejDc=u=>{ if(DCS.includes(u.location)) return u.location; const po=u.po||((u.comment||"").match(/\(PO (\d+)\)/)||[])[1]; const p=pos.find(x=>x.po===po); const w=String(p?.warehouse||p?.facility||"").slice(0,3).toUpperCase(); return DCS.includes(w)?w:null; };
-  units.filter(u=>/Takealot rejected/.test(u.comment||"") && (u.status==="return_me" || (u.status==="in_stock" && u.location==="HOME"))).forEach(u=>{ const dc=rejDc(u), g=G[grp(u.product)]; if(g&&dc){ g.rej=g.rej||{}; g.rej[dc]=(g.rej[dc]||0)+1; } });
+  units.filter(u=>/Takealot rejected/.test(u.comment||"")).forEach(u=>{
+    // count every unit from a rejected shipment while Takealot still has that PO open (whatever happened to the unit since)
+    const rpo=((u.comment||"").match(/\(PO (\d+)\)/)||[])[1]; const p=rpo&&pos.find(x=>x.po===rpo);
+    if(!p || /receiv|cancel|clos/i.test(p.status||"")) return;
+    const w=String(p.warehouse||p.facility||"").slice(0,3).toUpperCase(), g=G[grp(u.product)];
+    if(g&&DCS.includes(w)){ g.rej=g.rej||{}; g.rej[w]=(g.rej[w]||0)+1; } });
   units.filter(u=>u.status==="missing_query" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g){ g.q=g.q||{}; g.q[u.location]=(g.q[u.location]||0)+1; } });
   // units sold on lead-time orders and sent in: Takealot still counts them as on the way / being received
   const skuGroup={}; products.forEach(p=>skuGroup[p.sku]=p.product);
