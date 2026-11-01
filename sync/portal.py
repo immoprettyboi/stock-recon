@@ -2116,6 +2116,54 @@ def fetch_takealot_pos(ctx, cfg, auth, log):
                 else "Takealot shipments couldn't be saved: " + str(e)[:150])
             return
     log(f"Takealot shipments: {len(rows)} PO(s) saved ({len(ships)} read).")
+    try:
+        allocate_po_units(cfg, rows, log)
+    except Exception as e:
+        log("Allocating units to new shipments failed: " + repr(e)[:200])
+
+
+def allocate_po_units(cfg, rows, log):
+    """A new shipment (PO) you created to send stock in: put that many of your HOME units on it, at its warehouse.
+    Lead-time POs are left to the sales matching (the unit sold on that order goes on the PO)."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    today = date.today().isoformat()
+    new = [r for r in rows if not r.get("leadtime") and (r.get("due_date") or "") >= today
+           and "cancel" not in str(r.get("status") or "").lower() and r.get("items")]
+    if not new:
+        return
+    prods = db.select("products", "select=sku,product,takealot_title")
+    grp_of_sku = {str(p["sku"]): (p.get("product") or p.get("takealot_title")) for p in prods}
+    grp_of_name = {}
+    for p in prods:
+        g = p.get("product") or p.get("takealot_title")
+        for n in (p.get("product"), p.get("takealot_title")):
+            if n:
+                grp_of_name[n] = g
+    units = db.select("units", "select=id,product,status,location,po,order_id,condition,received,comment")
+    now = datetime.utcnow().isoformat() + "Z"
+    for r in new:
+        dc = str(r.get("warehouse") or r.get("facility") or "")[:3].upper()
+        if dc not in ("JHB", "CPT", "DBN"):
+            continue
+        for it in r["items"]:
+            g = grp_of_sku.get(str(it.get("sku")))
+            want = int(it.get("qty") or 0)
+            if not g or want <= 0:
+                continue
+            on_po = [u for u in units if u.get("po") == r["po"] and grp_of_name.get(u["product"], u["product"]) == g]
+            need = want - len(on_po)
+            if need <= 0:
+                continue
+            pool = [u for u in units if u["status"] == "in_stock" and u.get("location") == "HOME" and not u.get("order_id")
+                    and not u.get("po") and (u.get("condition") or "new") == "new" and grp_of_name.get(u["product"], u["product"]) == g]
+            pool.sort(key=lambda u: (u.get("received") or "9999", u["id"]))
+            for u in pool[:need]:
+                c = (f"Sent to Takealot {dc} on PO {r['po']}. " + (u.get("comment") or "")).strip()
+                db.patch("units", f"id=eq.{u['id']}", {"po": r["po"], "location": dc, "comment": c, "updated_at": now})
+                u.update(po=r["po"], location=dc)
+            got = min(need, len(pool))
+            log(f"  PO {r['po']}: {got} × {g} moved from HOME to {dc}" + (f" ({need - got} not found at HOME)" if got < need else "") + ".")
 
 
 
