@@ -1678,6 +1678,21 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 apply_leadtime_requests(ctx, cfg, auth, offers, log, list(sales) + recent)
             except Exception as e:
                 log("Lead-time stock change failed: " + repr(e)[:200])
+            # ---- FNB bank statement from Gmail: business costs into Salaries & expenses (debug/bank_dry_run.txt = test only)
+            try:
+                import importlib, bank as _bank
+                importlib.reload(_bank)
+                if (DEBUG_DIR / "bank_file.txt").exists():         # process a statement PDF put in the statements folder
+                    spec = (DEBUG_DIR / "bank_file.txt").read_text(encoding="utf-8").strip().split("|")
+                    (DEBUG_DIR / "bank_file.txt").unlink()
+                    _bank.check_gmail_statements(cfg, log, notify=notify, force_file=_bank.STATEMENTS / spec[0], dry=len(spec) > 1 and spec[1] == "dry")
+                if (DEBUG_DIR / "bank_dry_run.txt").exists():
+                    (DEBUG_DIR / "bank_dry_run.txt").unlink()
+                    _bank.check_gmail_statements(cfg, log, dry=True)
+                elif (DEBUG_DIR / "bank_on.txt").exists():
+                    _bank.check_gmail_statements(cfg, log, notify=notify)
+            except Exception as e:
+                log("Bank statement check failed: " + repr(e)[:200])
             # ---- the 3 balance tiles + when each transaction first appears (to learn Takealot's hold rule)
             try:
                 balance_snapshot(ctx, auth, log)
@@ -2053,6 +2068,10 @@ def fetch_courier(ctx, cfg, log):
             if len(got) < 100:
                 break
             off += 100
+        if (DEBUG_DIR / "courier_billing_dump.txt").exists():      # one-off: keep the raw billing lines for checking
+            (DEBUG_DIR / "courier_billing_dump.txt").unlink()
+            (DEBUG_DIR / "courier_billing.json").write_text(json.dumps(txns, indent=1, default=str), encoding="utf-8")
+            log(f"Courier Guy billing: {len(txns)} lines saved for checking.")
         cost_by_ship = {}
         for t in txns:
             if t.get("shipment_id"):

@@ -500,6 +500,10 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
 
   <!-- SALARIES & EXPENSES -->
   <section id="view-expenses" class="stack" hidden>
+    <div class="panel" id="bankPanel" hidden>
+      <div class="sec-head"><h2>🏦 Bank payments to sort</h2><p>From your FNB statement. Pick what each one is once: next month the same payment is sorted by itself.</p></div>
+      <div class="tscroll"><table id="bankTable"></table></div>
+    </div>
     <div class="panel">
       <div class="sec-head"><h2>Salaries & expenses</h2><p id="opexSub">Taken off the month's profit</p></div>
       <form class="grid" id="opexForm" autocomplete="off">
@@ -951,6 +955,7 @@ function renderOverview(){
   if(lastRun && lastRun.ok===false) items.push({go:"overview", tag:"Sync", t:"Takealot sync needs you", d:lastRun.message||""});
   if(lastRun && !lastRun.finished_at && /^Takealot code needed/.test(lastRun.message||"")) items.push({go:"overview", tag:"Sync", t:"Enter Takealot's PIN", d:"Takealot emailed a one-time PIN; type it in the box on the sync card at the top"});
   { const c=courierHealth(); if(c.state==="bad") items.push({go:"overview", tag:"Sync", t:"Courier Guy sync needs you", d:c.msg}); }
+  { const nb=expenses.filter(e=>e.category==="bank_review"); if(nb.length) items.push({go:"expenses", tag:"Bank", t:`Sort ${nb.length} bank payment${nb.length>1?"s":""}`, d:`From your FNB statement: ${R(nb.reduce((a,e)=>a+e.amount,0))} the app doesn't know yet. Pick what each one is.`}); }
   if(sales.length) items.push({go:"match", tag:"Sync", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
   const unlinked=products.filter(p=>!p.product).length;
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
@@ -1439,7 +1444,27 @@ $("#debtHist").addEventListener("click",async e=>{ const b=e.target.closest("[da
 /* ---------------- salaries & expenses ---------------- */
 const DELIV_CATS=new Set(["courier_topup","adam_delivery"]), OPEX_CATS=new Set(["salary","expense"]);
 function opexMonth(){ return state.month && state.month!=="all" ? state.month : today().slice(0,7); }
+const BANK_TYPES=["Salary","Rent","Electricity & water","Phone & internet","Packaging","Fuel & transport","Bank charges","Software & subscriptions","Advertising","Repairs","Business meals","Donations","Loan interest","Other"];
+const BANK_NOT=["Supplier / stock payment","Personal (not the business)","Money moved / loan","Other: not a cost"];
+function renderBank(){
+  const L=expenses.filter(e=>e.category==="bank_review").sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  $("#bankPanel").hidden=!L.length; if(!L.length){ $("#bankTable").innerHTML=""; return; }
+  $("#bankTable").innerHTML=`<thead><tr><th>Date</th><th>On the statement</th><th class="num">Amount</th><th>What is it?</th><th>Name it</th><th></th></tr></thead><tbody>${L.map(e=>`<tr data-bk="${esc(e.id)}">
+    <td class="nw">${fd(e.date)}</td><td>${esc((e.raw||{}).line||e.description)}</td><td class="num">${R(e.amount)}</td>
+    <td><select class="bk-type"><option value="">Choose…</option><optgroup label="Business cost (taken off profit)">${BANK_TYPES.map(t=>`<option>${t}</option>`).join("")}</optgroup><optgroup label="Not a cost">${BANK_NOT.map(t=>`<option value="not:${t}">${t}</option>`).join("")}</optgroup></select></td>
+    <td><input class="bk-desc" value="${esc(e.description)}" style="min-width:160px"></td>
+    <td><button class="btn small primary" type="button" data-bksave="${esc(e.id)}">Save</button></td></tr>`).join("")}</tbody>`;
+}
+$("#bankTable").addEventListener("click",async e=>{ const b=e.target.closest("[data-bksave]"); if(!b) return;
+  const tr=b.closest("tr"), ex=expenses.find(x=>x.id===b.dataset.bksave), v=tr.querySelector(".bk-type").value, d=tr.querySelector(".bk-desc").value.trim();
+  if(!v){ toast("Choose what it is first"); return; }
+  const not=v.startsWith("not:"), type=not?v.slice(4):v;
+  const body={ category: not?"bank_ignored":(type==="Salary"?"salary":"expense"), description:d||ex.description, raw:{...(ex.raw||{}), type, sorted_by:me?.email||null} };
+  b.disabled=true; const {error}=await sb.from("expenses").update(body).eq("id",ex.id);
+  if(error){ toast("Couldn't save: "+errMsg(error)); b.disabled=false; return; }
+  toast(not?`${body.description}: left out (${type})`:`${body.description}: added as ${type}, ${R(ex.amount)}`); loadAll(); });
 function renderOpex(list, total, mLabel){
+  renderBank();
   const t=$("#opexTable"); if(!t) return;
   if(!$("#ox-date").value || $("#ox-date").value.slice(0,7)!==opexMonth()) $("#ox-date").value = opexMonth()===today().slice(0,7) ? today() : `${opexMonth()}-28`;
   const sal=list.filter(e=>e.category==="salary").reduce((a,e)=>a+e.amount,0);
