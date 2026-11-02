@@ -68,19 +68,29 @@ def _enter_otp(page, cfg, log, name):
     if run_id:
         db.patch("sync_runs", f"id=eq.{run_id}", {"message": msg})
     log(f"{name}: asked for a one-time PIN (emailed to {to}); waiting for it in the app.")
-    try:                                                    # tell the phones: the sync is stuck until someone types the PIN
-        notify({"url": cfg["url"], "key": cfg["key"]}, "🔑 Takealot needs a PIN",
-               f"{name} emailed a one-time PIN to {to}. Open Stock Recon and type it in within 9 minutes.", url="./", topic="price", log=log)
-    except Exception:
-        pass
+
     code, end = None, time.time() + 9 * 60
+    asked_at, next_mail, alerted = time.time(), 0, False
     while time.time() < end and not code:
+        if time.time() >= next_mail:                       # read the PIN straight from the Gmail inbox
+            next_mail = time.time() + 10
+            code = gmail_otp(asked_at, log)
+            if code:
+                log(f"{name}: read the PIN from the e-mail; logging in.")
+                break
         rows = db.select("sync_runs", f"select=id,message&id=gt.{since_id}&message=like.otp:*&order=id.desc")
         if rows:
             code = re.sub(r"\D", "", rows[0]["message"])
             for r in rows:
                 db._req("DELETE", f"sync_runs?id=eq.{r['id']}", None, {"Prefer": "return=minimal"})
             break
+        if not code and not alerted and time.time() - asked_at > 75:   # the mail didn't come through: ask the phones
+            alerted = True
+            try:
+                notify({"url": cfg["url"], "key": cfg["key"]}, "🔑 Takealot needs a PIN",
+                       f"{name} emailed a one-time PIN to {to}. Open Stock Recon and type it in within 8 minutes.", url="./", topic="price", log=log)
+            except Exception:
+                pass
         page.wait_for_timeout(4000)
     if run_id:
         db.patch("sync_runs", f"id=eq.{run_id}", {"message": "Running"})
@@ -194,6 +204,72 @@ def monthly_report(p, cfg, log):
     if not test:
         flag.write_text(now.isoformat(), encoding="utf-8")
     log(f"Monthly report: {label} e-mailed to {', '.join(to)}" + (" (test)." if test else "."))
+
+
+def gmail_otp(since_ts, log=None, peek=False):
+    """Takealot's one-time PIN from the Gmail inbox that also sends the monthly report (report_from + its app password).
+    Only looks at mails from Takealot that arrived after since_ts. Returns the PIN, or None. With peek=True: a short
+    description of the newest Takealot PIN mail (no PIN), for checking the setup."""
+    import configparser, imaplib, email, email.header, re as _re, time as _t
+    from email.utils import parsedate_to_datetime
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    user, pw = (c.get("report_from") or "").strip(), (c.get("report_app_password") or "").replace(" ", "").strip()
+    if not (user and pw) or (c.get("otp_from_gmail") or "yes").strip().lower() in ("no", "0", "false", "off"):
+        return None
+    try:
+        M = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
+        M.login(user, pw)
+        M.select("INBOX", readonly=True)
+        day = _t.strftime("%d-%b-%Y", _t.gmtime(since_ts - 86400))
+        typ, data = M.search(None, f'(FROM "takealot" SINCE {day})')
+        ids = (data[0] or b"").split()[-(40 if peek else 10):]
+        best = None
+        for i in reversed(ids):
+            typ, msg_data = M.fetch(i, "(RFC822)")
+            msg = email.message_from_bytes(msg_data[0][1])
+            try:
+                dt = parsedate_to_datetime(msg["Date"])
+                if dt.tzinfo is None:                       # "-0000" = UTC
+                    from datetime import timezone as _tz
+                    dt = dt.replace(tzinfo=_tz.utc)
+                when = dt.timestamp()
+            except Exception:
+                when = 0
+            subj = str(email.header.make_header(email.header.decode_header(msg.get("Subject") or "")))
+            text = ""
+            for part in (msg.walk() if msg.is_multipart() else [msg]):
+                if part.get_content_type() in ("text/plain", "text/html"):
+                    try:
+                        text += part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "ignore") + " "
+                    except Exception:
+                        pass
+            text = _re.sub(r"(?is)<(style|script|head)\b.*?</\1>", " ", text)
+            text = _re.sub(r"(?s)/\*.*?\*/|@font-face\s*\{[^}]*\}|@media[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}", " ", text)
+            text = _re.sub(r"<[^>]+>", " ", text)
+            text = _re.sub(r"https?://\S+", " ", text)
+            if not _re.search(r"\bOTP\b|one[- ]time|\bPIN\b", subj + " " + text, _re.I):
+                continue
+            m = _re.search(r"(?:OTP|PIN|code)[^0-9]{0,80}?\b(\d{4,8})\b", text, _re.I) or _re.search(r"\b(\d{6})\b", text)
+            if peek:
+                flat = " ".join(text.split())
+                if m:
+                    k = flat.find(m.group(1))
+                    flat = flat[max(0, k - 120):k + 60]
+                masked = _re.sub(r"\d", "#", flat)[:500]
+                best = (f"newest Takealot PIN mail: '{subj[:60]}' at {_t.strftime('%Y-%m-%d %H:%M', _t.localtime(when))}; "
+                        f"PIN found: {'yes' if m else 'no'}; text (digits hidden): {masked}")
+                break
+            if m and when >= since_ts - 30:
+                best = m.group(1)
+                break
+        M.logout()
+        return best
+    except Exception as e:
+        if log:
+            log("Reading the Takealot PIN from Gmail failed: " + repr(e)[:150])
+        return None
 
 
 def send_mail(subject, body, attachments, log, what="E-mail"):
@@ -1326,6 +1402,13 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 log("Removal order discovery failed: " + repr(e)[:200])
 
             # ---- one-off: how a return's details (customer comment) load (debug/return_discover.txt)
+            # ---- one-off: check the Gmail PIN reader works (debug/otp_mail_test.txt); never logs the PIN itself
+            try:
+                if (DEBUG_DIR / "otp_mail_test.txt").exists():
+                    (DEBUG_DIR / "otp_mail_test.txt").unlink()
+                    log("Gmail PIN reader: " + (gmail_otp(__import__("time").time() - 30 * 86400, log, peek=True) or "no Takealot PIN mail found in the last 30 days (or Gmail login failed)"))
+            except Exception as e:
+                log("Gmail PIN reader test failed: " + repr(e)[:200])
             # ---- one-off: dump our sales + units for checking against the transactions (debug/sales_dump.txt)
             try:
                 if (DEBUG_DIR / "sales_dump.txt").exists():
