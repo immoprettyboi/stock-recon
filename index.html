@@ -458,6 +458,7 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
         <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid now</option><option value="owe">No, I owe the supplier</option><option value="upfront">Already paid upfront (before it arrived)</option></select><span class="hint" id="paidHint"></span></div>
         <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
         <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
+        <div class="field"><label for="a-cond">Condition</label><select id="a-cond"><option value="new">New</option><option value="used">Used</option><option value="faulty">Faulty</option></select><span class="hint" id="condHint"></span></div>
         <div class="field"><label for="a-type">Type of stock</label><select id="a-type"><option>ICASA</option><option>TDRA</option></select></div>
         <div class="field"><label for="a-po">Takealot PO number</label><input id="a-po" inputmode="numeric" placeholder="Blank if not sent in yet"></div>
         <div class="field wide"><label for="a-sn">IMEI / serial numbers</label><textarea id="a-sn" rows="3" placeholder="Optional. One per line, in the same order as the units."></textarea><span class="hint" id="snHint"></span></div>
@@ -1837,7 +1838,7 @@ $("#addForm").addEventListener("submit", async e=>{
   e.preventDefault();
   const qty=Math.min(200,Math.max(1,+$("#a-qty").value||1)), sns=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean);
   const base={ product:$("#a-product").value.trim(), supplier:$("#a-supplier").value.trim(), location:$("#a-location").value, stock_type:$("#a-type").value,
-    received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app" };
+    received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app", condition:$("#a-cond").value };
   const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
   const paid=$("#a-paid").value==="paid", total=qty*base.cost;
   $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
@@ -1852,7 +1853,7 @@ $("#addForm").addEventListener("submit", async e=>{
   }
   $("#addBtn").disabled=false; $("#addMsg").textContent="";
   if(error){ $("#addMsg").textContent="Couldn't save: "+errMsg(error); return; }
-  toast(`Added ${qty} × ${base.product}${total>0?(paid?" · paid":` · ${R(total)} added to what you owe ${base.supplier}`):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
+  $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(paid?" · paid":` · ${R(total)} added to what you owe ${base.supplier}`):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
 });
 
 function addHints(){
@@ -1864,6 +1865,7 @@ function addHints(){
     : v==="upfront" ? (cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}`:`Record the upfront payment in Debtors first (Payment I made), so this stock is set against it`)
     : "Not added to Debtors";
 }
+$("#a-cond").addEventListener("change",()=>{ const v=$("#a-cond").value; $("#condHint").textContent = v==="used" ? "Marked USED. Not counted for lead-time stock (only new units are offered)." : v==="faulty" ? "Marked FAULTY. Not counted for lead-time stock or sent to Takealot automatically." : ""; });
 ["#a-supplier","#a-qty","#a-cost","#a-paid"].forEach(id=>{ $(id).addEventListener("input",addHints); $(id).addEventListener("change",addHints); });
 
 /* ---------------- boot ---------------- */
