@@ -1447,7 +1447,7 @@ function renderOpex(list, total, mLabel){
   t.innerHTML = list.length ? `<thead><tr><th>Date</th><th>Type</th><th>Who / what</th><th class="num">Amount</th><th></th></tr></thead><tbody>${[...list].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(e=>`<tr>
       <td class="nw">${fd(e.date)}</td><td>${esc((e.raw||{}).type||(e.category==="salary"?"Salary":"Other"))}${(e.raw||{}).monthly?' <span class="tal-st" style="display:inline">· monthly</span>':""}</td>
       <td>${esc(e.description)}</td><td class="num">${R(e.amount)}</td>
-      <td class="nw"><button class="btn small" type="button" data-oxdel="${esc(e.id)}">Remove</button></td></tr>`).join("")}</tbody>
+      <td class="nw"><label class="note inline" style="margin-right:8px"><input type="checkbox" data-oxmon="${esc(e.id)}" ${(e.raw||{}).monthly?"checked":""}> Every month</label><button class="btn small" type="button" data-oxdel="${esc(e.id)}">Remove</button></td></tr>`).join("")}</tbody>
       <tfoot><tr><td colspan="3">Total for ${esc(mLabel)}</td><td class="num">${R(total)}</td><td></td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No salaries or expenses added for ${esc(mLabel)} yet.</td></tr></tbody>`;
 }
@@ -1458,6 +1458,11 @@ $("#opexForm").addEventListener("submit",async e=>{ e.preventDefault();
     raw:{ type, monthly:$("#ox-monthly").checked, by:me?.email||null } };
   const {error}=await sb.from("expenses").insert(row);
   if(error) toast("Couldn't save: "+errMsg(error)); else { $("#ox-desc").value=""; $("#ox-amt").value=""; $("#ox-monthly").checked=false; toast(`${type} added: ${R(amt)}`); loadAll(); } });
+$("#opexTable").addEventListener("change",async e=>{ const c=e.target.closest("[data-oxmon]"); if(!c) return;
+  const ex=expenses.find(x=>x.id===c.dataset.oxmon); if(!ex) return;
+  const {error}=await sb.from("expenses").update({raw:{...(ex.raw||{}), monthly:c.checked}}).eq("id",ex.id);
+  if(error){ toast("Couldn't save: "+errMsg(error)); c.checked=!c.checked; return; }
+  toast(c.checked?`${ex.description}: repeats every month`:`${ex.description}: no longer repeats`); loadAll(); });
 $("#opexTable").addEventListener("click",async e=>{ const b=e.target.closest("[data-oxdel]"); if(!b) return;
   if(b.dataset.sure!=="1"){ b.dataset.sure="1"; b.textContent="Tap again to remove"; b.classList.add("danger"); return; }
   const {error}=await sb.from("expenses").delete().eq("id",b.dataset.oxdel);
