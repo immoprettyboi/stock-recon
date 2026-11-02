@@ -129,6 +129,9 @@ tr.row-s-return_me td:first-child{box-shadow:inset 3px 0 var(--bad)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .filters input[type=search]{flex:1 1 220px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
+.scanbar{display:flex;gap:8px;flex-wrap:wrap}
+.scanbar input{flex:1 1 260px;font-size:16px;padding:12px 14px;border-radius:10px}
+.scanbar input:focus{outline:2px solid var(--fg)}
 .where{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .where button{appearance:none;text-align:left;font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;cursor:pointer}
 .where button[aria-selected="true"]{border-color:var(--fg);box-shadow:0 0 0 1px var(--fg) inset}
@@ -442,6 +445,11 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
   <section id="view-add" class="stack" hidden>
     <div class="panel">
       <div class="sec-head"><h2>Add stock you've bought</h2><p>One row is created per unit. Add 5 of the same item at once by setting the quantity.</p></div>
+      <div class="scanbar">
+        <input id="a-scan" placeholder="Scan here: box barcode, then each IMEI / serial" aria-label="Scan a barcode" autocomplete="off" enterkeyhint="done">
+        <button class="btn" type="button" id="camBtn">📷 Scan with camera</button>
+      </div>
+      <p class="note" id="scanMsg" style="margin:6px 0 14px">With a USB or Bluetooth scanner, click in the box above and scan. Scan the box barcode to pick the product, then each unit's IMEI / serial: the quantity counts up by itself.</p>
       <form class="grid" id="addForm" autocomplete="off">
         <div class="field wide"><label for="a-product">Product</label><input id="a-product" list="dl-products" required placeholder="e.g. Playstation 5 Slim Digital"></div>
         <div class="field"><label for="a-qty">Quantity</label><input id="a-qty" type="number" min="1" max="200" value="1" required></div>
@@ -627,6 +635,23 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
   </div>
 </dialog>
 
+<dialog id="camDlg" aria-labelledby="camTitle">
+  <div class="dlg-head"><h2 id="camTitle">Scan with camera</h2><div class="spacer"></div><button class="btn primary" id="camClose" type="button">Done</button></div>
+  <div class="dlg-body">
+    <video id="camVid" playsinline muted style="width:100%;max-height:60vh;border-radius:10px;background:#000"></video>
+    <p class="note" id="camMsg" style="margin:0">Point the camera at a barcode. Keep scanning: each code is added as you go.</p>
+  </div>
+</dialog>
+
+<dialog id="bcDlg" aria-labelledby="bcTitle">
+  <div class="dlg-head"><h2 id="bcTitle">New barcode</h2><div class="spacer"></div><button class="btn" id="bcClose" type="button">Cancel</button></div>
+  <form class="dlg-body" id="bcForm" autocomplete="off">
+    <p class="note" style="margin:0">You scanned <b class="mono" id="bcCode"></b>. Is it the barcode on the box, or this unit's IMEI / serial number?</p>
+    <div class="field wide"><label for="bc-product">If it's the box barcode: which product?</label><input id="bc-product" list="dl-products" placeholder="Pick the product"></div>
+    <div class="form-actions"><button class="btn primary" type="submit">Box barcode: remember it</button><div class="spacer"></div><button class="btn" type="button" id="bcSerial">It's a serial / IMEI</button></div>
+  </form>
+</dialog>
+
 <dialog id="adamDlg" aria-labelledby="adamTitle">
   <div class="dlg-head"><h2 id="adamTitle">Add Adam delivery</h2><div class="spacer"></div><button class="btn" id="adamClose" type="button">Close</button></div>
   <form class="dlg-body" id="adamForm" autocomplete="off">
@@ -695,6 +720,7 @@ const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").le
   return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute}`; };
 // Takealot's own status for a sold unit's order, shown under "Sold, awaiting fees"
 const talLine = u => u.status==="awaiting_fees" && talStatus[u.order_id] ? talStatus[u.order_id] : "";
+let barcodes = null;               // box barcode -> product (null = table not there yet)
 let state = { view:"overview", status:"", q:"", loc:"", sup:"", onlyMonth:false, month:"", where:"" };
 let loaded=false;
 
@@ -736,7 +762,12 @@ async function selectAll(table, q="*"){
   let out=[], from=0;
   for(;;){ const {data,error}=await sb.from(table).select(q).range(from,from+999); if(error) throw error; out=out.concat(data); if(data.length<1000) return out; from+=1000; }
 }
+async function loadBarcodes(){
+  const {data,error}=await sb.from("barcodes").select("code,product");
+  barcodes = error ? null : Object.fromEntries(data.map(x=>[x.code,x.product]));
+}
 async function loadAll(){
+  loadBarcodes();
   try{
     const [u,s,p,r] = await Promise.all([
       selectAll("units"),
@@ -798,6 +829,7 @@ function setView(v){
   ["overview","stock","match","add","ship","expenses","debtors","price","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
+  if(v==="add" && matchMedia("(pointer:fine)").matches) setTimeout(()=>$("#a-scan").focus(),50);   // ready for a USB scanner
 }
 
 /* ---------------- sync card ---------------- */
@@ -1740,6 +1772,64 @@ $("#eDelYes").addEventListener("click", async ()=>{
 });
 
 /* ---------------- add stock ---------------- */
+/* ---------------- barcode scanner (USB / Bluetooth scanner types into #a-scan; or the phone camera) ---------------- */
+let beepCtx=null;
+function beep(ok=true){ try{ beepCtx=beepCtx||new (window.AudioContext||window.webkitAudioContext)(); const o=beepCtx.createOscillator(), g=beepCtx.createGain();
+  o.frequency.value=ok?1500:400; g.gain.value=.08; o.connect(g); g.connect(beepCtx.destination); o.start(); o.stop(beepCtx.currentTime+(ok?.08:.25)); }catch(e){} try{ navigator.vibrate&&navigator.vibrate(ok?40:[80,60,80]); }catch(e){} }
+const serials=()=>$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean);
+function scanSay(t,ok=true){ $("#scanMsg").textContent=t; $("#camMsg").textContent=t; beep(ok); }
+function addSerial(c){
+  if(serials().includes(c)) return scanSay(`${c} is already in this list.`,false);
+  const had=units.find(u=>(u.sn||"").split(/[\s,]+/).includes(c));
+  if(had) return scanSay(`${c} is already in your stock: ${had.product} (${STATUS[had.status]?.short||had.status}). Not added.`,false);
+  const list=serials(); list.push(c); $("#a-sn").value=list.join("\n"); $("#a-qty").value=list.length; snHint(); addHints();
+  scanSay(`✓ ${c} · ${list.length} unit${list.length>1?"s":""} of ${$("#a-product").value.trim()||"this product"}`);
+}
+function setProduct(name,code){ $("#a-product").value=name; addHints(); scanSay(`✓ Product: ${name}${code?` (box ${code})`:""}. Now scan each unit's IMEI / serial.`); }
+const looksLikeBox=c=>/^\d{8}$|^\d{12,14}$/.test(c);        // EAN-8 / UPC / EAN-13 / GTIN-14 (IMEIs are 15 digits)
+let bcPending=null;
+function onScan(raw){
+  const c=String(raw||"").trim(); if(!c) return;
+  if(barcodes && barcodes[c]) return setProduct(barcodes[c],c);
+  const cur=$("#a-product").value.trim();
+  if(!cur || looksLikeBox(c)){                      // unknown box barcode, or no product picked yet: ask once, remember it
+    if(barcodes===null && !cur){ return scanSay("Pick the product first (run 16_database_update.sql in Supabase so the app can learn box barcodes).",false); }
+    bcPending=c; $("#bcCode").textContent=c; $("#bc-product").value=cur; $("#bcSerial").hidden=!cur;
+    camPause(true); $("#bcDlg").showModal(); setTimeout(()=>$("#bc-product").focus(),50); return;
+  }
+  addSerial(c);
+}
+$("#a-scan").addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key==="Tab"){ e.preventDefault(); onScan(e.target.value); e.target.value=""; } });
+$("#bcForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const name=$("#bc-product").value.trim(), c=bcPending; if(!name){ $("#bc-product").focus(); return; }
+  if(barcodes!==null){ const {error}=await sb.from("barcodes").upsert({code:c,product:name,created_by:me?.email||null}); if(error){ toast("Couldn't save the barcode: "+errMsg(error)); } else barcodes[c]=name; }
+  $("#bcDlg").close(); setProduct(name,c); camPause(false); $("#a-scan").focus(); });
+$("#bcSerial").addEventListener("click",()=>{ $("#bcDlg").close(); addSerial(bcPending); camPause(false); $("#a-scan").focus(); });
+$("#bcClose").addEventListener("click",()=>{ $("#bcDlg").close(); camPause(false); });
+// camera: ZXing (works on Android, iPhone and PCs), loaded only when first used
+let camCtl=null, camPaused=false, camLast={c:"",t:0};
+function loadZX(){ return window.ZXingBrowser ? Promise.resolve() : new Promise((ok,bad)=>{ const s=document.createElement("script");
+  s.src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js"; s.onload=ok; s.onerror=()=>bad(new Error("Couldn't load the scanner")); document.head.appendChild(s); }); }
+function camPause(p){ camPaused=p; }
+async function camStart(){
+  $("#camMsg").textContent="Starting the camera…"; $("#camDlg").showModal();
+  try{
+    await loadZX();
+    const reader=new ZXingBrowser.BrowserMultiFormatReader();
+    camCtl=await reader.decodeFromConstraints({video:{facingMode:"environment"}}, $("#camVid"), res=>{
+      if(!res || camPaused) return;
+      const c=res.getText(), now=Date.now();
+      if(c===camLast.c && now-camLast.t<2500) return;  // the same code stays in view: count it once
+      camLast={c,t:now}; onScan(c);
+    });
+    $("#camMsg").textContent="Point the camera at a barcode. Keep scanning: each code is added as you go.";
+  }catch(e){ $("#camMsg").textContent="Camera not available: "+(e.message||e)+". Allow camera access for this site and try again."; }
+}
+function camStop(){ try{ camCtl&&camCtl.stop(); }catch(e){} camCtl=null; if($("#camDlg").open) $("#camDlg").close(); }
+$("#camBtn").addEventListener("click",camStart);
+$("#camClose").addEventListener("click",camStop);
+$("#camDlg").addEventListener("close",()=>{ try{ camCtl&&camCtl.stop(); }catch(e){} camCtl=null; });
+
 function snHint(){ const n=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean).length, q=+$("#a-qty").value||0;
   $("#snHint").textContent = n ? (n===q?`${n} serial numbers, one per unit.`:`${n} serial numbers for ${q} units. ${n<q?"The rest stay blank.":"Extra lines are ignored."}`) : ""; }
 $("#a-sn").addEventListener("input",snHint); $("#a-qty").addEventListener("input",snHint);
