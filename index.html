@@ -1271,7 +1271,7 @@ async function markDropped(dd){
 // Adam's deliveries to Takealot, shown alongside the courier shipments
 function adamShips(){
   return expenses.filter(e=>e.category==="adam_delivery" && (e.raw||{}).po).map(e=>{ const r=e.raw||{}, p=poRow(r.po)||{};
-    const done=/receiv|clos/i.test(p.status||"") ? "delivered" : /cancel/i.test(p.status||"") ? "cancelled" : r.dropped ? "dropped-off" : "booked-with-adam";
+    const done=/receiv|clos/i.test(p.status||"") ? "delivered" : /cancel/i.test(p.status||"") ? "cancelled" : r.dropped ? "dropped-off" : "booked-with-Adam";
     return { id:"adam:"+e.id, adam:e, waybill:"Adam", reference:"PO "+r.po, takealot_dc:String(p.warehouse||p.facility||"").slice(0,3).toUpperCase(),
       status:done, direction:"to_takealot", cost:e.amount, note:e.description,
       expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `dropped off ${fd(r.dropped_at||e.date)}` : `planned ${fd(e.date)}` }; });
@@ -1283,7 +1283,7 @@ function renderShips(){
     if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
     return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th>${dir==="to_takealot"?"<th>Contents (Takealot PO)</th>":""}<th class="num">Cost</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
       return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
-      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">✅ Adam dropped it off</button>`:""}</td>
+      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-Adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">✅ Adam dropped it off</button>`:""}</td>
       ${dir==="to_takealot"?`<td style="min-width:220px">${esc(contents(poRow(poOf(x))))||'<span class="muted">–</span>'}</td>`:""}
       <td class="num">${x.cost!=null?R(Number(x.cost)):""}</td>
       <td>${us.length?`<button class="btn small" type="button" data-shipunits="${esc(x.id)}">${us.length} unit${us.length>1?"s":""}</button>`:'<span class="muted">–</span>'}</td>
