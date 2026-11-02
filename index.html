@@ -787,7 +787,7 @@ async function loadAll(){
     { let {data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date,customer_comment").order("return_date",{ascending:false});
       if(error) ({data,error}=await sb.from("takealot_returns").select("return_id,rrn,order_id,sku,title,qty,dc,reason,outcome,return_date").order("return_date",{ascending:false}));
       rets = error ? [] : data; }
-    { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items").order("due_date",{ascending:false});
+    { const {data,error}=await sb.from("takealot_pos").select("po,shipment_id,reference,warehouse,facility,due_date,status,qty_sending,qty_received,qty_damaged,items,shipped:raw->shipped").order("due_date",{ascending:false});
       pos = error ? [] : data; }
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
@@ -1246,7 +1246,7 @@ function renderPOs(){
     const cost=x&&x.cost!=null?Number(x.cost):(ad?ad.amount:null); if(cost) tot+=cost;
     const us=units.filter(u=>u.po===p.po).length;
     const rec=p.qty_received!=null?`${p.qty_received}${p.qty_damaged?` <span class="neg">(${p.qty_damaged} damaged)</span>`:""}`:'<span class="muted">–</span>';
-    return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${esc(p.status||"")}</td>
+    return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? '<span class="pill s-return_me">Not marked shipped</span>' : esc(p.status||"")}</td>
       <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
       <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>`:'<span class="muted">no courier found</span>'}</td>
       <td class="num">${cost!=null?R(cost):""}</td>

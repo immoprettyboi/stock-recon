@@ -2243,8 +2243,9 @@ def mark_collected_shipped(ctx, cfg, auth, log):
     if not auth:
         return
     db = S.DB(cfg["url"], cfg["key"])
-    open_pos = {p["po"]: p for p in db.select("takealot_pos", "select=po,shipment_id,status,reference,warehouse&status=eq.Not%20shipped")
-                if p.get("shipment_id")}
+    # the PO's own status says "Shipped" as soon as it's issued; whether YOU marked it shipped is the shipment's "shipped" flag
+    open_pos = {p["po"]: p for p in db.select("takealot_pos", "select=po,shipment_id,status,reference,warehouse,shipped:raw->shipped")
+                if p.get("shipment_id") and p.get("shipped") is False and not _r.search(r"cancel|receiv|clos", str(p.get("status") or ""), _r.I)}
     if not open_pos:
         return
     not_yet = ("cancelled", "new", "pending", "draft", "submitted", "quote", "quoted", "returned-to-sender", "unallocated")
@@ -2271,7 +2272,7 @@ def mark_collected_shipped(ctx, cfg, auth, log):
                     break
                 why = f"{r.status} {r.text()[:120]}"
             if ok:
-                db.patch("takealot_pos", f"po=eq.{po}", {"status": "Shipped", "updated_at": datetime.utcnow().isoformat() + "Z"})
+                db.patch("takealot_pos", f"po=eq.{po}", {"updated_at": datetime.utcnow().isoformat() + "Z"})
                 open_pos.pop(po, None)
                 log(f"Shipment PO {po}: Courier Guy collected it ({c['waybill']}, {st}), so it's now marked as shipped on the Seller Portal.")
                 try:
