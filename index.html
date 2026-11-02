@@ -1258,34 +1258,45 @@ function renderPOs(){
     <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
 }
 $("#poTable").addEventListener("click",async e=>{ const d=e.target.closest("[data-adamdrop]"); if(d){ openAdam(d.dataset.adamdrop); return; }
-  const dd=e.target.closest("[data-dropped]");
-  if(dd){ const ex=expenses.find(x=>x.id===dd.dataset.dropped); if(!ex) return; dd.disabled=true;
-    const {error}=await sb.from("expenses").update({raw:{...(ex.raw||{}), dropped:true, dropped_at:today()}}).eq("id",ex.id);
-    if(error){ toast("Couldn't save: "+errMsg(error)); dd.disabled=false; return; }
-    await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
-    toast(`PO ${(ex.raw||{}).po}: dropped off · the PC will mark it as shipped on the Seller Portal`); loadAll(); return; } const b=e.target.closest("[data-poq]"); if(!b) return;
+  const dd=e.target.closest("[data-dropped]"); if(dd){ markDropped(dd); return; } const b=e.target.closest("[data-poq]"); if(!b) return;
   state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value=""; state.q=b.dataset.poq; $("#q").value=state.q;
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
+async function markDropped(dd){
+  const ex=expenses.find(x=>x.id===dd.dataset.dropped); if(!ex) return; dd.disabled=true;
+  const {error}=await sb.from("expenses").update({raw:{...(ex.raw||{}), dropped:true, dropped_at:today()}}).eq("id",ex.id);
+  if(error){ toast("Couldn't save: "+errMsg(error)); dd.disabled=false; return; }
+  await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
+  toast(`PO ${(ex.raw||{}).po}: dropped off · the PC will mark it as shipped on the Seller Portal`); loadAll();
+}
+// Adam's deliveries to Takealot, shown alongside the courier shipments
+function adamShips(){
+  return expenses.filter(e=>e.category==="adam_delivery" && (e.raw||{}).po).map(e=>{ const r=e.raw||{}, p=poRow(r.po)||{};
+    const done=/receiv|clos/i.test(p.status||"") ? "delivered" : /cancel/i.test(p.status||"") ? "cancelled" : r.dropped ? "dropped-off" : "booked-with-adam";
+    return { id:"adam:"+e.id, adam:e, waybill:"Adam", reference:"PO "+r.po, takealot_dc:String(p.warehouse||p.facility||"").slice(0,3).toUpperCase(),
+      status:done, direction:"to_takealot", cost:e.amount, note:e.description,
+      expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `dropped off ${fd(r.dropped_at||e.date)}` : `planned ${fd(e.date)}` }; });
+}
 function renderShips(){
   const all=$("#shipAll").checked;
-  const list=ships.filter(x=>all||!SHIP_DONE.has(x.status));
+  const list=ships.concat(adamShips()).filter(x=>all||!SHIP_DONE.has(x.status));
   const table=(rows,dir)=>{ const L=rows.filter(x=>x.direction===dir);
     if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
     return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th>${dir==="to_takealot"?"<th>Contents (Takealot PO)</th>":""}<th class="num">Cost</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
       return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
-      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(shipWhen(x))}</td>
+      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">✅ Adam dropped it off</button>`:""}</td>
       ${dir==="to_takealot"?`<td style="min-width:220px">${esc(contents(poRow(poOf(x))))||'<span class="muted">–</span>'}</td>`:""}
       <td class="num">${x.cost!=null?R(Number(x.cost)):""}</td>
       <td>${us.length?`<button class="btn small" type="button" data-shipunits="${esc(x.id)}">${us.length} unit${us.length>1?"s":""}</button>`:'<span class="muted">–</span>'}</td>
       <td style="min-width:260px">${esc(cleanNote(x.note)).slice(0,220)}</td></tr>`; }).join("")}</tbody>`; };
   $("#shipFrom").innerHTML=table(list,"from_takealot");
   $("#shipTo").innerHTML=table(list,"to_takealot");
-  $("#cntShip").textContent=ships.filter(x=>!SHIP_DONE.has(x.status)).length||"";
+  $("#cntShip").textContent=ships.concat(adamShips()).filter(x=>!SHIP_DONE.has(x.status)).length||"";
   renderPOs();
 }
 $("#shipAll").addEventListener("change",renderShips);
-for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const b=e.target.closest("[data-shipunits]"); if(!b) return;
-  const x=ships.find(s=>s.id===b.dataset.shipunits); const ids=new Set(shipUnits(x).map(u=>u.product));
+for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const dd=e.target.closest("[data-dropped]"); if(dd){ markDropped(dd); return; }
+  const b=e.target.closest("[data-shipunits]"); if(!b) return;
+  const x=ships.concat(adamShips()).find(s=>s.id===b.dataset.shipunits); const ids=new Set(shipUnits(x).map(u=>u.product));
   state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value="";
   const po=poOf(x); state.q = x.direction==="to_takealot" ? po : ""; $("#q").value=state.q;
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
