@@ -597,16 +597,25 @@ def price_tick(cfg, log, force=False):
             except Exception:
                 pass
             import time as _time
-            t_end = _time.time() + 85                     # continuous listings: keep checking every ~2 s, one browser for 85 s
+            # continuous listings: keep one browser for up to 10 minutes, checking every ~3 s (starting Chrome is the
+            # heavy part, so don't restart it every minute); stop early if the app asks for a sync
+            t_end, next_req = _time.time() + 600, 0
             while True:
                 for r in due:
                     try:
                         _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
                     except Exception as e:
                         log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
-                if _time.time() > t_end - 2:
+                if _time.time() > t_end - 3:
                     break
-                _time.sleep(2)
+                _time.sleep(3)
+                if _time.time() >= next_req:
+                    next_req = _time.time() + 15
+                    try:
+                        if db.select("sync_runs", "select=id&requested=is.true&finished_at=is.null&limit=1"):
+                            break
+                    except Exception:
+                        pass
                 try:
                     rules = db.select("price_rules", "select=*&enabled=is.true")
                 except Exception:
@@ -728,6 +737,9 @@ def _read_live(page, plid, offer_id, mine):
 
 
 
+_FCACHE = {}
+
+
 def _fight_one(ctx, page, db, rule, prod, auth, log):
     import math
     sku = rule["sku"]
@@ -769,16 +781,22 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         my_price = bb_price
     elif live.get("mine") is not None:
         my_price = float(live["mine"])                     # what Takealot shows now (e.g. after a manual change)
-    floor = _floor_for(db, rule, prod)
+    ck = _FCACHE.setdefault(sku, {})
+    if _time.time() - ck.get("floor_at", 0) > 300:            # the floor only changes with stock / sales: every 5 min is plenty
+        ck["floor"], ck["floor_at"] = _floor_for(db, rule, prod), _time.time()
+    floor = ck["floor"]
     ceiling = float(rule["ceiling_price"]) if rule.get("ceiling_price") else None
     step = max(1.0, float(rule.get("step") or 1))
     fight = rule.get("mode") == "fight"
     # how many real changes in the last 24 h
     since = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
-    try:
-        changes = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised,at_floor,reset,follow)&at=gt.{since}"))
-    except Exception:
-        changes = 0
+    if _time.time() - ck.get("changes_at", 0) > 60:
+        try:
+            ck["changes"] = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised,at_floor,reset,follow)&at=gt.{since}"))
+        except Exception:
+            ck["changes"] = 0
+        ck["changes_at"] = _time.time()
+    changes = ck["changes"]
     target, action, note = None, None, ""
     new_phase = {"p": "fight", "since": 0}                  # default: normal fighting (reset unless the floor logic says otherwise)
     if not winning:
@@ -912,7 +930,12 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             _tsave(tmf)
             if below:
                 alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
-    db.patch("price_rules", f"sku=eq.{sku}", upd)
+    sig = json.dumps({k: upd.get(k) for k in ("my_price", "bb_price", "bb_seller", "winning", "floor_used", "last_action", "last_change_at")}, default=str)
+    if sig != ck.get("sig") or _time.time() - ck.get("saved_at", 0) > 60:     # only write when something changed (or once a minute)
+        db.patch("price_rules", f"sku=eq.{sku}", upd)
+        ck["sig"], ck["saved_at"] = sig, _time.time()
+    if upd.get("last_change_at"):
+        ck["changes_at"] = 0                                   # recount after a change
     # During a fast fight, won / lost / lowered / raised would fire every few seconds and the phone mutes the app.
     # Those are rolled into one update at most every 15 minutes; the important ones (floor, ceiling, refused) always go.
     routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered", "➡️")
