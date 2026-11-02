@@ -2249,11 +2249,25 @@ def mark_collected_shipped(ctx, cfg, auth, log):
     if not open_pos:
         return
     not_yet = ("cancelled", "new", "pending", "draft", "submitted", "quote", "quoted", "returned-to-sender", "unallocated")
+    todo = []                                               # (po, how it went, tracking info)
     for c in db.select("courier_shipments", "select=waybill,reference,status,direction&direction=eq.to_takealot"):
         st = str(c.get("status") or "").lower()
         if not st or "collection" in st or st in not_yet:     # not collected yet (or never will be)
             continue
         for po in _r.findall(r"\b(\d{9})\b", str(c.get("reference") or "")):
+            todo.append((po, f"Courier Guy collected it ({c['waybill']}, {st})", f"Courier Guy {c['waybill']}", c["waybill"]))
+    # dropped off by Adam (or someone else): recorded in the app with the PO, on or before today
+    try:
+        for e in db.select("expenses", "select=category,date,raw&category=in.(adam_delivery,delivery_other)"):
+            raw = e.get("raw") or {}
+            po = str(raw.get("po") or "")
+            if po and (e["category"] == "delivery_other" or raw.get("dropped")):     # only once you pressed "dropped off"
+                who = "Adam" if e["category"] == "adam_delivery" else "own delivery"
+                day = raw.get("dropped_at") or e["date"]
+                todo.append((po, f"dropped off by {who} on {day}", f"Delivered by {who} {day}", who))
+    except Exception:
+        pass
+    for po, how, tracking, ref in todo:
             p = open_pos.get(po)
             if not p:
                 continue
@@ -2261,7 +2275,7 @@ def mark_collected_shipped(ctx, cfg, auth, log):
             hdr = {**auth, "content-type": "application/json"}
             try:
                 ctx.request.put(f"https://{API_HOST}/v1/shipment/{sid}/tracking_info", headers=hdr,
-                                data=json.dumps({"tracking_info": f"Courier Guy {c['waybill']}"}), timeout=60_000)
+                                data=json.dumps({"tracking_info": tracking}), timeout=60_000)
             except Exception:
                 pass
             ok, why = False, ""
@@ -2274,10 +2288,10 @@ def mark_collected_shipped(ctx, cfg, auth, log):
             if ok:
                 db.patch("takealot_pos", f"po=eq.{po}", {"updated_at": datetime.utcnow().isoformat() + "Z"})
                 open_pos.pop(po, None)
-                log(f"Shipment PO {po}: Courier Guy collected it ({c['waybill']}, {st}), so it's now marked as shipped on the Seller Portal.")
+                log(f"Shipment PO {po}: {how}, so it's now marked as shipped on the Seller Portal.")
                 try:
                     notify({"url": cfg["url"], "key": cfg["key"]}, "🚚 Shipment marked as shipped",
-                           f"PO {po} ({p.get('warehouse') or ''}): collected by Courier Guy on {c['waybill']}.", url="./?view=ship", topic="price", log=log)
+                           f"PO {po} ({p.get('warehouse') or ''}): {how}.", url="./?view=ship", topic="price", log=log)
                 except Exception:
                     pass
             else:

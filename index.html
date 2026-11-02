@@ -665,6 +665,7 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
       <div class="field wide"><label for="ad-note">Note</label><input id="ad-note" placeholder="Optional"></div>
     </div>
     <p class="note" style="margin:0">Total: <b id="ad-total"></b></p>
+    <label class="note inline" style="margin:0"><input type="checkbox" id="ad-dropped" checked> Adam has dropped the stock off at Takealot: mark the PO as shipped on the Seller Portal</label>
     <div class="form-actions"><button class="btn primary" type="submit">Save delivery</button><div class="spacer"></div><button class="btn" type="button" id="adNotAdam" hidden>Not Adam: someone else delivered it</button></div>
   </form>
 </dialog>
@@ -1178,7 +1179,7 @@ $("#adamAdd2").addEventListener("click",()=>openAdam(""));
 function openAdam(po){
   const sel=$("#ad-po"); const recent=pos.filter(p=>!courierFor(p.po)).slice(0,30);
   sel.innerHTML=`<option value="">No PO / other delivery</option>`+recent.map(p=>`<option value="${esc(p.po)}">${esc(p.po)} · ${esc(p.facility||p.warehouse||"")} · ${fd(p.due_date)} · ${p.qty_sending??"?"} units</option>`).join("");
-  $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value="";
+  $("#ad-dropped").checked=true; $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value="";
   if(po){ sel.value=po; const p=poRow(po); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; }
   $("#adNotAdam").hidden=!po; adamCalc();
   $("#adamDlg").showModal();
@@ -1187,7 +1188,8 @@ $("#adNotAdam").addEventListener("click",async()=>{
   const po=$("#ad-po").value; if(!po) return;
   const {error}=await sb.from("expenses").insert({ id:`other-${po}`, date:today(), category:"delivery_other", amount:0, source:"app",
     description:`PO ${po} delivered another way (no cost recorded)`, raw:{po} });
-  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`PO ${po} marked as not Adam`); loadAll(); } });
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`PO ${po} marked as not Adam · the PC will mark it as shipped on the Seller Portal`);
+    await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"}); loadAll(); } });
 $("#ad-po").addEventListener("change",()=>{ const p=poRow($("#ad-po").value); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; adamCalc(); });
 function adamCalc(){ const t=(Number($("#ad-fee").value)||0)+(Number($("#ad-wrap").value)||0)*(Number($("#ad-rate").value)||0);
   const b=adamBalance(); $("#ad-total").textContent=`${R(t)}${b?` · Adam's balance goes from ${R(b.balance)} to ${R(b.balance-t)}`:""}`; return t; }
@@ -1197,9 +1199,11 @@ $("#adamForm").addEventListener("submit",async e=>{ e.preventDefault();
   const po=$("#ad-po").value, wrap=Number($("#ad-wrap").value)||0, fee=Number($("#ad-fee").value)||0, rate=Number($("#ad-rate").value)||0, total=adamCalc();
   const row={ id:`adam-${po||Date.now()}-${Date.now()}`, date:$("#ad-date").value||today(), category:"adam_delivery", amount:total, source:"app",
     description:`Adam delivery${po?` · PO ${po}`:""} · ${wrap} unit${wrap===1?"":"s"} wrapped`+($("#ad-note").value.trim()?` · ${$("#ad-note").value.trim()}`:""),
-    raw:{po, wrapped:wrap, delivery_fee:fee, wrap_rate:rate} };
+    raw:{po, wrapped:wrap, delivery_fee:fee, wrap_rate:rate, dropped:$("#ad-dropped").checked, dropped_at:$("#ad-dropped").checked?today():null} };
   const {error}=await sb.from("expenses").insert(row);
-  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`Adam delivery saved: ${R(total)}`); loadAll(); } });
+  if(error) toast("Couldn't save: "+errMsg(error)); else { $("#adamDlg").close(); toast(`Adam delivery saved: ${R(total)}${po&&row.raw.dropped?" · the PC will mark PO "+po+" as shipped on the Seller Portal":""}`);
+    if(po && row.raw.dropped) await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
+    loadAll(); } });
 $("#adamSet").addEventListener("click",()=>{ const b=adamBalance(); $("#ab-amt").value=b?b.balance.toFixed(2):""; $("#balDlg").showModal(); });
 $("#balClose").addEventListener("click",()=>$("#balDlg").close());
 $("#balForm").addEventListener("submit",async e=>{ e.preventDefault();
@@ -1248,12 +1252,18 @@ function renderPOs(){
     const rec=p.qty_received!=null?`${p.qty_received}${p.qty_damaged?` <span class="neg">(${p.qty_damaged} damaged)</span>`:""}`:'<span class="muted">–</span>';
     return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? '<span class="pill s-return_me">Not marked shipped</span>' : esc(p.status||"")}</td>
       <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
-      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>`:'<span class="muted">no courier found</span>'}</td>
+      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"")?((ad.raw||{}).dropped?' <span class="muted">· marking as shipped…</span>':` <button class="btn small primary" type="button" data-dropped="${esc(ad.id)}">✅ Adam dropped it off</button>`):""}`:(p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? `<button class="btn small primary" type="button" data-adamdrop="${esc(p.po)}">🚚 Adam dropped it off</button>` : '<span class="muted">no courier found</span>')}</td>
       <td class="num">${cost!=null?R(cost):""}</td>
       <td>${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
 }
-$("#poTable").addEventListener("click",e=>{ const b=e.target.closest("[data-poq]"); if(!b) return;
+$("#poTable").addEventListener("click",async e=>{ const d=e.target.closest("[data-adamdrop]"); if(d){ openAdam(d.dataset.adamdrop); return; }
+  const dd=e.target.closest("[data-dropped]");
+  if(dd){ const ex=expenses.find(x=>x.id===dd.dataset.dropped); if(!ex) return; dd.disabled=true;
+    const {error}=await sb.from("expenses").update({raw:{...(ex.raw||{}), dropped:true, dropped_at:today()}}).eq("id",ex.id);
+    if(error){ toast("Couldn't save: "+errMsg(error)); dd.disabled=false; return; }
+    await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
+    toast(`PO ${(ex.raw||{}).po}: dropped off · the PC will mark it as shipped on the Seller Portal`); loadAll(); return; } const b=e.target.closest("[data-poq]"); if(!b) return;
   state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value=""; state.q=b.dataset.poq; $("#q").value=state.q;
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 function renderShips(){
