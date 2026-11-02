@@ -1209,6 +1209,32 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("API probe failed: " + repr(e)[:200])
 
+            # ---- one-off: search the Seller Portal's code for keywords (debug/bundle_search.txt, one keyword per line)
+            try:
+                if (DEBUG_DIR / "bundle_search.txt").exists():
+                    keys = [k.strip() for k in (DEBUG_DIR / "bundle_search.txt").read_text(encoding="utf-8").splitlines() if k.strip()]
+                    (DEBUG_DIR / "bundle_search.txt").unlink()
+                    import re as _rb
+                    home = ctx.request.get("https://sellers.takealot.com/", timeout=60_000).text()
+                    mains = _rb.findall(r'/assets/(main-[A-Za-z0-9_-]+\.js)', home)
+                    js = ""
+                    for mn in mains[:3]:
+                        js += ctx.request.get(f"https://sellers.takealot.com/assets/{mn}", timeout=60_000).text()
+                    chunks = sorted(set(_rb.findall(r'assets/([A-Za-z0-9_.-]+\.js)', js)))
+                    for c in chunks[:600]:
+                        try:
+                            js += "\n/*" + c + "*/\n" + ctx.request.get(f"https://sellers.takealot.com/assets/{c}", timeout=30_000).text()
+                        except Exception:
+                            pass
+                    segs = [{"key": "_chunks", "text": f"{len(chunks)} chunks, {len(js)} chars"}]
+                    for key in keys:
+                        for m in list(_rb.finditer(_rb.escape(key), js))[:6]:
+                            segs.append({"key": key, "text": js[max(0, m.start() - 700): m.start() + 700]})
+                    (DEBUG_DIR / "bundle_search.json").write_text(json.dumps(segs, indent=1), encoding="utf-8")
+                    log(f"Portal code search: {len(segs)} pieces saved.")
+            except Exception as e:
+                log("Portal code search failed: " + repr(e)[:200])
+
             # ---- one-off: read how the portal asks for a report (debug/recon_discover3.txt)
             try:
                 if (DEBUG_DIR / "recon_discover3.txt").exists():
@@ -1668,6 +1694,11 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 fetch_courier(ctx, cfg, log)
             except Exception as e:
                 log("Courier Guy couldn't be read: " + repr(e)[:200])
+            # ---- the courier has collected a shipment: mark it as shipped on the Seller Portal
+            try:
+                mark_collected_shipped(ctx, cfg, auth, log)
+            except Exception as e:
+                log("Marking shipments as shipped failed: " + repr(e)[:200])
             return sales, returns
         finally:
             ctx.close()
@@ -2203,6 +2234,53 @@ def fetch_takealot_pos(ctx, cfg, auth, log):
         allocate_po_units(cfg, rows, log)
     except Exception as e:
         log("Allocating units to new shipments failed: " + repr(e)[:200])
+
+
+def mark_collected_shipped(ctx, cfg, auth, log):
+    """When Courier Guy has collected a shipment to Takealot (its reference holds the PO number), mark that PO as
+    shipped on the Seller Portal and put the waybill in its tracking info, as you'd do by hand."""
+    import re as _r, stockrecon_sync as S
+    if not auth:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    open_pos = {p["po"]: p for p in db.select("takealot_pos", "select=po,shipment_id,status,reference,warehouse&status=eq.Not%20shipped")
+                if p.get("shipment_id")}
+    if not open_pos:
+        return
+    not_yet = ("cancelled", "new", "pending", "draft", "submitted", "quote", "quoted", "returned-to-sender", "unallocated")
+    for c in db.select("courier_shipments", "select=waybill,reference,status,direction&direction=eq.to_takealot"):
+        st = str(c.get("status") or "").lower()
+        if not st or "collection" in st or st in not_yet:     # not collected yet (or never will be)
+            continue
+        for po in _r.findall(r"\b(\d{9})\b", str(c.get("reference") or "")):
+            p = open_pos.get(po)
+            if not p:
+                continue
+            sid = p["shipment_id"]
+            hdr = {**auth, "content-type": "application/json"}
+            try:
+                ctx.request.put(f"https://{API_HOST}/v1/shipment/{sid}/tracking_info", headers=hdr,
+                                data=json.dumps({"tracking_info": f"Courier Guy {c['waybill']}"}), timeout=60_000)
+            except Exception:
+                pass
+            ok, why = False, ""
+            for path in (f"vi/shipment/{sid}/shipped?status=true", f"v1/shipment/{sid}/shipped?status=true"):
+                r = ctx.request.put(f"https://{API_HOST}/{path}", headers=hdr, timeout=60_000)
+                if r.ok:
+                    ok = True
+                    break
+                why = f"{r.status} {r.text()[:120]}"
+            if ok:
+                db.patch("takealot_pos", f"po=eq.{po}", {"status": "Shipped", "updated_at": datetime.utcnow().isoformat() + "Z"})
+                open_pos.pop(po, None)
+                log(f"Shipment PO {po}: Courier Guy collected it ({c['waybill']}, {st}), so it's now marked as shipped on the Seller Portal.")
+                try:
+                    notify({"url": cfg["url"], "key": cfg["key"]}, "🚚 Shipment marked as shipped",
+                           f"PO {po} ({p.get('warehouse') or ''}): collected by Courier Guy on {c['waybill']}.", url="./?view=ship", topic="price", log=log)
+                except Exception:
+                    pass
+            else:
+                log(f"Shipment PO {po}: couldn't mark it as shipped on the Seller Portal ({why}). Please do it by hand.")
 
 
 def allocate_po_units(cfg, rows, log):
