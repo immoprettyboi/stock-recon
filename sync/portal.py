@@ -561,6 +561,11 @@ def price_tick(cfg, log, force=False):
     in fight mode, changes your price within your floor / ceiling. Watch mode only records what it would do."""
     import math, stockrecon_sync as S
     _READ_LOG[0] = log
+    global _READ_FAIL_SINCE
+    if not hasattr(S, "_read_fail"):
+        S._read_fail = [0, 0]
+    _READ_FAIL_SINCE = S._read_fail                    # kept in the sync program, so it survives portal.py reloads
+    _READ_NOTIFY[0] = lambda t, b: notify({"url": cfg["url"], "key": cfg["key"]}, t, b, url="./?view=price", topic="price", log=log)
     db = S.DB(cfg["url"], cfg["key"])
     try:
         rules = db.select("price_rules", "select=*&enabled=is.true")
@@ -732,6 +737,8 @@ def _next_publish(t, now):
 BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
 _READ_FAIL_LOGGED = 0
 _READ_LOG = [print]
+_READ_NOTIFY = [None]
+_READ_FAIL_SINCE = [0, 0]             # since when reads fail, when the phones were last told
 
 
 def _read_live(page, plid, offer_id, mine):
@@ -770,7 +777,17 @@ def _read_live(page, plid, offer_id, mine):
             _READ_FAIL_LOGGED = _t.time()
             _READ_LOG[0](f"Price fighter: couldn't read the Buy Box for PLID{plid}: "
                           + (why or f"Takealot answered {j.get('_status', 'no buy box')} {str(j.get('_text') or '')[:150]}"))
+            if _READ_FAIL_SINCE[0] == 0:
+                _READ_FAIL_SINCE[0] = _t.time()
+            elif _t.time() - _READ_FAIL_SINCE[0] > 900 and _t.time() - _READ_FAIL_SINCE[1] > 3 * 3600 and _READ_NOTIFY[0]:
+                _READ_FAIL_SINCE[1] = _t.time()               # blind for 15+ minutes: tell the phones (at most every 3 hours)
+                try:
+                    _READ_NOTIFY[0]("⚠️ Price fighter can't see the Buy Box",
+                                    "Takealot is blocking the repricer's checks, so prices aren't being changed. If a VPN is on, try switching it off.")
+                except Exception:
+                    pass
         return None
+    _READ_FAIL_SINCE[0] = 0
     seller, price = str(it.get("sponsored_ads_seller_id") or ""), float(it.get("price") or 0)
     others = []
     for c in ((j.get("other_offers") or {}).get("conditions") or []):
