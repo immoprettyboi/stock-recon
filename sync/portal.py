@@ -565,6 +565,10 @@ def price_tick(cfg, log, force=False):
     if not hasattr(S, "_read_fail"):
         S._read_fail = [0, 0]
     _READ_FAIL_SINCE = S._read_fail                    # kept in the sync program, so it survives portal.py reloads
+    global _LAST_ACTIVE
+    if not hasattr(S, "_last_active"):
+        S._last_active = [__import__("time").time()]
+    _LAST_ACTIVE = S._last_active
     _READ_NOTIFY[0] = lambda t, b: notify({"url": cfg["url"], "key": cfg["key"]}, t, b, url="./?view=price", topic="price", log=log)
     db = S.DB(cfg["url"], cfg["key"])
     try:
@@ -626,7 +630,9 @@ def price_tick(cfg, log, force=False):
                         log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
                 if _time.time() > t_end - 3:
                     break
-                _time.sleep(3)
+                # in a live fight (Buy Box changed in the last 10 min) check every 2 s; when it's quiet every 5 s,
+                # so Takealot sees fewer requests overall and is less likely to block us
+                _time.sleep(2 if _time.time() - _LAST_ACTIVE[0] < 600 else 5)
                 if _time.time() >= next_req:
                     next_req = _time.time() + 15
                     try:
@@ -801,6 +807,7 @@ def _read_live(page, plid, offer_id, mine):
 
 
 _FCACHE = {}
+_LAST_ACTIVE = [__import__("time").time()]           # start fast after each restart / reload
 
 
 def _fight_one(ctx, page, db, rule, prod, auth, log):
@@ -997,6 +1004,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             _tsave(tmf)
             if below:
                 alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
+    bbsig = f"{bb_seller}:{bb_price}:{live.get('other_min')}"
+    if ck.get("bbsig") not in (None, bbsig) or target is not None:
+        _LAST_ACTIVE[0] = _time.time()                       # something moved: stay on fast checks
+    ck["bbsig"] = bbsig
     sig = json.dumps({k: upd.get(k) for k in ("my_price", "bb_price", "bb_seller", "winning", "floor_used", "last_action", "last_change_at")}, default=str)
     if sig != ck.get("sig") or _time.time() - ck.get("saved_at", 0) > 60:     # only write when something changed (or once a minute)
         db.patch("price_rules", f"sku=eq.{sku}", upd)
