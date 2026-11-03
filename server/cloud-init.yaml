@@ -1,0 +1,66 @@
+#cloud-config
+# Stock Recon server (xneelo Cloud, Ubuntu 24.04). Paste this whole file into "Config & Password > Configuration Script".
+timezone: Africa/Johannesburg
+package_update: true
+packages: [git, python3-venv, python3-pip, curl]
+write_files:
+  - path: /usr/local/bin/stockrecon-run
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # waits until config.ini has been copied over, then runs the sync for ever (systemd restarts it if it stops)
+      cd /opt/stockrecon/repo/sync
+      while [ ! -f config.ini ]; do sleep 20; done
+      exec /opt/stockrecon/venv/bin/python stockrecon_sync.py
+  - path: /usr/local/bin/stockrecon-update
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # every few minutes: take the latest code from GitHub; restart only if the main program changed
+      cd /opt/stockrecon/repo || exit 0
+      before=$(git rev-parse HEAD:sync/stockrecon_sync.py 2>/dev/null)
+      sudo -u ubuntu git pull -q --ff-only || exit 0
+      after=$(git rev-parse HEAD:sync/stockrecon_sync.py 2>/dev/null)
+      [ "$before" != "$after" ] && systemctl restart stockrecon
+      exit 0
+  - path: /etc/systemd/system/stockrecon.service
+    content: |
+      [Unit]
+      Description=Stock Recon sync + price fighter
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      User=ubuntu
+      Environment=PYTHONUNBUFFERED=1
+      Environment=LOCALAPPDATA=/home/ubuntu/.local/share
+      ExecStart=/usr/local/bin/stockrecon-run
+      Restart=always
+      RestartSec=15
+      [Install]
+      WantedBy=multi-user.target
+  - path: /etc/systemd/system/stockrecon-update.service
+    content: |
+      [Unit]
+      Description=Stock Recon code update
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/stockrecon-update
+  - path: /etc/systemd/system/stockrecon-update.timer
+    content: |
+      [Unit]
+      Description=Stock Recon code update every 5 minutes
+      [Timer]
+      OnBootSec=3min
+      OnUnitActiveSec=5min
+      [Install]
+      WantedBy=timers.target
+runcmd:
+  - mkdir -p /opt/stockrecon && chown ubuntu:ubuntu /opt/stockrecon
+  - sudo -u ubuntu git clone -q https://github.com/immoprettyboi/stock-recon.git /opt/stockrecon/repo
+  - sudo -u ubuntu python3 -m venv /opt/stockrecon/venv
+  - sudo -u ubuntu /opt/stockrecon/venv/bin/pip install -q playwright pywebpush pypdf
+  - /opt/stockrecon/venv/bin/python -m playwright install-deps chrome
+  - /opt/stockrecon/venv/bin/python -m playwright install chrome
+  - sudo -u ubuntu touch /opt/stockrecon/repo/sync/standby.txt
+  - systemctl daemon-reload
+  - systemctl enable --now stockrecon.service stockrecon-update.timer

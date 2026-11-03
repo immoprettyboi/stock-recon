@@ -394,6 +394,16 @@ def main():
     if "--once" in args:
         run_sync(cfg, headless="--show" not in args)
         return
+    # a new server waits in "standby" (standby.txt): it only tests that Takealot, the API key and Gmail work and
+    # reports that to the app, so it can't fight the PC over prices. Delete standby.txt to switch it on for real.
+    while (HERE / "standby.txt").exists():
+        try:
+            import importlib, portal as _ps
+            importlib.reload(_ps)
+            _ps.server_test(cfg, log)
+        except Exception as e:
+            log("Server test failed: " + repr(e)[:300])
+        time.sleep(300)
     log(f"Stock Recon sync started. Syncing every {cfg['interval']} minutes.")
     db = DB(cfg["url"], cfg["key"])
     while True:

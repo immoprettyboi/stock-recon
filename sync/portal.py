@@ -1048,6 +1048,46 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             log("Notification failed: " + repr(e)[:120])
 
 
+def server_test(cfg, log):
+    """Standby check on a new server: can it read the Buy Box, use the API key and read Gmail? Reported in the app."""
+    import socket, time as _t, stockrecon_sync as S
+    from playwright.sync_api import sync_playwright
+    out, ok = [], True
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.launch(channel=cfg.get("browser") or "chrome", headless=True, args=["--disable-blink-features=AutomationControlled"])
+            ctx = b.new_context(user_agent=BROWSER_UA, locale="en-ZA", timezone_id="Africa/Johannesburg")
+            pg = ctx.new_page()
+            try:
+                pg.goto("https://www.takealot.com/", wait_until="domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
+            live = _read_live(pg, "95228805", "231380523", "M29853221")
+            if live:
+                out.append(f"Buy Box OK ({'you' if live['seller'] == 'M29853221' else 'competitor'} R{live['price']:,.0f})")
+            else:
+                ok = False
+                out.append("Buy Box BLOCKED")
+            key = _creds_key()
+            if key:
+                r = ctx.request.get(f"https://{API_HOST}/v2/offers/offer/ID231380523", headers={"Authorization": f"Key {key}"}, timeout=30_000)
+                out.append(f"API key {'OK' if r.ok else 'failed ' + str(r.status)}")
+                ok = ok and r.ok
+            b.close()
+    except Exception as e:
+        ok = False
+        out.append("browser: " + repr(e)[:150])
+    g = gmail_otp(_t.time() - 30 * 86400, log, peek=True)
+    out.append("Gmail OK" if g else "Gmail not readable")
+    ok = ok and bool(g)
+    msg = f"[server test {socket.gethostname()}] " + " · ".join(out)
+    log(msg)
+    try:
+        S.DB(cfg["url"], cfg["key"]).insert("sync_runs", [{"message": msg[:300], "ok": ok, "finished_at": datetime.utcnow().isoformat() + "Z"}])
+    except Exception as e:
+        log("Server test: couldn't report to the app: " + repr(e)[:150])
+
+
 def test_logins(p, cfg, log):
     """One-off check (debug/login_test_request.txt): log in with the config.ini details in a fresh, separate browser,
     so the sync's own session is left alone."""
