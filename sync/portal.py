@@ -687,7 +687,8 @@ def _floor_for(db, rule, prod):
             ratio = sum(float(x["fees"]) / float(x["gross"]) for x in ss) / len(ss)
     except Exception:
         pass
-    return math.ceil((cost + float(rule.get("min_profit") or 0)) / max(0.5, 1 - ratio))
+    profit = max(float(rule.get("min_profit") or 0), cost * float(rule.get("min_profit_pct") or 0) / 100)   # rand or % of cost
+    return math.ceil((cost + profit) / max(0.5, 1 - ratio))
 
 
 # ---- sniper timing: Takealot publishes price changes in batches. Learn when, and send ours just before the cut-off.
