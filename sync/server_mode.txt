@@ -1,1 +1,1 @@
-standby
+live
