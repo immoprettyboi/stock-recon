@@ -560,12 +560,17 @@ def price_tick(cfg, log, force=False):
     """Called every minute between syncs. Checks the Buy Box of each listing you switched on (when it's due) and,
     in fight mode, changes your price within your floor / ceiling. Watch mode only records what it would do."""
     import math, stockrecon_sync as S
+    _READ_LOG[0] = log
     db = S.DB(cfg["url"], cfg["key"])
     try:
         rules = db.select("price_rules", "select=*&enabled=is.true")
     except RuntimeError:
         return                                            # before 13_database_update.sql
     now = datetime.utcnow()
+    if (DEBUG_DIR / "rules_dump.txt").exists():
+        (DEBUG_DIR / "rules_dump.txt").unlink()
+        allr = db.select("price_rules", "select=sku,enabled,mode,check_minutes,last_checked,last_action,winning,my_price,bb_price")
+        log("Price fighter rules: " + json.dumps(allr, default=str)[:1500])
     due = [r for r in rules if force or _due(r, now)]
     fast = any(r.get("check_minutes") is not None and int(r["check_minutes"]) <= 0 for r in rules)
     if not due:
@@ -574,7 +579,15 @@ def price_tick(cfg, log, force=False):
     from playwright.sync_api import sync_playwright
     import stockrecon_sync as SS
     with sync_playwright() as p:
-        ctx = launch(p, cfg, True, SS.PROFILE_DIR, SS.DOWNLOADS)
+        fresh = None
+        if _creds_key():
+            # with the API key the fighter needs no Seller Portal login: use a clean browser that looks like normal Chrome
+            # (the sync's own profile started getting blocked by Takealot's bot protection)
+            fresh = p.chromium.launch(channel=cfg["browser"], headless=True, args=["--disable-blink-features=AutomationControlled"])
+            ctx = fresh.new_context(user_agent=BROWSER_UA, locale="en-ZA", timezone_id="Africa/Johannesburg",
+                                    viewport={"width": 1400, "height": 900})
+        else:
+            ctx = launch(p, cfg, True, SS.PROFILE_DIR, SS.DOWNLOADS)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             auth = {}
@@ -625,6 +638,8 @@ def price_tick(cfg, log, force=False):
                     break
         finally:
             ctx.close()
+            if fresh:
+                fresh.close()
     return fast
 
 
@@ -714,16 +729,47 @@ def _next_publish(t, now):
     return nxt, p
 
 
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+_READ_FAIL_LOGGED = 0
+_READ_LOG = [print]
+
+
 def _read_live(page, plid, offer_id, mine):
     """(Buy Box seller, Buy Box price, your live price or None, cheapest other price, signature) from takealot.com."""
+    global _READ_FAIL_LOGGED
+    why = ""
     try:
-        j = page.evaluate("""async (plid) => { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop&_=${Date.now()}`,
-                                  {credentials: "include", cache: "no-store"}); return r.ok ? await r.json() : {}; }""", str(plid)) or {}
-    except Exception:
-        return None
+        j = page.evaluate("""async (plid) => { try { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop&_=${Date.now()}`,
+                                  {credentials: "include", cache: "no-store"}); return r.ok ? await r.json() : {_status: r.status, _text: (await r.text()).slice(0, 200)}; }
+                                  catch (e) { return {_status: 0, _text: String(e).slice(0, 200)}; } }""", str(plid)) or {}
+    except Exception as e:
+        j, why = {}, repr(e)[:200]
+    if not ((j.get("buybox") or {}).get("items")):
+        # the in-page request failed (page not on takealot.com any more, or blocked): reopen the page, and ask directly
+        try:
+            if "takealot.com" not in (page.url or ""):
+                page.goto("https://www.takealot.com/", wait_until="domcontentloaded", timeout=30_000)
+        except Exception:
+            pass
+        try:
+            import time as _t0
+            rr = page.context.request.get(f"https://api.takealot.com/rest/v-1-19-0/product-details/PLID{plid}?platform=desktop&_={int(_t0.time()*1000)}",
+                                          headers={"Referer": "https://www.takealot.com/", "Origin": "https://www.takealot.com",
+                                                   "Accept": "application/json"}, timeout=20_000)
+            if rr.ok:
+                j = rr.json() or {}
+            else:
+                why = (why + f" | direct: {rr.status} {rr.text()[:120]}").strip(" |")
+        except Exception as e:
+            why = (why + " | direct: " + repr(e)[:120]).strip(" |")
     items = ((j.get("buybox") or {}).get("items")) or []
     it = next((i for i in items if i.get("is_selected")), items[0] if items else None)
     if not it:
+        import time as _t
+        if _t.time() - _READ_FAIL_LOGGED > 600:              # say why, at most every 10 minutes
+            _READ_FAIL_LOGGED = _t.time()
+            _READ_LOG[0](f"Price fighter: couldn't read the Buy Box for PLID{plid}: "
+                          + (why or f"Takealot answered {j.get('_status', 'no buy box')} {str(j.get('_text') or '')[:150]}"))
         return None
     seller, price = str(it.get("sponsored_ads_seller_id") or ""), float(it.get("price") or 0)
     others = []
@@ -850,7 +896,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             except Exception:
                 pass
         if quiet:
-            target, action = math.floor(min(ceiling, my_price + step)), "raised"
+            cap = ceiling
+            if live.get("other_min"):                          # never raise up to (or past) the next seller's price
+                cap = min(cap, math.floor(live["other_min"] - step))
+            if cap > my_price:
+                target, action = math.floor(min(cap, my_price + step)), "raised"
     if target is None and ceiling and my_price > ceiling and not waiting_live:
         target, action, note = math.floor(ceiling), "lowered", f"Your price R{my_price:,.0f} was above your ceiling R{ceiling:,.0f}"
     if target is not None and floor is not None and target < math.ceil(floor):
