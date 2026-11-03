@@ -396,14 +396,24 @@ def main():
         return
     # a new server waits in "standby" (standby.txt): it only tests that Takealot, the API key and Gmail work and
     # reports that to the app, so it can't fight the PC over prices. Delete standby.txt to switch it on for real.
-    while (HERE / "standby.txt").exists():
+    def _standby():
+        if not (HERE / "standby.txt").exists():
+            return False
+        try:                                          # switched on from GitHub: sync/server_mode.txt says "live"
+            return (HERE / "server_mode.txt").read_text(encoding="utf-8").strip().lower() != "live"
+        except Exception:
+            return True
+    while _standby():
         try:
             import importlib, portal as _ps
             importlib.reload(_ps)
             _ps.server_test(cfg, log)
         except Exception as e:
             log("Server test failed: " + repr(e)[:300])
-        time.sleep(300)
+        for _ in range(10):                           # 5 minutes, but notice "live" within 30 s
+            time.sleep(30)
+            if not _standby():
+                break
     log(f"Stock Recon sync started. Syncing every {cfg['interval']} minutes.")
     db = DB(cfg["url"], cfg["key"])
     while True:
