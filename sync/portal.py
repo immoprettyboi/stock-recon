@@ -560,6 +560,7 @@ def price_tick(cfg, log, force=False):
     """Called every minute between syncs. Checks the Buy Box of each listing you switched on (when it's due) and,
     in fight mode, changes your price within your floor / ceiling. Watch mode only records what it would do."""
     import math, stockrecon_sync as S
+    restart_if_updated(log)
     _READ_LOG[0] = log
     global _READ_FAIL_SINCE
     if not hasattr(S, "_read_fail"):
@@ -1048,8 +1049,35 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             log("Notification failed: " + repr(e)[:120])
 
 
+def restart_if_updated(log):
+    """On the server: stockrecon_sync.py itself only changes on a restart. If a newer one has arrived from GitHub,
+    exit, and the server's service manager starts it again with the new code (on the PC nothing restarts it, so skip)."""
+    import os, sys, stockrecon_sync as S
+    if not sys.platform.startswith("linux"):
+        return
+    started = getattr(S, "_started_at", None)
+    if started is None:
+        S._started_at = started = __import__("time").time()
+        return
+    try:
+        if (HERE / "stockrecon_sync.py").stat().st_mtime > started + 5:
+            log("New version of the sync program arrived: restarting.")
+            os._exit(0)
+    except Exception:
+        pass
+
+
 def server_test(cfg, log):
     """Standby check on a new server: can it read the Buy Box, use the API key and read Gmail? Reported in the app."""
+    try:                                                     # switched on from GitHub (sync/server_mode.txt = live)
+        if (HERE / "server_mode.txt").read_text(encoding="utf-8").strip().lower() == "live" and (HERE / "standby.txt").exists():
+            (HERE / "standby.txt").unlink()
+            log("Server switched to LIVE: starting the sync and the price fighter.")
+            restart_if_updated(log)
+            import os
+            os._exit(0)                                       # restart straight into the live sync (newest program)
+    except FileNotFoundError:
+        pass
     import socket, time as _t, stockrecon_sync as S
     from playwright.sync_api import sync_playwright
     out, ok = [], True
