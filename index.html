@@ -1182,7 +1182,7 @@ function undeliveredPOs(){
 $("#adamAdd").addEventListener("click",()=>openAdam(""));
 $("#adamAdd2").addEventListener("click",()=>openAdam(""));
 function openAdam(po){
-  const sel=$("#ad-po"); const recent=pos.filter(p=>!courierFor(p.po)).slice(0,30);
+  const sel=$("#ad-po"); const recent=pos.filter(p=>!/receiv|clos|cancel/i.test(p.status||"") && !ships.some(x=>x.direction==="to_takealot" && poOf(x)===p.po && !["cancelled","returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status))).slice(0,30);   // POs still open with no live courier booking (a rejected one can be re-sent with Adam)
   sel.innerHTML=`<option value="">No PO / other delivery</option>`+recent.map(p=>`<option value="${esc(p.po)}">${esc(p.po)} · ${esc(p.facility||p.warehouse||"")} · ${fd(p.due_date)} · ${p.qty_sending??"?"} units</option>`).join("");
   $("#ad-dropped").checked=true; $("#ad-date").value=today(); $("#ad-fee").value=ADAM_FEE; $("#ad-rate").value=ADAM_WRAP; $("#ad-wrap").value=0; $("#ad-note").value="";
   if(po){ sel.value=po; const p=poRow(po); if(p&&p.qty_sending!=null) $("#ad-wrap").value=p.qty_sending; }
