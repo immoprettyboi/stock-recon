@@ -440,9 +440,9 @@ def main():
                 if tests:                                  # "Send a test" in the app: just a notification, no sync
                     import importlib, portal as _pn
                     importlib.reload(_pn)
-                    _pn.notify(cfg, "🔔 Test from Stock Recon", "Notifications are working on this phone.", url="./?view=price", log=log)
+                    res = _pn.notify(cfg, "🔔 Test from Stock Recon", "Notifications are working on this phone.", url="./?view=price", log=log) or []
                     db.patch("sync_runs", f"id=in.({','.join(str(r['id']) for r in tests)})",
-                             {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": True, "message": "Test notification sent"})
+                             {"finished_at": datetime.utcnow().isoformat() + "Z", "ok": True, "message": ("Test notification: " + ", ".join(res))[:250] if res else "Test notification sent"})
                     log("Test notification sent.")
                     req = [r for r in req if r not in tests]
                 if req:

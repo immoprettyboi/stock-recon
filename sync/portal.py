@@ -509,7 +509,7 @@ def notify(cfg, title, body, url="./", topic="price", log=None):
         return
     db = S.DB(cfg["url"], cfg["key"])
     try:
-        subs = db.select("push_subscriptions", "select=endpoint,keys,topics")
+        subs = db.select("push_subscriptions", "select=endpoint,keys,topics,user_email")
     except RuntimeError:
         return                                            # before 14_database_update.sql
     subs = [x for x in subs if topic in (x.get("topics") or ["price"])]
@@ -521,13 +521,18 @@ def notify(cfg, title, body, url="./", topic="price", log=None):
             log("Notifications: couldn't install pywebpush.")
         return
     payload = json.dumps({"title": title, "body": body, "url": url, "tag": topic})
+    results = []
     for x in subs:
+        who = (x.get("user_email") or "?").split("@")[0]
         try:
-            webpush(subscription_info={"endpoint": x["endpoint"], "keys": x["keys"]}, data=payload,
-                    vapid_private_key=str(key_file), vapid_claims={"sub": "mailto:stockrecon@example.com"}, ttl=3600)
+            resp = webpush(subscription_info={"endpoint": x["endpoint"], "keys": x["keys"]}, data=payload,
+                    vapid_private_key=str(key_file), vapid_claims={"sub": "mailto:stockrecon@example.com"}, ttl=3600,
+                    headers={"Urgency": "high"})          # high: Android delivers it straight away instead of holding it for later
             db.patch("push_subscriptions", f"endpoint=eq.{quote(x['endpoint'], safe='')}", {"last_sent_at": datetime.utcnow().isoformat() + "Z"})
+            results.append(f"{who}: sent ({getattr(resp, 'status_code', 'ok')})")
         except WebPushException as e:
             code = getattr(getattr(e, "response", None), "status_code", None)
+            results.append(f"{who}: refused ({code})")
             if code in (404, 410):                         # the phone unsubscribed / app removed
                 try:
                     db._req("DELETE", f"push_subscriptions?endpoint=eq.{quote(x['endpoint'], safe='')}", None, {"Prefer": "return=minimal"})
@@ -536,8 +541,10 @@ def notify(cfg, title, body, url="./", topic="price", log=None):
             elif log:
                 log(f"Notification failed ({code}): {str(e)[:120]}")
         except Exception as e:
+            results.append(f"{who}: error")
             if log:
                 log("Notification failed: " + repr(e)[:150])
+    return results
 
 
 # ---------------------------------------------------------------- price fighter
