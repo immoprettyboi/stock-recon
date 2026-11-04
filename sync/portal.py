@@ -1038,8 +1038,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             n = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised)&at=gt.{(datetime.utcnow() - timedelta(minutes=15)).isoformat()}Z"))
         except Exception:
             n = 0
-        alerts.insert(0, ((f"✅ Buy Box: you held it {pct}% of the time" if pct >= 50 else f"❌ Buy Box: you held it only {pct}% of the time"),
-                          f"{title}: last 15 min · now {'yours' if winning else 'competitor'} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
+        if n or pct < 100:                                   # only when something happened: quiet listings stay quiet,
+            alerts.insert(0, ((f"✅ Buy Box: you held it {pct}% of the time" if pct >= 50 else f"❌ Buy Box: you held it only {pct}% of the time"),
+                              f"{title}: last 15 min · now {'yours' if winning else 'competitor'} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
+            # (so the phone doesn't get 20 "100%" messages an hour and start muting the app)
         tm["last_routine"][sku] = int(nowt)
         st["win"], st["tot"] = 0, 0
     _tsave(tm)
