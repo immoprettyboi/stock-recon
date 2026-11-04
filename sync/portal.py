@@ -1175,6 +1175,21 @@ def test_logins(p, cfg, log):
 
 
 def _creds_key():
+    """The API key from config.ini; re-read only when the file changes (the repricer asks many times a minute)."""
+    f = HERE / "config.ini"
+    try:
+        mt = f.stat().st_mtime
+    except OSError:
+        return ""
+    c0 = getattr(_creds_key, "_c", None)
+    if c0 and c0[0] == mt:
+        return c0[1]
+    k = _creds_key_read()
+    _creds_key._c = (mt, k)
+    return k
+
+
+def _creds_key_read():
     import configparser
     cp = configparser.ConfigParser()
     cp.read(HERE / "config.ini", encoding="utf-8")
