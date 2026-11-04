@@ -1,6 +1,6 @@
 // Stock Recon service worker: lets the app install on Windows/Android, always loads the newest
 // version when online, and falls back to the last saved copy when offline.
-const CACHE = "stockrecon-v90";
+const CACHE = "stockrecon-v91";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
@@ -31,7 +31,9 @@ self.addEventListener("push", e => {
   // remember the last push this phone received, so the app can show whether pushes arrive at all
   const log = r => caches.open("push-log").then(c => c.put("last-push", new Response(JSON.stringify(Object.assign({ at: Date.now(), title: d.title || "" }, r))))).catch(() => {});
   e.waitUntil(self.registration.showNotification(d.title || "Stock Recon", {
-    body: d.body || "", icon: "icon-192.png", badge: "icon-192.png", data: { url: d.url || "./" }, tag: d.tag ? `${d.tag}-${Date.now()}` : undefined
+    body: d.body || "", icon: "icon-192.png", badge: "icon-192.png", data: { url: d.url || "./" },
+    // one notification per subject that gets replaced (and buzzes again), so they never pile up past Android's per-app limit
+    tag: d.tag || "stockrecon", renotify: true, vibrate: [300, 150, 300], timestamp: Date.now()
   }).then(() => log({ shown: true }), err => log({ shown: false, error: String(err) })));
 });
 self.addEventListener("notificationclick", e => {
