@@ -1567,7 +1567,7 @@ function renderPOs(){
     const rec=p.qty_received!=null?`${p.qty_received}${p.qty_damaged?` <span class="neg">(${p.qty_damaged} damaged)</span>`:""}`:'<span class="muted">–</span>';
     return `<tr><td class="mono">${esc(p.po)}</td><td>${esc(p.facility||p.warehouse||"")}</td><td class="nw">${fd(p.due_date)}</td><td>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? '<span class="pill s-return_me">Not marked shipped</span>' : esc(p.status||"")}</td>
       <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
-      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"")?((ad.raw||{}).dropped?' <span class="muted">· marking as shipped…</span>':` <button class="btn small primary" type="button" data-dropped="${esc(ad.id)}">✅ Adam dropped it off</button>`):""}`:(p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? `<button class="btn small primary" type="button" data-adamdrop="${esc(p.po)}">🚚 Adam dropped it off</button>` : '<span class="muted">no courier found</span>')}</td>
+      <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"")?((ad.raw||{}).dropped?' <span class="muted">· marking as shipped…</span>':` <button class="btn small primary" type="button" data-dropped="${esc(ad.id)}">📦 Handed to Adam</button>`):""}`:(p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? `<button class="btn small primary" type="button" data-adamdrop="${esc(p.po)}">📦 Handed to Adam</button>` : '<span class="muted">no courier found</span>')}</td>
       <td class="num">${cost!=null?R(cost):""}</td>
       <td>${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
@@ -1581,15 +1581,15 @@ async function markDropped(dd){
   const {error}=await sb.from("expenses").update({raw:{...(ex.raw||{}), dropped:true, dropped_at:today()}}).eq("id",ex.id);
   if(error){ toast("Couldn't save: "+errMsg(error)); dd.disabled=false; return; }
   await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
-  toast(`PO ${(ex.raw||{}).po}: dropped off · the PC will mark it as shipped on the Seller Portal`); loadAll();
+  toast(`PO ${(ex.raw||{}).po}: with Adam · it's marked as shipped on the Seller Portal`); loadAll();
 }
 // Adam's deliveries to Takealot, shown alongside the courier shipments
 function adamShips(){
   return expenses.filter(e=>e.category==="adam_delivery" && (e.raw||{}).po).map(e=>{ const r=e.raw||{}, p=poRow(r.po)||{};
-    const done=/receiv|clos/i.test(p.status||"") ? "delivered" : /cancel/i.test(p.status||"") ? "cancelled" : r.dropped ? "dropped-off" : "booked-with-Adam";
+    const done=/receiv|clos/i.test(p.status||"") ? "delivered" : /cancel/i.test(p.status||"") ? "cancelled" : r.dropped ? "with-Adam" : "booked-with-Adam";
     return { id:"adam:"+e.id, adam:e, waybill:"Adam", reference:"PO "+r.po, takealot_dc:String(p.warehouse||p.facility||"").slice(0,3).toUpperCase(),
       status:done, direction:"to_takealot", cost:e.amount, note:e.description,
-      expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `dropped off ${fd(r.dropped_at||e.date)}` : `planned ${fd(e.date)}` }; });
+      expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `handed to Adam ${fd(r.dropped_at||e.date)} · he delivers ${fd(e.date)}` : `planned ${fd(e.date)}` }; });
 }
 function renderShips(){
   const all=$("#shipAll").checked;
@@ -1598,7 +1598,7 @@ function renderShips(){
     if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
     return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th>${dir==="to_takealot"?"<th>Contents (Takealot PO)</th>":""}<th class="num">Cost</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
       return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
-      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-Adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">✅ Adam dropped it off</button>`:""}</td>
+      <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-Adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">📦 Handed to Adam</button>`:""}</td>
       ${dir==="to_takealot"?`<td style="min-width:220px">${esc(contents(poRow(poOf(x))))||'<span class="muted">–</span>'}</td>`:""}
       <td class="num">${x.cost!=null?R(Number(x.cost)):""}</td>
       <td>${us.length?`<button class="btn small" type="button" data-shipunits="${esc(x.id)}">${us.length} unit${us.length>1?"s":""}</button>`:'<span class="muted">–</span>'}</td>
@@ -1683,7 +1683,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v94)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v95)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
