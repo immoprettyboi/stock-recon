@@ -1,6 +1,6 @@
 // Stock Recon service worker: lets the app install on Windows/Android, always loads the newest
 // version when online, and falls back to the last saved copy when offline.
-const CACHE = "stockrecon-v89";
+const CACHE = "stockrecon-v90";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {
@@ -9,7 +9,7 @@ self.addEventListener("install", e => {
 });
 
 self.addEventListener("activate", e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== "push-log").map(k => caches.delete(k)))));
   self.clients.claim();
 });
 
@@ -28,9 +28,11 @@ self.addEventListener("fetch", e => {
 self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: "Stock Recon", body: e.data ? e.data.text() : "" }; }
+  // remember the last push this phone received, so the app can show whether pushes arrive at all
+  const log = r => caches.open("push-log").then(c => c.put("last-push", new Response(JSON.stringify(Object.assign({ at: Date.now(), title: d.title || "" }, r))))).catch(() => {});
   e.waitUntil(self.registration.showNotification(d.title || "Stock Recon", {
     body: d.body || "", icon: "icon-192.png", badge: "icon-192.png", data: { url: d.url || "./" }, tag: d.tag ? `${d.tag}-${Date.now()}` : undefined
-  }));
+  }).then(() => log({ shown: true }), err => log({ shown: false, error: String(err) })));
 });
 self.addEventListener("notificationclick", e => {
   e.notification.close();

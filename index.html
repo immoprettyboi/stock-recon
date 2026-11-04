@@ -1373,6 +1373,13 @@ async function pushState(){
   btn.textContent = sub ? "Notifications on ✓ (turn off)" : "Turn on phone notifications"; btn.dataset.on = sub ? "1" : "";
   $("#pushTest").hidden=!sub;
   $("#pushMsg").textContent = Notification.permission==="denied" ? "Notifications are blocked for this app. Allow them in the phone's settings (Apps → Chrome / Stock Recon → Notifications), then try again." : sub ? "You'll get a notification when a price changes or you win / lose the Buy Box." : "";
+  try{
+    const r=await caches.match("last-push",{cacheName:"push-log"});
+    const j=r?await r.json():null;
+    const line = !j ? "This phone has not received any notification yet (since this update)."
+      : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
+    if(sub) $("#pushMsg").textContent += " " + line + ` Permission: ${Notification.permission}.`;
+  }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
   try{
