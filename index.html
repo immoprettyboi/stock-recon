@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en" data-look="aero">
+<html lang="en" data-look="aero" data-tone="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Stock Recon</title>
-<meta name="theme-color" content="#070b1a">
-<script>try{const l=localStorage.getItem("sr-look2");if(l)document.documentElement.dataset.look=l;}catch(e){}</script>
+<meta name="theme-color" content="#0c0a1d">
+<script>try{const l=localStorage.getItem("sr-look3");if(l){const d=document.documentElement;d.dataset.look=l.split("-")[0];d.dataset.tone=l.endsWith("-dark")?"dark":"light";}}catch(e){}</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -445,6 +445,65 @@ html[data-look="aero"] .pgt{display:block}
 html[data-look="aero"] header.top :is(#lookBtn,#openReport,#signOut){display:none}
 #side .foot .btn{width:100%;text-align:left;padding:10px 14px}
 #side .foot .btn[data-for="signOut"]{color:var(--bad)}
+/* ---- Aero, dark tone (default): same glass, night-sky violet ---- */
+html:root[data-look="aero"][data-tone="dark"]{
+  --surface:rgba(255,255,255,.065); --sunk:rgba(255,255,255,.05); --line:rgba(255,255,255,.10);
+  --fg:#f3f0ff; --muted:rgba(222,216,255,.62);
+  --accent:#a78bfa; --accent-ink:#140f2e; --accent-soft:rgba(167,139,250,.18);
+  --ok:#34d399; --ok-soft:rgba(52,211,153,.15); --warn:#fbbf24; --warn-soft:rgba(251,191,36,.14);
+  --orange:#fb923c; --orange-soft:rgba(251,146,60,.15); --bad:#fb7185; --bad-soft:rgba(251,113,133,.15);
+  --stock:#c7d2fe; --stock-soft:rgba(199,210,254,.10); --query:#c4b5fd; --query-soft:rgba(196,181,253,.15);
+  --shadow:0 1px 0 rgba(255,255,255,.08) inset, 0 14px 40px rgba(0,0,0,.38);
+  color-scheme:dark; background-color:#0c0a1d;
+  background-image:
+    radial-gradient(800px 600px at 0% 0%, rgba(124,92,255,.45) 0%, transparent 60%),
+    radial-gradient(700px 520px at 100% 0%, rgba(236,72,153,.28) 0%, transparent 60%),
+    radial-gradient(900px 700px at 100% 100%, rgba(59,130,246,.30) 0%, transparent 60%),
+    radial-gradient(700px 600px at 0% 100%, rgba(139,92,246,.30) 0%, transparent 60%),
+    linear-gradient(160deg,#120e2b,#0a0818);
+}
+html[data-tone="dark"] body::before{background:rgba(12,10,29,.7)}
+html[data-tone="dark"][data-look="aero"] :is(.panel,.sync,.card,.match-item,.login-card,.empty,.adam-bar,.attn-item,.where button,.private-box){
+  background:linear-gradient(160deg,rgba(255,255,255,.085),rgba(255,255,255,.035));border-color:rgba(255,255,255,.10)}
+html[data-tone="dark"][data-look="aero"] .tile{border-color:rgba(255,255,255,.10)}
+html[data-tone="dark"][data-look="aero"] .tile:nth-child(5n+1){background:linear-gradient(150deg,rgba(96,140,255,.26),rgba(255,255,255,.03))}
+html[data-tone="dark"][data-look="aero"] .tile:nth-child(5n+2){background:linear-gradient(150deg,rgba(236,72,153,.24),rgba(255,255,255,.03))}
+html[data-tone="dark"][data-look="aero"] .tile:nth-child(5n+3){background:linear-gradient(150deg,rgba(16,185,129,.22),rgba(255,255,255,.03))}
+html[data-tone="dark"][data-look="aero"] .tile:nth-child(5n+4){background:linear-gradient(150deg,rgba(245,158,11,.22),rgba(255,255,255,.03))}
+html[data-tone="dark"][data-look="aero"] .tile:nth-child(5n+5){background:linear-gradient(150deg,rgba(139,92,246,.28),rgba(255,255,255,.03))}
+html[data-tone="dark"][data-look="aero"] :is(select,input,textarea){background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12)}
+html[data-tone="dark"][data-look="aero"] select option{background:#1a1534;color:#f3f0ff}
+html[data-tone="dark"][data-look="aero"] .btn{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.12);box-shadow:none}
+html[data-tone="dark"][data-look="aero"] .btn:hover{background:rgba(255,255,255,.13)}
+html[data-tone="dark"][data-look="aero"] :is(.btn.primary,.seg .btn.on){background:linear-gradient(135deg,#9b7bff,#6a4cf5);color:#fff;box-shadow:0 8px 24px rgba(124,92,255,.45)}
+html[data-tone="dark"][data-look="aero"] .btn.danger{background:rgba(255,255,255,.06)}
+html[data-tone="dark"][data-look="aero"] .chip{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12)}
+html[data-tone="dark"][data-look="aero"] .chip[aria-pressed="true"]{background:#f3f0ff;color:#140f2e;border-color:#f3f0ff}
+html[data-tone="dark"][data-look="aero"] .tscroll thead th{background:#1b1636}
+html[data-tone="dark"][data-look="aero"] td{border-bottom-color:rgba(255,255,255,.07)}
+html[data-tone="dark"][data-look="aero"] :is(tbody tr[tabindex]:hover,.attn-item:hover){background:rgba(255,255,255,.07)}
+html[data-tone="dark"][data-look="aero"] tfoot td{border-top-color:rgba(255,255,255,.35)}
+html[data-tone="dark"][data-look="aero"] dialog{background:rgba(24,19,50,.92);border-color:rgba(255,255,255,.12);box-shadow:0 30px 80px rgba(0,0,0,.55)}
+html[data-tone="dark"][data-look="aero"] dialog::backdrop{background:rgba(5,3,15,.55)}
+html[data-tone="dark"][data-look="aero"] .dlg-head{background:rgba(24,19,50,.96)}
+html[data-tone="dark"][data-look="aero"] .toast{background:rgba(243,240,255,.95);color:#140f2e}
+html[data-tone="dark"][data-look="aero"] .calc{background:rgba(255,255,255,.10)}
+html[data-tone="dark"][data-look="aero"] .calc div{background:rgba(255,255,255,.04)}
+html[data-tone="dark"][data-look="aero"] .chart-tip{background:rgba(24,19,50,.92)}
+html[data-tone="dark"][data-look="aero"] .hbar{background:rgba(24,19,50,.8)}
+html[data-tone="dark"][data-look="aero"] header.top{background:rgba(20,16,44,.55);border-color:rgba(255,255,255,.10)}
+html[data-tone="dark"][data-look="aero"] #side{background:rgba(20,16,44,.55);border-color:rgba(255,255,255,.10)}
+html[data-tone="dark"] #side .me{border-bottom-color:rgba(255,255,255,.08)}
+html[data-tone="dark"] #side .av{box-shadow:0 0 0 3px rgba(255,255,255,.12),0 6px 18px rgba(124,92,255,.5)}
+html[data-tone="dark"] #side .av::after{border-color:#1a1534}
+html[data-tone="dark"] #side .ind,html[data-tone="dark"] #dock .ind{background:linear-gradient(135deg,rgba(167,139,250,.32),rgba(124,92,255,.18));
+  box-shadow:0 0 0 1px rgba(167,139,250,.35) inset,0 8px 24px rgba(124,92,255,.35)}
+html[data-tone="dark"] #side .it[aria-selected="true"],html[data-tone="dark"] #dock button[aria-selected="true"]{color:#fff}
+html[data-tone="dark"][data-look="aero"] #dock{background:rgba(20,16,44,.62);border-color:rgba(255,255,255,.12);box-shadow:0 14px 40px rgba(0,0,0,.5)}
+html[data-tone="dark"] #dock .dot{box-shadow:0 0 0 2px #1a1534}
+html[data-tone="dark"][data-look="aero"] #menuBtn{background:rgba(255,255,255,.07)}
+html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.14)!important;color:#fde68a!important}
+@media (max-width:979px){html[data-tone="dark"][data-look="aero"] #sideShade{background:rgba(5,3,15,.45)}}
 /* ---- motion ---- */
 @media (prefers-reduced-motion:no-preference){
   @keyframes aeroIn{from{opacity:0;transform:translateY(14px) scale(.985);filter:blur(4px)}to{opacity:1;transform:none;filter:none}}
@@ -983,10 +1042,12 @@ function buildMonths(){
 }
 $("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
 $("#tiles").addEventListener("click",e=>{ const t=e.target.closest("[data-go]"); if(t) setView(t.dataset.go); });
-{ const LOOKS=["aero","glass","classic"], LN={aero:"Glass",glass:"Night",classic:"Classic"};
-  const setLookBtn=()=>{ const l=document.documentElement.dataset.look; $("#lookBtn").textContent="Look: "+(LN[l]||"Glass");
-    document.querySelector('meta[name="theme-color"]').content=l==="aero"?"#ece8fb":l==="glass"?"#070b1a":"#ffffff"; }; setLookBtn();
-  $("#lookBtn").addEventListener("click",()=>{ const c=document.documentElement.dataset.look; const n=LOOKS[(LOOKS.indexOf(c)+1)%LOOKS.length]; document.documentElement.dataset.look=n; try{localStorage.setItem("sr-look2",n);}catch(e){} setLookBtn(); renderChart(); window.dispatchEvent(new Event("resize")); }); }
+{ const LOOKS=["aero-dark","aero","glass","classic"], LN={"aero-dark":"Glass dark",aero:"Glass light",glass:"Night",classic:"Classic"};
+  const cur=()=>{ const d=document.documentElement; return d.dataset.look==="aero"&&d.dataset.tone==="dark"?"aero-dark":d.dataset.look; };
+  const setLookBtn=()=>{ const l=cur(); $("#lookBtn").textContent="Look: "+(LN[l]||"Glass dark");
+    document.querySelector('meta[name="theme-color"]').content=l==="aero-dark"?"#0c0a1d":l==="aero"?"#ece8fb":l==="glass"?"#070b1a":"#ffffff"; }; setLookBtn();
+  $("#lookBtn").addEventListener("click",()=>{ const n=LOOKS[(LOOKS.indexOf(cur())+1)%LOOKS.length], d=document.documentElement;
+    d.dataset.look=n.split("-")[0]; d.dataset.tone=n.endsWith("-dark")?"dark":"light"; try{localStorage.setItem("sr-look3",n);}catch(e){} setLookBtn(); renderChart(); window.dispatchEvent(new Event("resize")); }); }
 $("#openReport").addEventListener("click",()=>window.open(`report.html${state.month&&state.month!=="all"?`?m=${state.month}`:""}`,"_blank"));
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
 function setView(v){
@@ -1618,7 +1679,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v92)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v93)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
