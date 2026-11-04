@@ -935,12 +935,12 @@ const MONL = ["January","February","March","April","May","June","July","August",
 const fd = d => { if(!d) return ""; const [y,m,dd]=String(d).slice(0,10).split("-"); return `${dd} ${MON[+m-1]} ${y}`; };
 const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))/60000); if(m<1) return "just now"; if(m<60) return `${m} min ago`; const h=Math.round(m/60); if(h<24) return `${h} h ago`; return fd(t); };
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
-const today = () => new Date().toISOString().slice(0,10);
+const today = () => new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Johannesburg"});   // SA date, also just after midnight
 
 let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
-  const p=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
+  const p=(soldWhen.f||(soldWhen.f=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}))).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
   return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute}`; };
 // Takealot's own status for a sold unit's order, shown under "Sold, awaiting fees"
 const talLine = u => u.status==="awaiting_fees" && talStatus[u.order_id] ? talStatus[u.order_id] : "";
@@ -990,7 +990,11 @@ async function loadBarcodes(){
   const {data,error}=await sb.from("barcodes").select("code,product");
   barcodes = error ? null : Object.fromEntries(data.map(x=>[x.code,x.product]));
 }
-async function loadAll(){
+// one load at a time: changes arriving during a load trigger exactly one more load afterwards (no out-of-order results)
+async function loadAll(){ if(loadAll.busy){ loadAll.again=true; return loadAll.busy; }
+  loadAll.busy=(async()=>{ try{ do{ loadAll.again=false; await loadAllNow(); } while(loadAll.again); } finally{ loadAll.busy=null; } })();
+  return loadAll.busy; }
+async function loadAllNow(){
   loadBarcodes();
   try{
     const [u,s,p,r] = await Promise.all([
@@ -1015,10 +1019,10 @@ async function loadAll(){
     { const {data,error}=await sb.from("expenses").select("id,date,category,amount,description,source,raw,created_at").order("date",{ascending:false});
       expenses = error ? [] : data.map(e=>({...e, amount:Number(e.amount)||0})); }
     { const ids=[...new Set(units.filter(u=>u.order_id && !/^PRIVATE-/.test(u.order_id)).map(u=>u.order_id))];
-      talStatus={}; talTime={};
+      talStatus={}; talTime={}; const awaiting=new Set(units.filter(u=>u.status==="awaiting_fees").map(u=>u.order_id));
       for(let i=0;i<ids.length;i+=150){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
-        if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(units.some(u=>u.order_id===x.order_id && u.status==="awaiting_fees")) talStatus[x.order_id]=x.sale_status; }); } }
+        if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(awaiting.has(x.order_id)) talStatus[x.order_id]=x.sale_status; }); } }
     { const {data,error}=await sb.from("price_rules").select("*");
       pfRules = error ? null : data; }
     { const {data,error}=await sb.from("supplier_ledger").select("*").order("created_at",{ascending:true});
@@ -1398,7 +1402,7 @@ function renderLedger(){
   $("#cntAll").textContent=units.length;
 }
 $("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.only=null; state.where=""; state.status=c.dataset.s; renderLedger();});
-$("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; renderLedger();});
+$("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; clearTimeout(renderLedger._t); renderLedger._t=setTimeout(renderLedger,150);});
 $("#fLoc").addEventListener("change",e=>{state.only=null; state.loc=e.target.value; renderLedger();});
 $("#fSup").addEventListener("change",e=>{state.only=null; state.sup=e.target.value; renderLedger();});
 $("#fMonth").addEventListener("change",e=>{state.onlyMonth=e.target.checked; renderLedger();});
@@ -1679,7 +1683,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v93)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v94)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2127,6 +2131,11 @@ $("#editForm").addEventListener("submit", async e=>{
   if(body.status==="in_stock" && /^return_/.test(editing.status) && body.order_id && body.order_id===editing.order_id){
     body.comment=(`Returned on order ${body.order_id}; back in stock ${today()}. `+body.comment).trim();
     body.order_id=""; body.sold_date=null; body.gross=null; body.fees=null; body.match_method=null; body.flag=false; }
+  // only send what you changed, so a sync that updated this unit while the box was open isn't undone
+  const nv=v=>v==null||v===""||(typeof v==="number"&&isNaN(v))?"":String(v);
+  for(const k of Object.keys(body)) if(nv(body[k])===nv(editing[k])) delete body[k];
+  if(!Object.keys(body).length){ $("#dlg").close(); return; }
+  body.updated_at=new Date().toISOString();
   $("#eSave").disabled=true;
   const {error}=await sb.from("units").update(body).eq("id",editing.id);
   $("#eSave").disabled=false;

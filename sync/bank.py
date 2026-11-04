@@ -82,7 +82,7 @@ def parse_statement(text: str):
         if cd:
             day, mon = int(cd.group(1)), MONTHS[cd.group(2)]
             desc = desc[:cd.start()].strip()
-        y = end_y if mon <= end_m else start_y
+        y = end_y if mon <= end_m else end_y - 1        # a December card line on a January statement is last year
         if not desc:
             desc = "Bank service fees"
         rows.append((f"{y}-{mon:02d}-{day:02d}", desc, round(amt, 2), bal))
@@ -128,7 +128,7 @@ def _pdf_text(data: bytes) -> str:
 def process(db, rows, since: str, log, source_name: str, dry=False):
     """Add the month's business costs; queue the unknown ones. Returns (added, to_sort, total_added)."""
     existing = db.select("expenses", f"select=id,date,category,amount,description,raw&date=gte.{since}")
-    have_ids = {e["id"] for e in existing}
+    have_ids = {e["id"] for e in existing} | {(e.get("raw") or {}).get("bank_rid") for e in existing}
     learned = {}
     for e in existing:
         k = (e.get("raw") or {}).get("key")
@@ -154,7 +154,7 @@ def process(db, rows, since: str, log, source_name: str, dry=False):
         same = lambda e: -len(words & set(re.findall(r"[a-z]{3,}", str(e.get("description") or "").lower())))
         twin = min(cands, key=lambda e: (dd(e), same(e))) if cands else None
         if twin and (c is None or c["category"] != "bank_ignored"):
-            raw = dict(twin.get("raw") or {}, bank_matched=True)
+            raw = dict(twin.get("raw") or {}, bank_matched=True, bank_rid=rid)   # so a re-run never adds it again
             raw.setdefault("key", k)
             if dry:
                 DRY.append({"match": d, "line": desc, "amount": amount, "with": twin["description"], "with_date": str(twin["date"])})
@@ -225,6 +225,14 @@ def check_gmail_statements(cfg, log, notify=None, force_file: Path | None = None
                 found.append(" | ".join(" ".join(str(x) for x in (y if isinstance(y, tuple) else (y,))) for y in hd)[:300])
             log("Bank statement dry run, e-mails found: " + str(len(found)) + "\n  " + "\n  ".join(found))
         for i in (data[0] or b"").split()[-30:]:
+            # read just the Message-ID first: e-mails already handled aren't downloaded again (PDFs are large)
+            try:
+                typ, hd = M.fetch(i, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                mid0 = email.message_from_bytes(hd[0][1]).get("Message-ID")
+                if mid0 and mid0 in done:
+                    continue
+            except Exception:
+                pass
             typ, md = M.fetch(i, "(RFC822)")
             msg = email.message_from_bytes(md[0][1])
             mid = msg.get("Message-ID") or f"imap:{i.decode()}"

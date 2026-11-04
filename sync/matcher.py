@@ -413,6 +413,9 @@ def apply_returns(returns: list[dict], units: list[dict], sku_map: dict[str, str
                     by_order.setdefault(r["order_id"], []).append(u)
                     notes.append(f"Repaired: order {r['order_id']} put back as Return: Takealot (still pending)")
             linked = [u for u in by_order.get(r["order_id"], []) if not u.get("sku") or not r.get("sku") or str(u["sku"]) == str(r["sku"])]
+        q = max(1, int(r.get("qty") or 1))
+        if len(linked) > q:                               # 1 of 2 units on the order came back: touch only that many
+            linked = sorted(linked, key=lambda u: 0 if u.get("status") in ("return_takealot", "return_me") else 1)[:q]
         when = r["return_date"] or ""
         if k == "unknown":
             notes.append(f"Return {r['order_id']}: outcome '{r['outcome']}' not recognised, left alone")

@@ -440,7 +440,7 @@ def receive_returns(cfg, rows, log):
     if not delivered:
         return
     db = S.DB(cfg["url"], cfg["key"])
-    units = db.select("units", "select=id,product,status,location,order_id,po,comment,courier_shipment_id,flag&status=eq.return_me")
+    units = db.select("units", "select=id,product,status,location,order_id,po,comment,courier_shipment_id,flag,updated_at&status=eq.return_me")
     live_from = {}
     for r in rows:
         if r["direction"] == "from_takealot" and r["status"] not in ("cancelled",) and not str(r.get("waybill") or "").upper().endswith("-R"):
@@ -449,7 +449,14 @@ def receive_returns(cfg, rows, log):
     for sid, x in delivered.items():
         mine = [u for u in units if u.get("courier_shipment_id") == sid]
         if not mine and not str(x.get("waybill") or "").upper().endswith("-R") and len(live_from.get(x["takealot_dc"], [])) == 1:
-            mine = [u for u in units if not u.get("courier_shipment_id") and u.get("location") == x["takealot_dc"]]
+            # only units already waiting to come back when this shipment was delivered (not a later removal order),
+            # and only while the delivery is recent
+            dl = str(x.get("delivered_at") or "")
+            if dl and dl[:10] >= (date.today() - timedelta(days=3)).isoformat():
+                mine = [u for u in units if not u.get("courier_shipment_id") and u.get("location") == x["takealot_dc"]
+                        and str(u.get("updated_at") or "") <= (dl + "T23:59:59" if len(dl) == 10 else dl)]
+                for u in mine:
+                    db.patch("units", f"id=eq.{u['id']}", {"courier_shipment_id": sid})
         day = str(x.get("delivered_at") or now)[:10]
         for u in mine:
             c = (u.get("comment") or "").strip()
@@ -865,9 +872,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         my_price = bb_price
     elif live.get("mine") is not None:
         my_price = float(live["mine"])                     # what Takealot shows now (e.g. after a manual change)
-    ck = _FCACHE.setdefault(sku, {})
-    if _time.time() - ck.get("floor_at", 0) > 300:            # the floor only changes with stock / sales: every 5 min is plenty
-        ck["floor"], ck["floor_at"] = _floor_for(db, rule, prod), _time.time()
+    import stockrecon_sync as _S
+    ck = _S.__dict__.setdefault("_FCACHE", {}).setdefault(sku, {})   # kept on the main module: survives portal.py reloads
+    fkey = tuple(rule.get(k) for k in ("floor_mode", "floor_price", "min_profit", "min_profit_pct"))
+    if _time.time() - ck.get("floor_at", 0) > 300 or ck.get("fkey") != fkey:   # floor changes with stock / sales / your settings
+        ck["floor"], ck["floor_at"], ck["fkey"] = _floor_for(db, rule, prod), _time.time(), fkey
     floor = ck["floor"]
     ceiling = float(rule["ceiling_price"]) if rule.get("ceiling_price") else None
     step = max(1.0, float(rule.get("step") or 1))
@@ -1355,8 +1364,8 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 data = r.json()
                 batch = data.get("sales") or []
                 sales += batch
-                total = (data.get("page_summary") or {}).get("total") or 0
-                if not batch or len(sales) >= total or pg >= 100:
+                total = (data.get("page_summary") or {}).get("total")
+                if not batch or len(batch) < 100 or (total and len(sales) >= total) or pg >= 100:
                     break
                 pg += 1
 
@@ -2333,6 +2342,11 @@ def handle_rejected(cfg, rows, log):
     groups = {p["sku"]: p["product"] for p in db.select("products", "select=sku,product") if p.get("product")}
     grp = lambda u: groups.get(u.get("sku") or "") or u.get("product")
     now = datetime.utcnow().isoformat() + "Z"
+    dfile = DEBUG_DIR / "rejected_done.json"
+    try:
+        done = json.loads(dfile.read_text(encoding="utf-8"))
+    except Exception:
+        done = {}
     for x in bad:
         po = (re.search(r"\d{6,}", x.get("reference") or "") or [None])[0]
         if not po:
@@ -2344,7 +2358,13 @@ def handle_rejected(cfg, rows, log):
         link = (back or x)["id"]
         m = re.search(r"rejected by Takealot due to (.+?) and", x.get("note") or "", re.I)
         why = f" ({m.group(1).strip().lower()})" if m else ""
-        for u in [u for u in units if u.get("po") == po]:
+        seen = done.get(str(x["id"]))                       # units that were on the PO when this rejection was first handled
+        on_po = [u for u in units if u.get("po") == po]
+        if seen is None:
+            done[str(x["id"])] = [u["id"] for u in on_po]
+        for u in on_po:
+            if seen is not None and u["id"] not in seen and u.get("courier_shipment_id") != x["id"]:
+                continue                                   # put on this PO after the rejection (a re-send): not rejected
             if u.get("courier_shipment_id") == link:
                 continue                                   # already handled
             if u.get("courier_shipment_id") == x["id"]:    # handled before the return waybill existed
@@ -2384,13 +2404,18 @@ def handle_rejected(cfg, rows, log):
                                                     "comment": ((u.get("comment") or "") + " " + note).strip(), "updated_at": now})
             u.update(status="return_me", order_id="", courier_shipment_id=link)
             log(f"  Rejected PO {po}: {u['product']} set to Return: me ({note})")
+    try:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        dfile.write_text(json.dumps(done), encoding="utf-8")
+    except Exception:
+        pass
 
 
 
 def fetch_takealot_pos(ctx, cfg, auth, log):
     """Takealot shipments (POs) due from ~6 weeks before the start date, with their product lines."""
     from datetime import date as _d, timedelta as _td
-    cutoff = (_d.fromisoformat(cfg.get("since") or "2026-10-01") - _td(days=45)).isoformat()
+    cutoff = max(_d.fromisoformat(cfg.get("since") or "2026-10-01") - _td(days=45), _d.today() - _td(days=90)).isoformat()   # last 3 months, not all history
     ships, pg = [], 1
     while pg <= 100:
         r = ctx.request.get(f"https://{API_HOST}/v2/shipments?page_number={pg}&page_size=100", headers=auth, timeout=60_000)
@@ -2518,6 +2543,14 @@ def allocate_po_units(cfg, rows, log):
     today = date.today().isoformat()
     new = [r for r in rows if not r.get("leadtime") and (r.get("due_date") or "") >= today
            and "cancel" not in str(r.get("status") or "").lower() and r.get("items")]
+    if not new:
+        return
+    # a PO Takealot already rejected a shipment on: what goes on it again is up to you (re-send / Adam), never auto-filled
+    import re as _re
+    bad_po = {m.group(0) for c in db.select("courier_shipments", "select=reference,status,direction")
+              if c.get("direction") == "to_takealot" and c.get("status") in REJECTED
+              for m in [_re.search(r"\d{6,}", c.get("reference") or "")] if m}
+    new = [r for r in new if str(r.get("po")) not in bad_po]
     if not new:
         return
     prods = db.select("products", "select=sku,product,takealot_title")

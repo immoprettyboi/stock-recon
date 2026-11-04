@@ -198,8 +198,8 @@ def fetch_sales(cfg, headless=True) -> list[dict]:
                 data = r.json()
                 batch = data.get("sales") or []
                 items += batch
-                total = (data.get("page_summary") or {}).get("total") or 0
-                if not batch or len(items) >= total or pg >= 100:
+                total = (data.get("page_summary") or {}).get("total")
+                if not batch or len(batch) < 100 or (total and len(items) >= total) or pg >= 100:
                     break
                 pg += 1
             return items
