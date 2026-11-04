@@ -2353,6 +2353,8 @@ def handle_rejected(cfg, rows, log):
                 continue
             if u["status"] not in ("in_stock", "awaiting_fees", "settled"):
                 continue
+            if f"rejected on {x['waybill']}; send it in" in (u.get("comment") or ""):
+                continue                                   # the replacement we put on this PO, not a rejected unit
             note = f"Takealot rejected {x['waybill']} (PO {po}){why}; coming back on {back['waybill'] if back else 'a return waybill'}."
             if u.get("order_id"):
                 # a lead-time order: Takealot has none of its own to fill it with, so it waits for the replacement you
