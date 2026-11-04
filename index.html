@@ -1227,7 +1227,11 @@ const poOf=x=>(String(x.reference||"").match(/\d{6,}/)||[""])[0];
 const cleanNote=t=>String(t||"").replace(/&nbsp;/g," ").replace(/Please note that your account[^|]*?arrears[^|]*/gi,"").replace(/\s*\|\s*(\|\s*)+/g," | ").replace(/^\s*\|\s*|\s*\|\s*$/g,"").replace(/\s+/g," ").trim();
 const isRtsWaybill=x=>/-R$/i.test(x.waybill||"");          // courier's return-to-sender waybill (e.g. NRVWMM-R)
 function shipUnits(x){
-  if(x.direction==="to_takealot"){ const po=poOf(x); return po?units.filter(u=>u.po===po):[]; }
+  if(x.direction==="to_takealot"){ const po=poOf(x); if(!po) return [];
+    // a PO can be sent twice (Takealot rejected the first shipment): count each unit on the shipment it went on
+    const rej=u=>(/Takealot rejected (\S+) \(PO/.exec(u.comment||"")||[])[1];
+    const L=units.filter(u=>u.po===po);
+    return ["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status) ? L.filter(u=>rej(u)===x.waybill) : L.filter(u=>!rej(u)); }
   const linked=units.filter(u=>u.courier_shipment_id===x.id);
   if(linked.length || isRtsWaybill(x)) return linked;
   if(x.direction==="from_takealot" && !SHIP_DONE.has(x.status)) return units.filter(u=>u.status==="return_me" && !u.courier_shipment_id && u.location===x.takealot_dc);
