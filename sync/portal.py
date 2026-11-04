@@ -149,6 +149,15 @@ def monthly_report(p, cfg, log):
     flag = DEBUG_DIR / f"report_sent_{month}.txt"
     if not test and (now.hour < 7 or flag.exists() or month < "2026-10"):
         return
+    tried = DEBUG_DIR / f"report_tried_{month}.txt"
+    if not test:
+        try:                                              # e-mail failing: try again every 3 hours, not every sync
+            if __import__("time").time() - tried.stat().st_mtime < 3 * 3600:
+                return
+        except OSError:
+            pass
+        DEBUG_DIR.mkdir(exist_ok=True)
+        tried.write_text(now.isoformat(), encoding="utf-8")
     if test:
         (DEBUG_DIR / "report_test_request.txt").unlink()
     can_send = bool(sender and app_pw and "PASTE" not in app_pw.upper() and to)
