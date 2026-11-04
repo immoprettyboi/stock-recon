@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Stock Recon</title>
 <meta name="theme-color" content="#0c0a1d">
-<script>try{const l=localStorage.getItem("sr-look3");if(l){const d=document.documentElement;d.dataset.look=l.split("-")[0];d.dataset.tone=l.endsWith("-dark")?"dark":"light";}}catch(e){}</script>
+<script>try{const l=localStorage.getItem("sr-look3");if(l&&l.startsWith("aero")){const d=document.documentElement;d.dataset.look=l.split("-")[0];d.dataset.tone=l.endsWith("-dark")?"dark":"light";}}catch(e){}</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -548,7 +548,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div class="spacer"></div>
       <label class="muted" for="month" style="font-size:12px">Sales month</label>
       <select id="month" aria-label="Sales month"></select>
-      <button class="btn small look-btn" type="button" id="lookBtn" title="Switch the look: Glass, Night or Classic">Classic look</button>
+      <button class="btn small look-btn" type="button" id="lookBtn" title="Switch between Glass dark and Glass light">Classic look</button>
       <button class="btn small" type="button" id="openReport">Monthly report</button>
       <button class="btn small" type="button" id="signOut">Sign out</button>
     </div>
@@ -1042,7 +1042,7 @@ function buildMonths(){
 }
 $("#month").addEventListener("change",e=>{state.month=e.target.value; render();});
 $("#tiles").addEventListener("click",e=>{ const t=e.target.closest("[data-go]"); if(t) setView(t.dataset.go); });
-{ const LOOKS=["aero-dark","aero","glass","classic"], LN={"aero-dark":"Glass dark",aero:"Glass light",glass:"Night",classic:"Classic"};
+{ const LOOKS=["aero-dark","aero"], LN={"aero-dark":"Glass dark",aero:"Glass light",glass:"Night",classic:"Classic"};
   const cur=()=>{ const d=document.documentElement; return d.dataset.look==="aero"&&d.dataset.tone==="dark"?"aero-dark":d.dataset.look; };
   const setLookBtn=()=>{ const l=cur(); $("#lookBtn").textContent="Look: "+(LN[l]||"Glass dark");
     document.querySelector('meta[name="theme-color"]').content=l==="aero-dark"?"#0c0a1d":l==="aero"?"#ece8fb":l==="glass"?"#070b1a":"#ffffff"; }; setLookBtn();
