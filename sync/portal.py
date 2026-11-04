@@ -1873,7 +1873,7 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 if (DEBUG_DIR / "bank_dry_run.txt").exists():
                     (DEBUG_DIR / "bank_dry_run.txt").unlink()
                     _bank.check_gmail_statements(cfg, log, dry=True)
-                elif (DEBUG_DIR / "bank_on.txt").exists():
+                elif (DEBUG_DIR / "bank_on.txt").exists() or (Path(__file__).parent / "server_mode.txt").exists():   # on for the server
                     _bank.check_gmail_statements(cfg, log, notify=notify)
             except Exception as e:
                 log("Bank statement check failed: " + repr(e)[:200])
