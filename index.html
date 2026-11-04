@@ -548,6 +548,7 @@ html[data-look="glass"] .tscroll thead th{background:#141b38}
       <div class="sec-head" style="justify-content:space-between"><div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><h2>Price fighter: win the Buy Box</h2><p id="pfSub"></p></div>
         <div class="inline"><button class="btn small" type="button" id="pushBtn">Turn on phone notifications</button><button class="btn small" type="button" id="pushTest" hidden>Send a test</button></div></div>
       <p class="note" id="pushMsg" style="margin:0"></p>
+      <p id="pushLast" style="margin:6px 0 0;padding:8px 10px;border-radius:8px;background:#fff4d6;color:#5a4300;font-size:14px;font-weight:600">Checking notifications on this phone…</p>
       <p class="note" style="margin:0;max-width:95ch">For each listing you switch on, the PC checks who has the Buy Box every few minutes. If a competitor has it, your price goes to <b>their price minus your step</b>, but never below your <b>floor</b>. If they go under your floor, it either <b>goes back up to your ceiling</b> (so a competitor's bot can follow you up, then the fight starts again; if they don't come back up within 30 minutes, your price sits <b>one step above theirs</b>, never below your floor) or holds at the floor. When you hold the Buy Box it can creep back up towards your <b>ceiling</b>. <b>Watch</b> only shows what it would do; <b>Fight</b> changes your price on Takealot. The <b>auto floor</b> is your dearest unit's cost plus Takealot's fees (from your recent sales) plus your minimum profit.</p>
       <div class="tscroll"><table id="pfTable"></table></div>
     </div>
@@ -1378,7 +1379,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    if(sub) $("#pushMsg").textContent += " " + line + ` Permission: ${Notification.permission}.`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v90)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -1395,9 +1396,11 @@ $("#pushBtn").addEventListener("click",async()=>{
 });
 $("#pushTest").addEventListener("click",async()=>{
   const {error}=await sb.from("sync_runs").insert({ requested:true, message:"push-test" });
-  toast(error?"Couldn't ask the PC: "+errMsg(error):"Test sent to the PC. It arrives within a minute.");
+  toast(error?"Couldn't ask the server: "+errMsg(error):"Test sent. It arrives within a minute.");
+  if(!error){ $("#pushLast").textContent="📱 Test sent — checking again in 30 seconds…"; setTimeout(()=>pushState().catch(()=>{}),30000); }
 });
 setTimeout(()=>pushState().catch(()=>{}),1500);
+document.querySelector('.tab[data-view="price"]')?.addEventListener("click",()=>pushState().catch(()=>{}));
 
 /* ---------------- debtors: what you owe each supplier ---------------- */
 function supplierOwed(sup){
