@@ -2298,7 +2298,7 @@ def fetch_courier(ctx, cfg, log):
             log("Delivered returns couldn't be booked in: " + repr(e)[:200])
 
 
-REJECTED = {"returned-to-sender", "delivery-rejected"}
+REJECTED = {"returned-to-sender", "returned-to-hub", "delivery-rejected"}
 
 
 def handle_rejected(cfg, rows, log):
@@ -2341,21 +2341,28 @@ def handle_rejected(cfg, rows, log):
                 continue
             note = f"Takealot rejected {x['waybill']} (PO {po}){why}; coming back on {back['waybill'] if back else 'a return waybill'}."
             if u.get("order_id"):
+                # a lead-time order: Takealot has none of its own to fill it with, so it waits for the replacement you
+                # send in on the same PO -> the oldest new unit at HOME takes the order (and the PO)
+                leadtime = u.get("match_method") == "leadtime-home" or "Lead-time order" in (u.get("comment") or "")
+                where = "HOME" if leadtime else x["takealot_dc"]
                 pool = sorted([v for v in units if v["status"] == "in_stock" and not v.get("order_id") and v.get("po") != po
-                               and v.get("location") == x["takealot_dc"] and grp(v) == grp(u)],
+                               and v.get("location") == where and grp(v) == grp(u)],
                               key=lambda v: (str(v.get("received") or ""), str(v.get("created_at") or "")))
                 if not pool:
-                    log(f"  Rejected PO {po}: no unsold {u['product']} at {x['takealot_dc']} to move order {u['order_id']} to; left as is.")
+                    log(f"  Rejected PO {po}: no unsold {u['product']} at {where} to move order {u['order_id']} to; left as is.")
                     continue
                 v = pool[0]
                 moved = {k: u.get(k) for k in ("order_id", "sold_date", "gross", "fees", "status", "match_method", "product", "sku")}
-                moved["comment"] = ((v.get("comment") or "") + f" Order {u['order_id']} moved here: PO {po} was rejected, "
-                                    f"so Takealot filled it from its {x['takealot_dc']} stock.").strip()
+                moved["comment"] = ((v.get("comment") or "") + (
+                    f" Lead-time order {u['order_id']}: replacement for the unit Takealot rejected on {x['waybill']}; send it in on PO {po}."
+                    if leadtime else f" Order {u['order_id']} moved here: PO {po} was rejected, so Takealot filled it from its {x['takealot_dc']} stock.")).strip()
+                if leadtime:
+                    moved["po"] = po
                 db.patch("units", f"id=eq.{u['id']}", {"order_id": "", "sold_date": None, "gross": None, "fees": None})
                 db.patch("units", f"id=eq.{v['id']}", moved | {"updated_at": now})
                 db.patch("takealot_sales", f"order_id=eq.{u['order_id']}", {"unit_id": v["id"]})
                 v.update(moved)
-                log(f"  Rejected PO {po}: order {u['order_id']} moved to a {x['takealot_dc']} unit (in {v.get('received')}).")
+                log(f"  Rejected PO {po}: order {u['order_id']} moved to a {where} unit (in {v.get('received')}).")
             db.patch("units", f"id=eq.{u['id']}", {"status": "return_me", "location": x["takealot_dc"], "order_id": "",
                                                     "sold_date": None, "gross": None, "fees": None, "courier_shipment_id": link,
                                                     "comment": ((u.get("comment") or "") + " " + note).strip(), "updated_at": now})
