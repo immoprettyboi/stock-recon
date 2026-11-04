@@ -219,7 +219,7 @@ dialog::backdrop{background:rgb(10 12 18 / .55)}
 @media (max-width:760px){.sync{grid-template-columns:auto 1fr}.sync .btn{grid-column:1/-1}.match-item{grid-template-columns:1fr}.match-item .actions{justify-content:flex-start}}
 
 /* ---------- Glass look (default): frosted cards over a deep blue backdrop. "Classic" switches back. ---------- */
-html[data-look="glass"]{
+html:root[data-look="glass"]{
   --bg:transparent; --surface:rgba(255,255,255,.07); --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.13);
   --fg:#f2f5ff; --muted:rgba(222,230,255,.66);
   --accent:#6f9bff; --accent-ink:#06102b; --accent-soft:rgba(111,155,255,.18);
@@ -307,7 +307,7 @@ html[data-look="glass"] .hbar{background:rgba(16,22,46,.85);-webkit-backdrop-fil
 html[data-look="glass"] .tscroll thead th{background:#141b38}
 @media print{.tscroll{max-height:none;overflow:visible}}
 /* ================= AERO: Apple-style frosted glass, soft lavender, sidebar + floating dock ================= */
-html[data-look="aero"]{
+html:root[data-look="aero"]{
   --bg:transparent; --surface:rgba(255,255,255,.58); --sunk:rgba(255,255,255,.42); --line:rgba(120,104,200,.16);
   --fg:#1e1b3a; --muted:#6c6890;
   --accent:#7c5cff; --accent-ink:#fff; --accent-soft:rgba(124,92,255,.14);
