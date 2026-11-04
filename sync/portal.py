@@ -544,6 +544,11 @@ def notify(cfg, title, body, url="./", topic="price", log=None):
             results.append(f"{who}: error")
             if log:
                 log("Notification failed: " + repr(e)[:150])
+    try:
+        from importlib.metadata import version as _v
+        results.append(f"pywebpush {_v('pywebpush')}, py_vapid {_v('py-vapid')}, http_ece {_v('http-ece')}")
+    except Exception:
+        pass
     return results
 
 
