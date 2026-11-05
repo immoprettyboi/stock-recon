@@ -452,8 +452,9 @@ def receive_returns(cfg, rows, log):
     units = db.select("units", "select=id,product,status,location,order_id,po,comment,courier_shipment_id,flag,updated_at&status=eq.return_me")
     live_from = {}
     for r in rows:
-        if r["direction"] == "from_takealot" and r["status"] not in ("cancelled",) and not str(r.get("waybill") or "").upper().endswith("-R"):
-            live_from.setdefault(r["takealot_dc"], []).append(r)
+        if r["direction"] == "from_takealot" and r["status"] not in ("cancelled",) and not str(r.get("waybill") or "").upper().endswith("-R") \
+                and str(r.get("created_at") or "")[:10] >= (date.today() - timedelta(days=14)).isoformat():
+            live_from.setdefault(r["takealot_dc"], []).append(r)          # bookings from that DC in the last 2 weeks
     now = datetime.utcnow().isoformat() + "Z"
     for sid, x in delivered.items():
         mine = [u for u in units if u.get("courier_shipment_id") == sid]

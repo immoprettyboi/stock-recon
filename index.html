@@ -856,6 +856,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="form-actions">
       <button class="btn primary" type="submit" id="eSave">Save changes</button>
       <button class="btn" type="button" id="ePrivate">Sold privately…</button>
+      <button class="btn" type="button" id="eKept" hidden title="Takealot turned this unit away but kept it at the warehouse (booking exception)">Rejected, Takealot kept it…</button>
       <div class="spacer"></div>
       <button class="btn danger" type="button" id="eDel">Delete unit</button>
     </div>
@@ -1789,7 +1790,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v96)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v97)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2212,6 +2213,7 @@ function openEdit(id){
   set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
   set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); set("e-cond",u.condition||"new"); $("#e-flag").checked=!!u.flag;
   $("#eConfirm").hidden=true; $("#ePS").hidden=true;
+  $("#eKept").hidden=!(["JHB","CPT","DBN"].includes(u.location) && ["in_stock","awaiting_fees","settled"].includes(u.status));
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
   const sx=shipFor(u);
   $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", sx?`Courier Guy ${sx.waybill}: ${shipLabel(sx.status).toLowerCase()}${shipWhen(sx)?`, ${shipWhen(sx)}`:""}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
@@ -2246,6 +2248,31 @@ $("#editForm").addEventListener("submit", async e=>{
   const {error}=await sb.from("units").update(body).eq("id",editing.id);
   $("#eSave").disabled=false;
   if(error) toast("Couldn't save: "+errMsg(error)); else { $("#dlg").close(); toast("Saved"); loadAll(); }
+});
+
+/* Takealot rejected a unit but kept it at the DC (a "booking exception": you book its collection later).
+   The unit becomes Return: me at that DC; if it had a (lead-time) order, the oldest new unit at HOME takes the order and the PO. */
+$("#eKept").addEventListener("click",async()=>{
+  const u=editing; if(!u) return;
+  const grpOf=x=>{ const p=products.find(p=>p.sku===x.sku); return (p&&p.product)||x.product; };
+  const pool=units.filter(v=>v.id!==u.id && v.status==="in_stock" && v.location==="HOME" && !v.order_id && !v.po && (v.condition||"new")==="new" && grpOf(v)===grpOf(u))
+    .sort((a,b)=>String(a.received||"").localeCompare(String(b.received||"")));
+  const rep=u.order_id ? pool[0] : null;
+  if(u.order_id && !rep && !confirm(`There's no new ${u.product} at HOME to take order ${u.order_id}. Mark this unit as rejected anyway (the order stays unlinked)?`)) return;
+  if(!confirm(`${u.product}${u.po?` (PO ${u.po})`:""}: Takealot rejected it and kept it at ${u.location}.\n\n• It becomes "Return: me" at ${u.location} until you book its collection.`+
+     (rep?`\n• Order ${u.order_id} moves to your HOME unit received ${fd(rep.received)}, on PO ${u.po||"-"} (the replacement you send).`:"")+`\n\nGo ahead?`)) return;
+  const now=new Date().toISOString(), when=today();
+  if(rep){
+    const {error}=await sb.from("units").update({order_id:u.order_id, sold_date:u.sold_date, gross:u.gross, fees:u.fees, status:u.status, match_method:u.match_method||"leadtime-home",
+      po:u.po||"", location:u.location, comment:(`Order ${u.order_id}: replacement for the unit Takealot rejected and kept at ${u.location}${u.po?` (PO ${u.po})`:""}. `+(rep.comment||"")).trim(), updated_at:now}).eq("id",rep.id);
+    if(error){ toast("Couldn't save: "+errMsg(error)); return; }
+    await sb.from("takealot_sales").update({unit_id:rep.id}).eq("order_id",u.order_id);
+  }
+  const {error}=await sb.from("units").update({order_id:"", sold_date:null, gross:null, fees:null, status:"return_me", match_method:null, po:"", courier_shipment_id:null, flag:true,
+    comment:(`Takealot rejected this unit${u.po?` on PO ${u.po}`:""} (${when}) and kept it at ${u.location}: waiting for their booking exception, then book a Courier Guy collection to bring it home. `+(u.comment||"")).trim(), updated_at:now}).eq("id",u.id);
+  if(error){ toast("Couldn't save: "+errMsg(error)); return; }
+  await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});     // lead time follows HOME straight away
+  $("#dlg").close(); toast(rep?`Done: order ${u.order_id} moved to the HOME unit; this one is Return: me at ${u.location}`:`Done: Return: me at ${u.location}`); loadAll();
 });
 $("#eDel").addEventListener("click",()=>$("#eConfirm").hidden=false);
 $("#eDelNo").addEventListener("click",()=>$("#eConfirm").hidden=true);
