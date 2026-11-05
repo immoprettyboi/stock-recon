@@ -714,7 +714,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
 
   <!-- SHIPMENTS -->
   <section id="view-ship" class="stack" hidden>
-    <div class="filters"><button class="btn primary small" type="button" id="adamAdd2">Add Adam delivery</button><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
+    <div class="filters"><input type="search" id="shipQ" placeholder="Search waybill, PO, product, serial, note…" aria-label="Search shipments"><button class="btn primary small" type="button" id="adamAdd2">Add Adam delivery</button><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
     <div class="panel">
       <div class="sec-head"><h2>Coming from Takealot</h2><p>Returns and removal orders the courier is bringing to you</p></div>
       <div class="tscroll"><table id="shipFrom"></table></div>
@@ -1662,9 +1662,15 @@ const contents=p=>{ if(!p||!Array.isArray(p.items)||!p.items.length) return "";
   const m=new Map(); p.items.forEach(i=>m.set(i.title,(m.get(i.title)||0)+(Number(i.qty)||0)));     // same product on several lines -> one total
   return [...m.entries()].map(([t,q])=>`${q} × ${t}`).join("; "); };
 const courierFor=po=>ships.find(x=>x.direction==="to_takealot" && poOf(x)===po);
+// shipments search: waybill, PO, warehouse, status, courier note, what's on the PO, and the units on it (product / serial / order)
+const shipQ=()=>($("#shipQ")?.value||"").trim().toLowerCase();
+const poText=po=>{ if(!po) return ""; const p=poRow(po); return [po, p&&contents(p), p&&p.status, p&&(p.facility||p.warehouse),
+  ...units.filter(u=>u.po===po).map(u=>[u.product,u.sn,u.order_id].join(" "))].join(" "); };
+const shipText=x=>[x.waybill,x.reference,x.takealot_dc,x.status,shipLabel(x.status),cleanNote(x.note),x.collection_name,x.delivery_name,poText(poOf(x))].join(" ").toLowerCase();
 function renderPOs(){
-  const all=$("#shipAll").checked;
-  const L=pos.filter(p=>all || !/received|closed|cancel/i.test(p.status||"") || (Date.now()-new Date(p.due_date))<21*864e5);
+  const all=$("#shipAll").checked, q=shipQ();
+  const L=pos.filter(p=>q ? [poText(p.po), (courierFor(p.po)||{}).waybill].join(" ").toLowerCase().includes(q)
+    : (all || !/received|closed|cancel/i.test(p.status||"") || (Date.now()-new Date(p.due_date))<21*864e5));
   if(!pos.length){ $("#poTable").innerHTML=`<tbody><tr><td class="muted">Takealot POs appear here after the next sync (run 7_database_update.sql in Supabase first).</td></tr></tbody>`; return; }
   let tot=0;
   $("#poTable").innerHTML=`<thead><tr><th>PO</th><th>To</th><th>Due</th><th>Status</th><th>Contents</th><th class="num">Sent</th><th class="num">Received</th><th>Courier</th><th class="num">Delivery cost</th><th>Units</th></tr></thead><tbody>${L.map(p=>{
@@ -1699,10 +1705,10 @@ function adamShips(){
       expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `handed to Adam ${fd(r.dropped_at||e.date)} · he delivers ${fd(e.date)}` : `planned ${fd(e.date)}` }; });
 }
 function renderShips(){
-  const all=$("#shipAll").checked;
-  const list=ships.concat(adamShips()).filter(x=>all||!SHIP_DONE.has(x.status));
+  const all=$("#shipAll").checked, q=shipQ();
+  const list=ships.concat(adamShips()).filter(x=>q ? shipText(x).includes(q) : (all||!SHIP_DONE.has(x.status)));
   const table=(rows,dir)=>{ const L=rows.filter(x=>x.direction===dir);
-    if(!L.length) return `<tbody><tr><td class="muted">${ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
+    if(!L.length) return `<tbody><tr><td class="muted">${q?`No shipments match "${esc($("#shipQ").value)}".`:ships.length?"Nothing here right now.":"Courier Guy shipments appear here after the next sync."}</td></tr></tbody>`;
     return `<thead><tr><th>Waybill</th><th>Reference</th><th>${dir==="to_takealot"?"To":"From"}</th><th>Status</th><th>Dates</th>${dir==="to_takealot"?"<th>Contents (Takealot PO)</th>":""}<th class="num">Cost</th><th>Units</th><th>Courier note</th></tr></thead><tbody>${L.map(x=>{ const us=shipUnits(x);
       return `<tr><td class="mono">${esc(x.waybill)}</td><td class="mono">${esc(x.reference)}</td><td>${esc(x.takealot_dc||"")}</td>
       <td><span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span></td><td class="nw">${esc(x.when||shipWhen(x))}${x.adam && x.status==="booked-with-Adam"?` <button class="btn small primary" type="button" data-dropped="${esc(x.adam.id)}">📦 Handed to Adam</button>`:""}</td>
@@ -1716,6 +1722,7 @@ function renderShips(){
   renderPOs();
 }
 $("#shipAll").addEventListener("change",renderShips);
+$("#shipQ").addEventListener("input",()=>{ clearTimeout(renderShips._t); renderShips._t=setTimeout(renderShips,150); });
 for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const dd=e.target.closest("[data-dropped]"); if(dd){ markDropped(dd); return; }
   const b=e.target.closest("[data-shipunits]"); if(!b) return;
   const x=ships.concat(adamShips()).find(s=>s.id===b.dataset.shipunits); const ids=new Set(shipUnits(x).map(u=>u.product));
@@ -1790,7 +1797,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v97)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v98)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
