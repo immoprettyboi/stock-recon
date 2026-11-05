@@ -91,7 +91,7 @@ def parse_api(items: list[dict]) -> list[dict]:
         fees = fee_sum if fee_sum > 0 else None          # Takealot shows 0 until it charges the fees
         qty = int(r.get("quantity") or 1)
         price = r.get("selling_price")
-        gross = round(float(price) * qty, 2) if price is not None else None
+        gross = round(float(price), 2) if price is not None else None   # selling_price is the whole line (all units), not per unit
         od = _date(r.get("order_date"), "%d %b %Y %H:%M:%S")
         po = r.get("po_number")
         raw = {k: v for k, v in r.items() if k != "customer"}
