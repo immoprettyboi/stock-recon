@@ -592,6 +592,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <button class="btn" type="button" id="syncNow">Sync now</button>
     </div>
     <div class="tiles" id="tiles"></div>
+    <div class="panel" id="payoutCard" hidden></div>
     <div class="panel chart-card">
       <div class="sec-head"><h2 id="chTitle">Profit by day</h2>
         <div class="seg" role="group" aria-label="Measure">
@@ -640,6 +641,11 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
 
   <!-- STOCK -->
   <section id="view-stock" class="stack" hidden>
+    <div class="panel" id="rsPanel">
+      <div class="sec-head" style="justify-content:space-between"><div><h2>Restock planner</h2><p id="rsSub">What to send to each Takealot warehouse before it runs out</p></div>
+        <label class="note inline">Keep enough for <select id="rsDays"><option>14</option><option selected>21</option><option>30</option></select> days</label></div>
+      <div class="tscroll"><table id="rsTable"></table></div>
+    </div>
     <div class="where" id="where" role="tablist" aria-label="Where is the stock"></div>
     <div class="panel" id="whereSum" hidden style="padding:0"><div class="tscroll"><table id="whereTbl"></table></div></div>
     <div class="filters">
@@ -674,8 +680,13 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <p class="note" style="margin:0">Tip: pick the same day in From and To to see one day.</p>
     </div>
     <div class="tiles" id="slTiles"></div>
+    <div class="filters"><button class="btn small" type="button" id="slCsv">⬇ Download for Excel</button><span class="note">Sales shown below, as a spreadsheet file (.csv) that opens in Excel</span></div>
     <div class="panel big-table" style="padding:0"><div class="tscroll"><table id="slTable"></table></div></div>
     <div class="cards" id="slCards"></div>
+    <div class="cols">
+      <div class="panel"><div class="sec-head"><h2>By product</h2><p>for the dates above</p></div><div class="tscroll"><table id="slByProd"></table></div></div>
+      <div class="panel"><div class="sec-head"><h2>By supplier</h2><p>for the dates above · returns: all time</p></div><div class="tscroll"><table id="slBySup"></table></div></div>
+    </div>
   </section>
 
   <!-- MATCH -->
@@ -799,6 +810,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     </div>
     <div class="panel" id="pfHistPanel" hidden>
       <div class="sec-head"><h2 id="pfHistTitle">Price history</h2></div>
+      <div id="pfChart"></div>
       <div class="tscroll"><table id="pfHist"></table></div>
     </div>
   </section>
@@ -966,7 +978,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Johannesburg"});   // SA date, also just after midnight
 
-let units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
+let appState={}, units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
   const p=(soldWhen.f||(soldWhen.f=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}))).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
@@ -1052,6 +1064,8 @@ async function loadAllNow(){
       for(let i=0;i<ids.length;i+=150){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
         if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(awaiting.has(x.order_id)) talStatus[x.order_id]=x.sale_status; }); } }
+    { const {data,error}=await sb.from("app_state").select("*");                      // 18_database_update.sql
+      appState = error ? {} : Object.fromEntries(data.map(r=>[r.key,r.value])); }
     { const {data,error}=await sb.from("price_rules").select("*");
       pfRules = error ? null : data; }
     { const {data,error}=await sb.from("supplier_ledger").select("*").order("created_at",{ascending:true});
@@ -1259,7 +1273,20 @@ let chRs, chW=0; window.addEventListener("resize",()=>{ clearTimeout(chRs); chRs
 // redraw when the chart's box changes size (e.g. it was drawn while its tab was hidden)
 if(window.ResizeObserver) new ResizeObserver(es=>{ const w=Math.round(es[0].contentRect.width); if(w && Math.abs(w-chW)>4){ chW=w; clearTimeout(chRs); chRs=setTimeout(renderChart,60); } }).observe($("#chart"));
 /* ---------------- overview ---------------- */
+/* next Takealot payouts (worked out by the server from your Takealot account) */
+function renderPayout(){
+  const el=$("#payoutCard"); if(!el) return; const v=appState.payout; if(!v){ el.hidden=true; return; }
+  const dn=d=>{ const x=new Date(d+"T12:00:00Z"); return x.toLocaleDateString("en-ZA",{weekday:"short",timeZone:"UTC"})+" "+fd(d); };
+  const nx=(v.next||[]).filter(x=>x.date>=today());
+  el.hidden=false;
+  el.innerHTML=`<div class="sec-head"><h2>💰 Takealot payouts</h2><p>Takealot pays on Thursdays for what was recorded up to the Sunday before · updated ${esc(String(v.at||"").slice(11,16))}</p></div>
+    <div class="tiles">${nx.slice(0,2).map((x,i)=>`<div class="tile${i?"":" hero"}"><span class="lbl">${i?"After that":"Next payout"}</span><span class="val">${R0(x.amount)}</span><span class="sub">${dn(x.date)} · ${x.n} transaction${x.n===1?"":"s"}</span></div>`).join("")||`<div class="tile"><span class="lbl">Next payout</span><span class="val">–</span><span class="sub">nothing waiting yet</span></div>`}
+      <div class="tile"><span class="lbl">On your account</span><span class="val">${R0(+v.current||0)}</span><span class="sub">held back ${R0(+v.held_back||0)} · available ${R0(+v.available||0)}</span></div>
+      ${v.last_payout?`<div class="tile"><span class="lbl">Last payout</span><span class="val">${R0(v.last_payout.amount)}</span><span class="sub">${dn(v.last_payout.date)}</span></div>`:""}</div>
+    <p class="note" style="margin:0">An estimate from Takealot's transactions; refunds or fees added before Sunday change it.</p>`;
+}
 function renderOverview(){
+  renderPayout();
   const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
   const G=sold.reduce((s,u)=>s+(u.gross||0),0), F=sold.reduce((s,u)=>s+(u.fees||0),0), C=sold.reduce((s,u)=>s+(u.cost||0),0), P=G-F-C;
   const awaiting=sold.filter(u=>u.status==="awaiting_fees").length;
@@ -1277,7 +1304,7 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
     <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
     <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val"${P-X<0?' style="color:var(--bad)"':""}>${R0(P-X)}</span><span class="sub">${R0(P)} from sales${XD?` − ${R0(XD)} delivery`:""}${XO?` − ${R0(XO)} salaries & expenses`:""}${awaiting?` · ${awaiting} still awaiting fees`:""}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val"${P-X<0?' style="color:var(--bad)"':""}>${R0(P-X)}</span><span class="sub">${R0(P)} from sales${XD?` − ${R0(XD)} delivery`:""}${XO?` − ${R0(XO)} salaries & expenses`:""}${awaiting?` · ${awaiting} still awaiting fees: ≈ ${R0(P-X-sold.filter(u=>u.fees==null).reduce((t,u)=>t+estFees(u),0))} once Takealot charges them`:""}</span></div>
     <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery, salaries & expenses`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile" data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
@@ -1305,6 +1332,23 @@ function renderOverview(){
   // a shipment Takealot turned away whose units are already set to come back is tracked under "Coming back to you"
   const handledRts=x=>x.direction==="to_takealot" && ["returned-to-sender","returned-to-hub"].includes(x.status) && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && units.some(u=>u.courier_shipment_id===s.id)));
   ships.filter(x=>SHIP_BAD.has(x.status) && !handledRts(x) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
+  // 1. delivered to Takealot but not received: Takealot may have rejected it and kept it (Courier Guy then says "Delivered")
+  pos.forEach(p=>{ if(/receiv|clos|cancel/i.test(p.status||"")) return;
+    const cs=ships.filter(x=>x.direction==="to_takealot" && poOf(x)===p.po && x.status!=="cancelled").sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    const x=cs[0]; if(!x || x.status!=="delivered") return;
+    const dd=String(x.expected_delivery_to||x.expected_delivery_from||"").slice(0,10); if(!dd) return;
+    const days=Math.floor((new Date(today())-new Date(dd))/864e5); if(days<3) return;
+    const u=units.find(v=>v.po===p.po && ["JHB","CPT","DBN"].includes(v.location) && ["in_stock","awaiting_fees","settled"].includes(v.status));
+    items.push({...(u?{u}:{go:"ship"}), tag:"Check", t:`PO ${p.po}: delivered ${days} days ago, Takealot hasn't received it`,
+      d:`${contents(p)} on ${x.waybill} · Takealot says "${p.status}". If they rejected it and kept it, open the unit and tap "Rejected, Takealot kept it…".`}); });
+  // ... or received fewer than were sent
+  pos.filter(p=>/receiv/i.test(p.status||"") && p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && (Date.now()-new Date(p.due_date))<30*864e5)
+    .forEach(p=>items.push({go:"ship", tag:"Check", t:`PO ${p.po}: Takealot received ${p.qty_received} of ${p.qty_sending}`, d:`${contents(p)} · find out what happened to the rest (rejected, kept or lost)`}));
+  // 2. lead time on Takealot higher than what's at HOME: it could sell what you don't have
+  { const home={}; units.forEach(u=>{ if(u.location==="HOME" && u.status==="in_stock" && !u.order_id && !u.po && (u.condition||"new")==="new"){ const k=(products.find(p=>p.sku===u.sku)||{}).product||u.product; home[k]=(home[k]||0)+1; } });
+    products.filter(p=>p.leadtime_fixed!=null && p.leadtime_fixed<0 && p.product!==IGNORE && ((p.takealot_stock||{}).LEADTIME||{}).qty > (home[p.product]||0)).forEach(p=>{
+      const q=p.takealot_stock.LEADTIME.qty;
+      items.push({go:"overview", tag:"Lead time", t:`${p.takealot_title||p.product}: ${q} on lead time, ${home[p.product]||0} at HOME`, d:"Takealot could sell stock you don't have. The next sync sets it right; tap Sync now on the sync card to do it straight away."}); }); }
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
     <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.adampo?`data-adampo="${esc(i.adampo)}"`:`data-go="${i.go}"`}>
@@ -1412,8 +1456,26 @@ function renderWhere(){
   box.hidden=false;
 }
 $("#where").addEventListener("click",e=>{const b=e.target.closest("[data-w]"); if(!b) return; state.only=null; state.where=b.dataset.w; state.status=""; state.loc=""; $("#fLoc").value=""; renderLedger();});
+/* restock planner: per product and Takealot warehouse, from Takealot's own stock and 30-day sales */
+function renderRestock(){
+  const t=$("#rsTable"); if(!t) return;
+  const target=+($("#rsDays").value||21);
+  const home={}; units.forEach(u=>{ if(u.location==="HOME" && u.status==="in_stock" && !u.order_id && !u.po && (u.condition||"new")==="new"){ const k=(products.find(p=>p.sku===u.sku)||{}).product||u.product; home[k]=(home[k]||0)+1; } });
+  const G={};
+  products.filter(p=>p.product && p.product!==IGNORE && p.takealot_stock).forEach(p=>{ ["JHB","CPT","DBN"].forEach(dc=>{ const x=p.takealot_stock[dc]; if(!x) return;
+    const k=p.product+"|"+dc, g=(G[k]=G[k]||{prod:p.product,dc,have:0,sold:0});
+    g.have+=(x.qty||0)+(x.receiving||0)+(x.on_way||0); g.sold+=(x.sold_30d||0); }); });
+  const rows=Object.values(G).filter(g=>g.sold>0).map(g=>{ const rate=g.sold/30, days=rate?g.have/rate:Infinity, need=Math.max(0,Math.ceil(rate*target-g.have));
+    return {...g, rate, days, need, home:home[g.prod]||0}; }).sort((a,b)=>a.days-b.days);
+  const urgent=rows.filter(r=>r.need>0).length;
+  $("#rsSub").textContent = rows.length ? (urgent ? `${urgent} to send in · based on the last 30 days of sales at each warehouse` : "Every warehouse has enough for now") : "Appears once products have sales at a Takealot warehouse";
+  t.innerHTML = rows.length ? `<thead><tr><th>Product</th><th>Warehouse</th><th class="num">At Takealot</th><th class="num">Sold (30 days)</th><th class="num">Runs out in</th><th class="num">Send</th><th class="num">At HOME</th></tr></thead><tbody>${rows.map(r=>`<tr>
+    <td>${esc(r.prod)}</td><td>${esc(r.dc)}</td><td class="num">${r.have}</td><td class="num">${r.sold}</td>
+    <td class="num ${r.days<7?"neg":r.days<14?"warn-t":""}"><b>${r.have===0?"out of stock":isFinite(r.days)?Math.round(r.days)+" day"+(Math.round(r.days)===1?"":"s"):"–"}</b></td>
+    <td class="num">${r.need?`<b>${r.need}</b>`:'<span class="muted">–</span>'}</td><td class="num ${r.need>r.home?"warn-t":""}">${r.home}</td></tr>`).join("")}</tbody>` : "";
+}
 function renderLedger(){
-  renderWhere();
+  renderWhere(); renderRestock();
   const unsold=units.filter(u=>!SOLD.has(u.status));
   const counts={"":unsold.length}; Object.keys(STATUS).forEach(k=>counts[k]=units.filter(u=>u.status===k).length);
   if(SOLD.has(state.status)) state.status="";
@@ -1438,6 +1500,7 @@ function renderLedger(){
     $("#soldHint").hidden=!n; if(n) $("#soldHint").innerHTML=`${n} sold unit${n===1?"":"s"} also match "${esc(state.q)}". <button class="btn small" type="button" id="soldHintGo">Show on Sales</button>`; }
   renderSales();
 }
+$("#rsDays").addEventListener("change",renderRestock);
 $("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); if(!c) return; state.only=null; state.where=""; state.status=c.dataset.s; renderLedger();});
 $("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; clearTimeout(renderLedger._t); renderLedger._t=setTimeout(renderLedger,150);});
 $("#fLoc").addEventListener("change",e=>{state.only=null; state.loc=e.target.value; renderLedger();});
@@ -1448,6 +1511,14 @@ for(const el of [$("#ledger"),$("#cards")]){
   el.addEventListener("keydown",e=>{ if(e.key==="Enter"){const r=e.target.closest("[data-id]"); if(r) openEdit(r.dataset.id);} });
 }
 
+/* estimated Takealot fees for sales still awaiting fees: the fee rate (fees ÷ sale) of your settled sales of that product,
+   or of all your settled sales when the product has none yet */
+function feeRates(){ const k=units.length+":"+units.filter(u=>u.fees!=null).length; if(feeRates.k===k) return feeRates.v;
+  const by={}, all={f:0,g:0}; units.forEach(u=>{ if(!SOLD.has(u.status)||u.fees==null||!(u.gross>0)||isPrivate(u)) return; const g=(products.find(p=>p.sku===u.sku)||{}).product||u.product;
+    (by[g]=by[g]||{f:0,g:0}); by[g].f+=+u.fees; by[g].g+=+u.gross; all.f+=+u.fees; all.g+=+u.gross; });
+  const v={by:Object.fromEntries(Object.entries(by).filter(([k,x])=>x.g>0).map(([k,x])=>[k,x.f/x.g])), all:all.g?all.f/all.g:0.12}; feeRates.k=k; feeRates.v=v; return v; }
+const estFees=u=>{ if(u.fees!=null) return +u.fees; if(!SOLD.has(u.status)||isPrivate(u)) return 0; const r=feeRates(), g=(products.find(p=>p.sku===u.sku)||{}).product||u.product; return Math.round((u.gross||0)*(r.by[g]??r.all)*100)/100; };
+const estProfit=u=>SOLD.has(u.status) ? (u.gross||0)-estFees(u)-(u.cost||0) : null;
 /* ---------------- sales (sold units, by day) ---------------- */
 const SA_DAY = new Intl.DateTimeFormat("en-CA",{timeZone:"Africa/Johannesburg"});
 const saleDay = u => { const t=talTime[u.order_id]; if(t){ const d=new Date(t); if(!isNaN(d)) return SA_DAY.format(d); } return String(u.sold_date||"").slice(0,10); };
@@ -1472,15 +1543,15 @@ function renderSales(){
     if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment].join(" ").toLowerCase().includes(q)) return false;
     return true; }).sort((a,b)=>(talTime[b.order_id]||b.sold_date||"").localeCompare(talTime[a.order_id]||a.sold_date||""));
   document.querySelectorAll("#slQuick [data-r]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.r===SL.r)));
-  const sum=a=>a.reduce((t,u)=>({n:t.n+1,g:t.g+(u.gross||0),f:t.f+(u.fees||0),c:t.c+(u.cost||0),p:t.p+(profit(u)||0),w:t.w+(u.fees==null?1:0)}),{n:0,g:0,f:0,c:0,p:0,w:0});
+  const sum=a=>a.reduce((t,u)=>({n:t.n+1,g:t.g+(u.gross||0),f:t.f+estFees(u),c:t.c+(u.cost||0),p:t.p+(estProfit(u)||0),w:t.w+(u.fees==null&&!isPrivate(u)?1:0)}),{n:0,g:0,f:0,c:0,p:0,w:0});
   const T=sum(rows);
   const lbl = !SL.from&&!SL.to ? "all time" : SL.from===SL.to ? fd(SL.from) : `${SL.from?fd(SL.from):"start"} – ${SL.to?fd(SL.to):"today"}`;
   $("#slSub").textContent=`${T.n} unit${T.n===1?"":"s"} sold · ${lbl}`;
   $("#slTiles").innerHTML=`
     <div class="tile"><span class="lbl">Units sold</span><span class="val">${T.n}</span><span class="sub">${esc(lbl)}</span></div>
-    <div class="tile"><span class="lbl">Sales</span><span class="val">${R0(T.g)}</span><span class="sub">fees ${R0(T.f)}</span></div>
+    <div class="tile"><span class="lbl">Sales</span><span class="val">${R0(T.g)}</span><span class="sub">fees ${T.w?"≈ ":""}${R0(T.f)}</span></div>
     <div class="tile"><span class="lbl">Cost of units</span><span class="val">${R0(T.c)}</span><span class="sub">what you paid</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val"${T.p<0?' style="color:var(--bad)"':""}>${R0(T.p)}</span><span class="sub">${T.w?`${T.w} still awaiting fees`:"before delivery & salaries"}</span></div>
+    <div class="tile hero"><span class="lbl">Profit</span><span class="val"${T.p<0?' style="color:var(--bad)"':""}>${R0(T.p)}</span><span class="sub">${T.w?`≈ ${T.w} with estimated fees`:"before delivery & salaries"}</span></div>
     <div class="tile"><span class="lbl">Avg profit / unit</span><span class="val">${T.n?R0(T.p/T.n):"–"}</span><span class="sub">${T.g?((T.p/T.g)*100).toFixed(1)+"% of sales":""}</span></div>`;
   // group by day
   const days=[]; let cur=null;
@@ -1489,21 +1560,38 @@ function renderSales(){
   const time=u=>{ const s=soldWhen(u); const m=s.match(/\d{2}:\d{2}$/); return m?m[0]:""; };
   $("#slTable").innerHTML = rows.length ? `<thead><tr><th>Time</th><th>Product</th><th>Status</th><th>Order ID</th><th>DC</th><th>Supplier</th><th class="num">Sale</th><th class="num">Fees</th><th class="num">Cost</th><th class="num">Profit</th></tr></thead>
     <tbody>${days.map(g=>{ const S=sum(g.us); return `<tr class="sl-day"><td colspan="6"><b>${esc(dayName(g.d))}</b> <span class="muted">· ${S.n} sold</span></td><td class="num"><b>${R(S.g)}</b></td><td class="num">${R(S.f)}</td><td class="num">${R(S.c)}</td><td class="num ${S.p<0?"neg":""}"><b>${R(S.p)}</b></td></tr>`+
-      g.us.map(u=>{ const p=profit(u); return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}"><td class="nw mono">${time(u)}</td>
+      g.us.map(u=>{ const p=estProfit(u); return `<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}"><td class="nw mono">${time(u)}</td>
         <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}</td>
         <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
         <td class="mono">${esc(u.order_id)}</td><td>${esc(u.location)}</td><td>${esc(u.supplier)}</td>
-        <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):'<span class="muted">pending</span>'}</td><td class="num">${R(u.cost)}</td>
-        <td class="num ${p<0?"neg":""}">${p==null?"":R(p)}</td></tr>`; }).join(""); }).join("")}</tbody>
+        <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):isPrivate(u)?"":`<span class="muted" title="estimated from your settled sales">≈ ${R(estFees(u))}</span>`}</td><td class="num">${R(u.cost)}</td>
+        <td class="num ${p<0?"neg":""}">${p==null?"":(u.fees==null&&!isPrivate(u)?'<span class="muted">≈</span> ':"")+R(p)}</td></tr>`; }).join(""); }).join("")}</tbody>
     <tfoot><tr><td colspan="6">${T.n} unit${T.n===1?"":"s"}</td><td class="num">${R(T.g)}</td><td class="num">${R(T.f)}</td><td class="num">${R(T.c)}</td><td class="num">${R(T.p)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted" style="padding:20px">No sales ${SL.from===SL.to&&SL.from?"on "+fd(SL.from):"in this period"}.</td></tr></tbody>`;
   $("#slCards").innerHTML = rows.length ? days.map(g=>{ const S=sum(g.us); return `<div class="sl-dayc"><b>${esc(dayName(g.d))}</b><span>${S.n} sold · ${R0(S.g)} · profit <b class="${S.p<0?"neg":"pos"}">${R0(S.p)}</b></span></div>`+
-      g.us.map(u=>{ const p=profit(u); return `<div class="card" tabindex="0" data-id="${esc(u.id)}"><div class="r1"><span class="p">${esc(u.product)}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>
+      g.us.map(u=>{ const p=estProfit(u); return `<div class="card" tabindex="0" data-id="${esc(u.id)}"><div class="r1"><span class="p">${esc(u.product)}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>
         <div class="meta"><span>${time(u)||fd(u.sold_date)}</span><span>Order ${esc(u.order_id)}</span><span>${esc(u.location)}</span></div>
-        <div class="money"><span>Sale ${R(u.gross)}</span><span>Fees ${u.fees!=null?R(u.fees):"pending"}</span><span>Cost ${R(u.cost)}</span>${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`; }).join(""); }).join("")
+        <div class="money"><span>Sale ${R(u.gross)}</span><span>Fees ${u.fees!=null?R(u.fees):isPrivate(u)?"–":"≈ "+R(estFees(u))}</span><span>Cost ${R(u.cost)}</span>${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`; }).join(""); }).join("")
     : `<div class="empty">No sales ${SL.from===SL.to&&SL.from?"on "+fd(SL.from):"in this period"}.</div>`;
   const td=today(); $("#cntSales").textContent = sold.filter(u=>saleDay(u)===td).length || "";
+  // by product and by supplier, for the same dates
+  const grp=(key)=>{ const m={}; rows.forEach(u=>{ const k=key(u)||"(none)"; (m[k]=m[k]||[]).push(u); }); return Object.entries(m).map(([k,a])=>[k,sum(a)]).sort((a,b)=>b[1].p-a[1].p); };
+  const gtab=(L,first,extra)=>L.length?`<thead><tr><th>${first}</th><th class="num">Sold</th><th class="num">Sales</th><th class="num">Profit</th><th class="num">Avg / unit</th><th class="num">Margin</th>${extra?extra.h:""}</tr></thead><tbody>${L.map(([k,S])=>`<tr><td>${esc(k)}</td><td class="num">${S.n}</td><td class="num">${R0(S.g)}</td><td class="num ${S.p<0?"neg":""}"><b>${R0(S.p)}</b></td><td class="num">${R0(S.p/S.n)}</td><td class="num">${S.g?(S.p/S.g*100).toFixed(1)+"%":""}</td>${extra?extra.r(k):""}</tr>`).join("")}</tbody>`:`<tbody><tr><td class="muted">No sales for these dates.</td></tr></tbody>`;
+  $("#slByProd").innerHTML=gtab(grp(u=>(products.find(p=>p.sku===u.sku)||{}).product||u.product),"Product");
+  // returns / faulty per supplier, all time: units that came back from a customer, and units marked faulty
+  const ret=u=>/Customer return|Removal order/i.test(u.comment||"") || u.condition==="faulty";
+  const supAll={}; units.forEach(u=>{ const k=u.supplier||"(none)"; const x=(supAll[k]=supAll[k]||{n:0,r:0,f:0}); if(SOLD.has(u.status)||ret(u)) x.n++; if(ret(u)) x.r++; if(u.condition==="faulty") x.f++; });
+  $("#slBySup").innerHTML=gtab(grp(u=>u.supplier),"Supplier",{h:'<th class="num">Returned</th><th class="num">Faulty</th>',
+    r:k=>{ const x=supAll[k]||{n:0,r:0,f:0}; return `<td class="num">${x.r}${x.n?` <span class="muted">(${(x.r/x.n*100).toFixed(0)}%)</span>`:""}</td><td class="num">${x.f}</td>`; }});
+  renderSales.rows=rows;
 }
+$("#slCsv").addEventListener("click",()=>{ const rows=renderSales.rows||[]; if(!rows.length){ toast("No sales to download for these dates"); return; }
+  const q=v=>{ const t=v==null?"":String(v); return /[",\n;]/.test(t)?`"${t.replace(/"/g,'""')}"`:t; };
+  const head=["Date","Time","Product","Status","Order ID","Warehouse","Supplier","PO","Serial","Sale","Fees","Fees estimated","Cost","Profit"];
+  const lines=[head.join(",")].concat(rows.map(u=>{ const s=soldWhen(u), m=s.match(/\d{2}:\d{2}$/); return [saleDay(u), m?m[0]:"", u.product, stLabel(u), u.order_id, u.location, u.supplier, u.po, u.sn,
+    u.gross??"", estFees(u), u.fees==null&&!isPrivate(u)?"yes":"", u.cost??"", estProfit(u)??""].map(q).join(","); }));
+  const blob=new Blob(["\ufeff"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`Stock Recon sales ${SL.from||"start"} to ${SL.to||today()}.csv`; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1000); });
 $("#slQuick").addEventListener("click",e=>{ const b=e.target.closest("[data-r]"); if(b) setSlRange(b.dataset.r); });
 $("#slFrom").addEventListener("change",e=>{ SL.from=e.target.value; SL.r=""; if(SL.to && SL.from>SL.to){ SL.to=SL.from; $("#slTo").value=SL.to; } renderSales(); });
 $("#slTo").addEventListener("change",e=>{ SL.to=e.target.value; SL.r=""; if(SL.from && SL.to<SL.from){ SL.from=SL.to; $("#slFrom").value=SL.from; } renderSales(); });
@@ -1761,10 +1849,39 @@ function renderPrice(){
 }
 $("#pfTable").addEventListener("change",e=>{ const s=e.target.closest('[data-f="floor_mode"]'); if(!s) return; const tr=s.closest("tr");
   tr.querySelector('[data-auto]').hidden=s.value==="manual"; tr.querySelector('[data-f="floor_price"]').hidden=s.value!=="manual"; });
+/* competitor history: the repricer notes the Buy Box every 10 minutes */
+async function renderPfChart(sku,p){
+  const el=$("#pfChart"); el.innerHTML='<p class="note">Loading the last 7 days…</p>';
+  const since=new Date(Date.now()-7*864e5).toISOString();
+  const {data,error}=await sb.from("price_log").select("at,my_price,bb_price,bb_seller,note").eq("sku",sku).eq("action","observe").gte("at",since).order("at").limit(2000);
+  if(error||!data.length){ el.innerHTML='<p class="note">The competitor chart fills in over the next hours (one point every 10 minutes).</p>'; return; }
+  const mine="M"+(((p&&p.takealot_stock||{}).OFFER||{}).merchant_id||29853221);
+  const pts=data.map(x=>{ let n={}; try{ n=JSON.parse(x.note||"{}"); }catch(e){} return {t:new Date(x.at).getTime(), my:+x.my_price||null, bb:+x.bb_price||null, win:x.bb_seller===mine, seller:x.bb_seller, other:n.other_min!=null?+n.other_min:(x.bb_seller!==mine?+x.bb_price:null)}; });
+  const W=900,H=220,L=56,Rr=10,T=10,B=26; const t0=pts[0].t, t1=Math.max(pts[pts.length-1].t,t0+1);
+  const vals=pts.flatMap(q=>[q.my,q.other]).filter(v=>v>0); const lo=Math.min(...vals), hi=Math.max(...vals), pad=Math.max(5,(hi-lo)*0.1), y0=lo-pad, y1=hi+pad;
+  const X=t=>L+(t-t0)/(t1-t0)*(W-L-Rr), Y=v=>T+(1-(v-y0)/(y1-y0))*(H-T-B);
+  const line=k=>pts.filter(q=>q[k]>0).map((q,i)=>`${i?"L":"M"}${X(q.t).toFixed(1)},${Y(q[k]).toFixed(1)}`).join("");
+  const ticks=[0,.25,.5,.75,1].map(f=>y0+(y1-y0)*f);
+  const days=[]; for(let d=new Date(new Date(t0).toDateString()).getTime()+864e5; d<t1; d+=864e5) days.push(d);
+  const held=pts.filter(q=>q.win).length/pts.length*100;
+  const sellers={}; pts.filter(q=>!q.win&&q.seller).forEach(q=>sellers[q.seller]=(sellers[q.seller]||0)+1);
+  const lowest=Math.min(...pts.map(q=>q.other).filter(v=>v>0));
+  const hrs={}; pts.filter(q=>!q.win).forEach(q=>{ const h=new Date(q.t).getHours(); hrs[h]=(hrs[h]||0)+1; });
+  const busy=Object.entries(hrs).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([h])=>`${String(h).padStart(2,"0")}:00`).sort();
+  el.innerHTML=`<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Your price and the competitor's, last 7 days">
+    ${ticks.map(v=>`<line class="grid" x1="${L}" x2="${W-Rr}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ax" x="${L-6}" y="${Y(v)+4}" text-anchor="end">R${Math.round(v).toLocaleString("en-ZA")}</text>`).join("")}
+    ${days.map(d=>`<line class="grid" x1="${X(d)}" x2="${X(d)}" y1="${T}" y2="${H-B}" stroke-dasharray="2 4"/><text class="ax" x="${X(d)+4}" y="${H-8}">${new Date(d).toLocaleDateString("en-ZA",{weekday:"short",day:"numeric"})}</text>`).join("")}
+    <path d="${line("other")}" fill="none" stroke="var(--bad)" stroke-width="2" stroke-dasharray="5 3"/>
+    <path d="${line("my")}" fill="none" stroke="var(--accent)" stroke-width="2.5"/>
+  </svg></div>
+  <p class="note" style="margin:4px 0 0"><span style="color:var(--accent)">━</span> your price &nbsp; <span style="color:var(--bad)">╍</span> cheapest competitor · you held the Buy Box <b>${held.toFixed(0)}%</b> of the time ·
+    competitor low <b>${isFinite(lowest)?R0(lowest):"–"}</b>${Object.keys(sellers).length?` · competitors: ${Object.entries(sellers).sort((a,b)=>b[1]-a[1]).map(([k])=>esc(k)).join(", ")}`:""}${busy.length?` · they win most around ${busy.join(", ")}`:""}</p>`;
+}
 $("#pfTable").addEventListener("click",async e=>{
   const b=e.target.closest("button"); if(!b) return;
   if(b.dataset.pfhist){ const sku=b.dataset.pfhist, p=products.find(x=>x.sku===sku);
-    const {data,error}=await sb.from("price_log").select("*").eq("sku",sku).order("at",{ascending:false}).limit(100);
+    const {data,error}=await sb.from("price_log").select("*").eq("sku",sku).neq("action","observe").order("at",{ascending:false}).limit(100);
+    renderPfChart(sku,p);
     $("#pfHistPanel").hidden=false; $("#pfHistTitle").textContent=`Price history · ${p?.takealot_title||sku}`;
     const lbl={lowered:"Lowered",raised:"Raised",at_floor:"Down to floor",reset:"Back to ceiling",would_reset:"Would go back to ceiling (watch)",follow:"Just above competitor",would_follow:"Would sit just above competitor (watch)",would_lower:"Would lower (watch)",would_raise:"Would raise (watch)",failed:"Takealot refused"};
     $("#pfHist").innerHTML = error ? `<tbody><tr><td class="muted">${esc(errMsg(error))}</td></tr></tbody>` : data.length ? `<thead><tr><th>When</th><th>What</th><th class="num">From</th><th class="num">To</th><th class="num">Buy Box</th><th>Note</th></tr></thead><tbody>${data.map(x=>`<tr><td class="nw">${soldWhen({sold_date:x.at})}</td><td>${esc(lbl[x.action]||x.action)}</td><td class="num">${R0(x.my_price||0)}</td><td class="num">${R0(x.new_price||0)}</td><td class="num">${R0(x.bb_price||0)}</td><td>${esc(x.note||"")}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">No changes yet.</td></tr></tbody>`;
@@ -1797,7 +1914,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v98)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v99)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{

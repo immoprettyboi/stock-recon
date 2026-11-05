@@ -831,9 +831,16 @@ def _read_live(page, plid, offer_id, mine):
         for o in c.get("items") or []:
             others.append((str(o.get("product_id") or ""), float(o.get("price") or 0)))
     mine_live = price if seller == mine else next((p for pid, p in others if pid == str(offer_id)), None)
+    # Takealot sometimes shows two offers: "Fastest Delivery" (selected, a seller with warehouse stock) and "Best Price"
+    slot = ""
+    for i in items:
+        if not i.get("is_selected") and str(i.get("sponsored_ads_seller_id") or "") == mine:
+            slot = (i.get("offer_detail") or {}).get("preference") or "other"
+            if mine_live is None and i.get("price"):
+                mine_live = float(i["price"])
     other_min = min([p for pid, p in others if pid != str(offer_id)] + ([price] if seller != mine else []), default=None)
     sig = f"{seller}:{price}|" + ",".join(f"{pid}:{p}" for pid, p in sorted(others))
-    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig}
+    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot}
 
 
 
@@ -1029,7 +1036,9 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 if rule.get("last_action") != upd["last_action"]:
                     alerts.append(("⚠️ Price change refused", f"{title}: Takealot said {str(msg)[:100]}"))
     else:
-        upd["last_action"] = note or ("You have the Buy Box" if winning else "Holding")
+        upd["last_action"] = note or ("You have the Buy Box" if winning else
+                                      "Best Price slot: you're the cheapest; Takealot shows the seller with warehouse stock first (Fastest Delivery)"
+                                      if live.get("slot") == "lowest_priced" else "Holding")
         tmf = _tload()
         below = bool(note and "below your floor" in note)
         if below != bool((tmf.get("below_floor") or {}).get(sku)):
@@ -1037,6 +1046,14 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             _tsave(tmf)
             if below:
                 alerts.append(("⚠️ Competitor below your floor", f"{title}: {note}"))
+    if _time.time() - ck.get("obs_at", 0) >= 600:              # price history for the chart: every 10 minutes
+        ck["obs_at"] = _time.time()
+        try:
+            db.insert("price_log", [{"sku": sku, "my_price": upd.get("my_price"), "bb_price": bb_price, "bb_seller": bb_seller,
+                                     "new_price": None, "action": "observe",
+                                     "note": json.dumps({"other_min": live.get("other_min"), "slot": live.get("slot") or "", "win": winning})}])
+        except Exception:
+            pass
     bbsig = f"{bb_seller}:{bb_price}:{live.get('other_min')}"
     if ck.get("bbsig") not in (None, bbsig) or target is not None:
         _LAST_ACTIVE[0] = _time.time()                       # something moved: stay on fast checks
@@ -1916,6 +1933,14 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 balance_snapshot(ctx, auth, log)
             except Exception as e:
                 log("Balance snapshot failed: " + repr(e)[:200])
+            try:
+                payout_forecast(ctx, cfg, auth, log)
+            except Exception as e:
+                log("Payout forecast failed: " + repr(e)[:200])
+            try:
+                evening_summary(cfg, log)
+            except Exception as e:
+                log("Evening summary failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
             try:
                 fetch_takealot_pos(ctx, cfg, auth, log)
@@ -1938,6 +1963,117 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
 
 BALANCE_LOG = DEBUG_DIR / "balance_log.jsonl"
+
+
+def _app_state(cfg, key, value):
+    """Save a figure for the app (table app_state, from 18_database_update.sql). Quietly skipped before that's run."""
+    import stockrecon_sync as S
+    try:
+        S.DB(cfg["url"], cfg["key"]).insert("app_state", [{"key": key, "value": value, "updated_at": datetime.utcnow().isoformat() + "Z"}],
+                                            upsert_on="key")
+        return True
+    except Exception:
+        return False
+
+
+def payout_forecast(ctx, cfg, auth, log):
+    """Next Takealot payouts. Takealot pays on Thursdays, for what was recorded on your account up to the Sunday before.
+    Takes everything after the last payout (sales, fees, refunds, ...) and splits it by which Thursday it falls into."""
+    if not auth:
+        return
+    import re, time as _t, stockrecon_sync as S
+    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500:     # every 30 minutes is plenty
+        return
+    S._PAYOUT_AT = _t.time()
+    r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
+    bal = ((r.json() or {}).get("balances") or {}) if r.ok else {}
+    d_to = datetime.now().date()
+    d_from = d_to - timedelta(days=30)
+    txs, pn = [], 1
+    while pn < 30:
+        q = ctx.request.get(f"https://{API_HOST}/v1/seller/transactions?date_from={d_from}&date_to={d_to}&page_size=100&page_number={pn}",
+                            headers=auth, timeout=60_000)
+        if not q.ok:
+            break
+        j = q.json() or {}
+        rows = j.get("transactions") or []
+        txs += rows
+        if len(rows) < 100:
+            break
+        pn += 1
+    def when(x):
+        try:
+            return datetime.fromisoformat(str(x.get("date_created")).replace("Z", "+00:00").replace(" ", "T")[:19])
+        except Exception:
+            return None
+    kind = lambda x: str(((x.get("transaction_type") or {}).get("description")) or "")
+    types = sorted({kind(x) for x in txs})
+    payouts = [x for x in txs if re.search(r"disburse|payout|paid to|transfer to", kind(x), re.I)]
+    last = max(payouts, key=lambda x: when(x) or datetime.min) if payouts else None
+    last_at = when(last) if last else None
+    open_tx = [x for x in txs if x is not last and x not in payouts and (last_at is None or (when(x) or datetime.min) > last_at)]
+    today = datetime.now().date()
+    nxt = today + timedelta(days=(3 - today.weekday()) % 7)          # this or next Thursday
+    if last_at and last_at.date() == nxt:                             # today's payout already went out
+        nxt += timedelta(days=7)
+    buckets = {}
+    for x in open_tx:
+        w = when(x)
+        if not w:
+            continue
+        d = w.date()
+        cut = nxt - timedelta(days=4)                                 # the Sunday before that Thursday
+        pay = nxt
+        while d > cut:
+            pay += timedelta(days=7)
+            cut += timedelta(days=7)
+        b = buckets.setdefault(pay.isoformat(), {"amount": 0.0, "n": 0})
+        b["amount"] += float(x.get("inc_vat") or 0)
+        b["n"] += 1
+    value = {"at": datetime.now().isoformat(timespec="seconds"), "current": bal.get("current"), "held_back": bal.get("held_back"),
+             "available": bal.get("available"),
+             "last_payout": {"date": last_at.date().isoformat(), "amount": abs(float(last.get("inc_vat") or 0))} if last else None,
+             "next": [{"date": k, "amount": round(v["amount"], 2), "n": v["n"]} for k, v in sorted(buckets.items())],
+             "types": types}
+    _app_state(cfg, "payout", value)
+
+
+def evening_summary(cfg, log):
+    """Once a day after 21:00: today's sales, profit and Buy Box on the phones."""
+    now = datetime.now()
+    if now.hour < 21:
+        return
+    flag = DEBUG_DIR / f"evening_{now.date().isoformat()}.txt"
+    if flag.exists():
+        return
+    DEBUG_DIR.mkdir(exist_ok=True)
+    flag.write_text(now.isoformat(), encoding="utf-8")
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    start = (datetime.combine(now.date(), datetime.min.time()) - timedelta(hours=2)).isoformat() + "Z"   # SA midnight in UTC
+    sales = db.select("takealot_sales", f"select=order_id,qty,gross,unit_id&order_date=gte.{start}")
+    ids = [x["unit_id"] for x in sales if x.get("unit_id")]
+    units = db.select("units", "select=id,gross,fees,cost") if ids else []
+    um = {u["id"]: u for u in units}
+    # fees not in yet: use the average fee rate of your settled sales
+    paid = [u for u in units if u.get("fees") is not None and float(u.get("gross") or 0) > 0]
+    rate = (sum(float(u["fees"]) for u in paid) / sum(float(u["gross"]) for u in paid)) if paid else 0.12
+    n, g, pr = 0, 0.0, 0.0
+    for x in sales:
+        q = int(x.get("qty") or 1)
+        gross = float(x.get("gross") or 0)
+        n += q
+        g += gross
+        u = um.get(x.get("unit_id"))
+        if u:
+            fees = float(u["fees"]) if u.get("fees") is not None else gross * rate
+            pr += gross - fees - float(u.get("cost") or 0)
+    rules = [r for r in db.select("price_rules", "select=enabled,winning") if r.get("enabled")]
+    won = sum(1 for r in rules if r.get("winning"))
+    body = (f"{n} sold · R{g:,.0f} sales · ≈R{pr:,.0f} profit" if n else "No sales today") + \
+           (f" · Buy Box on {won} of {len(rules)}" if rules else "")
+    notify(cfg, "📊 Today on Takealot", body.replace(",", " "), topic="price", log=log)
+    log("Evening summary sent: " + body)
 
 
 def balance_snapshot(ctx, auth, log):
