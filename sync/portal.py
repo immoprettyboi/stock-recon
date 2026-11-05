@@ -916,6 +916,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         elif want >= floor:
             if want < my_price or my_price == 0:
                 target, action = want, "lowered"
+            elif want > my_price and not waiting_live:
+                # the seller ahead of us is well above our price (e.g. they're shown first for warehouse stock):
+                # come up to just under them instead of leaving money on the table
+                target, action, note = want, "raised", f"The Buy Box is R{bb_price:,.0f}: up to R{step:,.0f} under it"
         elif (rule.get("floor_action") or "ceiling") == "ceiling" and ceiling:
             # can't win without going under the floor:
             #  1. go back up to the ceiling and let the other bot follow us up;
