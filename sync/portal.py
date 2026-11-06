@@ -1986,15 +1986,19 @@ def payout_forecast(ctx, cfg, auth, log):
     if not auth:
         return
     import re, time as _t, stockrecon_sync as S
-    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500:     # every 30 minutes is plenty
-        return
+    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and not (DEBUG_DIR / "payout_now.txt").exists():
+        return                                                  # every 30 minutes is plenty
+    try:
+        (DEBUG_DIR / "payout_now.txt").unlink()
+    except OSError:
+        pass
     S._PAYOUT_AT = _t.time()
     r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
     bal = ((r.json() or {}).get("balances") or {}) if r.ok else {}
     d_to = datetime.now().date()
-    d_from = d_to - timedelta(days=30)
+    d_from = d_to - timedelta(days=45)
     txs, pn = [], 1
-    while pn < 30:
+    while pn < 40:
         q = ctx.request.get(f"https://{API_HOST}/v1/seller/transactions?date_from={d_from}&date_to={d_to}&page_size=100&page_number={pn}",
                             headers=auth, timeout=60_000)
         if not q.ok:
@@ -2015,7 +2019,22 @@ def payout_forecast(ctx, cfg, auth, log):
     payouts = [x for x in txs if re.search(r"disburse|payout|paid to|transfer to", kind(x), re.I)]
     last = max(payouts, key=lambda x: when(x) or datetime.min) if payouts else None
     last_at = when(last) if last else None
-    open_tx = [x for x in txs if x is not last and x not in payouts and (last_at is None or (when(x) or datetime.min) > last_at)]
+    # a Thursday payout covers what was recorded up to the Sunday before it: everything after that Sunday is still to come
+    def cut_of(d):                                               # the Sunday before a payout day
+        return d - timedelta(days=(d.weekday() - 6) % 7 or 7)
+    last_cut = cut_of(last_at.date()) if last_at else None
+    open_tx = [x for x in txs if x not in payouts and when(x) and (last_cut is None or when(x).date() > last_cut)]
+    # check the rule against Takealot's own payouts: sum what fell in each payout's week and compare
+    check = []
+    for pz in sorted(payouts, key=lambda x: when(x) or datetime.min)[-3:]:
+        pd = when(pz).date()
+        hi, lo = cut_of(pd), cut_of(pd) - timedelta(days=7)
+        if (lo - d_from).days < 0:
+            continue                                             # that week isn't fully inside what we read
+        part = [x for x in txs if x not in payouts and when(x) and lo < when(x).date() <= hi]
+        tot = round(sum(float(x.get("inc_vat") or 0) for x in part), 2)
+        check.append({"payout": pd.isoformat(), "paid": round(abs(float(pz.get("inc_vat") or 0)), 2), "rule": tot,
+                      "diff": round(abs(float(pz.get("inc_vat") or 0)) - tot, 2), "n": len(part), "from": (lo + timedelta(days=1)).isoformat(), "to": hi.isoformat()})
     today = datetime.now().date()
     nxt = today + timedelta(days=(3 - today.weekday()) % 7)          # this or next Thursday
     if last_at and last_at.date() == nxt:                             # today's payout already went out
@@ -2038,7 +2057,7 @@ def payout_forecast(ctx, cfg, auth, log):
              "available": bal.get("available"),
              "last_payout": {"date": last_at.date().isoformat(), "amount": abs(float(last.get("inc_vat") or 0))} if last else None,
              "next": [{"date": k, "amount": round(v["amount"], 2), "n": v["n"]} for k, v in sorted(buckets.items())],
-             "types": types}
+             "types": types, "check": check}
     _app_state(cfg, "payout", value)
 
 
