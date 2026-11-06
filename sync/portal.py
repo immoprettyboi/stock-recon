@@ -1986,13 +1986,13 @@ def payout_forecast(ctx, cfg, auth, log):
     if not auth:
         return
     import re, time as _t, stockrecon_sync as S
-    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and getattr(S, "_PAYOUT_VER", 0) == 3 and not (DEBUG_DIR / "payout_now.txt").exists():
+    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and getattr(S, "_PAYOUT_VER", 0) == 4 and not (DEBUG_DIR / "payout_now.txt").exists():
         return                                                  # every 30 minutes is plenty
     try:
         (DEBUG_DIR / "payout_now.txt").unlink()
     except OSError:
         pass
-    S._PAYOUT_AT, S._PAYOUT_VER = _t.time(), 3
+    S._PAYOUT_AT, S._PAYOUT_VER = _t.time(), 4
     r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
     bal = ((r.json() or {}).get("balances") or {}) if r.ok else {}
     d_to = datetime.now().date()
@@ -2063,6 +2063,17 @@ def payout_forecast(ctx, cfg, auth, log):
              "next": [{"date": k, "amount": round(v["amount"], 2), "n": v["n"]} for k, v in sorted(buckets.items())],
              "types": types, "check": check}
     _app_state(cfg, "payout", value)
+    # the balance tiles over the last 10 days (from the 30-minute snapshots), to see when money becomes Available
+    try:
+        hist, keep = [], (datetime.now() - timedelta(days=10)).isoformat()
+        for line in BALANCE_LOG.read_text(encoding="utf-8").splitlines():
+            j = json.loads(line)
+            if str(j.get("at")) >= keep:
+                hist.append([j.get("at"), j.get("current"), j.get("held_back"), j.get("available"),
+                             round(sum(float(x.get("amount") or 0) for x in j.get("new") or []), 2)])
+        _app_state(cfg, "balance_hist", {"rows": hist})
+    except Exception as e:
+        log("Balance history for the app failed: " + repr(e)[:150])
 
 
 def evening_summary(cfg, log):
