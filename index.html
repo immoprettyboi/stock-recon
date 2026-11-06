@@ -1748,7 +1748,8 @@ const isRtsWaybill=x=>/-R$/i.test(x.waybill||"");          // courier's return-t
 function shipUnits(x){
   if(x.direction==="to_takealot"){ const po=poOf(x); if(!po) return [];
     // a PO can be sent twice (Takealot rejected the first shipment): count each unit on the shipment it went on
-    const rej=u=>(/Takealot rejected (\S+) \(PO/.exec(u.comment||"")||[])[1];
+    // only a rejection on THIS PO counts (a unit can carry an old note from an earlier PO it was rejected on)
+    const rej=u=>{ for(const m of String(u.comment||"").matchAll(/Takealot rejected (\S+) \(PO (\d+)/g)) if(m[2]===po) return m[1]; return undefined; };
     const L=units.filter(u=>u.po===po);
     return ["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status) ? L.filter(u=>rej(u)===x.waybill) : L.filter(u=>!rej(u)); }
   const linked=units.filter(u=>u.courier_shipment_id===x.id);
@@ -1933,7 +1934,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v104)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v105)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
