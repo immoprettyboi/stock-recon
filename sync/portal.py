@@ -1986,13 +1986,13 @@ def payout_forecast(ctx, cfg, auth, log):
     if not auth:
         return
     import re, time as _t, stockrecon_sync as S
-    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and getattr(S, "_PAYOUT_VER", 0) == 4 and not (DEBUG_DIR / "payout_now.txt").exists():
+    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and getattr(S, "_PAYOUT_VER", 0) == 5 and not (DEBUG_DIR / "payout_now.txt").exists():
         return                                                  # every 30 minutes is plenty
     try:
         (DEBUG_DIR / "payout_now.txt").unlink()
     except OSError:
         pass
-    S._PAYOUT_AT, S._PAYOUT_VER = _t.time(), 4
+    S._PAYOUT_AT, S._PAYOUT_VER = _t.time(), 5
     r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
     bal = ((r.json() or {}).get("balances") or {}) if r.ok else {}
     d_to = datetime.now().date()
@@ -2063,6 +2063,21 @@ def payout_forecast(ctx, cfg, auth, log):
              "next": [{"date": k, "amount": round(v["amount"], 2), "n": v["n"]} for k, v in sorted(buckets.items())],
              "types": types, "check": check}
     _app_state(cfg, "payout", value)
+    # per order: when Takealot recorded its payment and which Thursday pays it out
+    paid_days = sorted({when(x).date() for x in payouts if when(x)})
+    orders = {}
+    for x in txs:
+        if not re.search(r"order payment|stock loss payment", kind(x), re.I) or not when(x):
+            continue
+        m = re.search(r"Order:\s*(\d+)", str(x.get("reference") or ""))
+        key = m.group(1) if m else ("STOCKLOSS:" + str(x.get("reference") or "")[:30])
+        d = when(x).date()
+        sunday = d + timedelta(days=(6 - d.weekday()) % 7)
+        pay = sunday + timedelta(days=4)
+        actual = next((pd for pd in paid_days if pd >= pay), None)       # the payout that actually went out (if any yet)
+        orders[key] = {"rec": d.isoformat(), "pay": (actual or pay).isoformat(), "paid": bool(actual),
+                       "amount": float(x.get("inc_vat") or 0)}
+    _app_state(cfg, "order_pay", {"at": value["at"], "orders": orders})
     # the balance tiles over the last 10 days (from the 30-minute snapshots), to see when money becomes Available
     try:
         hist, keep = [], (datetime.now() - timedelta(days=10)).isoformat()
