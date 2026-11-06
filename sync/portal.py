@@ -1986,13 +1986,13 @@ def payout_forecast(ctx, cfg, auth, log):
     if not auth:
         return
     import re, time as _t, stockrecon_sync as S
-    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and not (DEBUG_DIR / "payout_now.txt").exists():
+    if _t.time() - getattr(S, "_PAYOUT_AT", 0) < 1500 and getattr(S, "_PAYOUT_VER", 0) == 3 and not (DEBUG_DIR / "payout_now.txt").exists():
         return                                                  # every 30 minutes is plenty
     try:
         (DEBUG_DIR / "payout_now.txt").unlink()
     except OSError:
         pass
-    S._PAYOUT_AT = _t.time()
+    S._PAYOUT_AT, S._PAYOUT_VER = _t.time(), 3
     r = ctx.request.get(f"https://{API_HOST}/v1/seller/balances", headers=auth, timeout=60_000)
     bal = ((r.json() or {}).get("balances") or {}) if r.ok else {}
     d_to = datetime.now().date()
@@ -2033,7 +2033,11 @@ def payout_forecast(ctx, cfg, auth, log):
             continue                                             # that week isn't fully inside what we read
         part = [x for x in txs if x not in payouts and when(x) and lo < when(x).date() <= hi]
         tot = round(sum(float(x.get("inc_vat") or 0) for x in part), 2)
-        check.append({"payout": pd.isoformat(), "paid": round(abs(float(pz.get("inc_vat") or 0)), 2), "rule": tot,
+        edge = sorted([x for x in txs if x not in payouts and when(x) and hi - timedelta(days=1) <= when(x).date() <= hi + timedelta(days=1)],
+                      key=lambda x: when(x))
+        edge = [{"at": str(x.get("date_created")), "type": kind(x), "amount": float(x.get("inc_vat") or 0), "ref": str(x.get("reference") or "")[:40]}
+                for x in edge if abs(float(x.get("inc_vat") or 0)) >= 500][:40]
+        check.append({"edge": edge, "payout": pd.isoformat(), "paid": round(abs(float(pz.get("inc_vat") or 0)), 2), "rule": tot,
                       "diff": round(abs(float(pz.get("inc_vat") or 0)) - tot, 2), "n": len(part), "from": (lo + timedelta(days=1)).isoformat(), "to": hi.isoformat()})
     today = datetime.now().date()
     nxt = today + timedelta(days=(3 - today.weekday()) % 7)          # this or next Thursday
