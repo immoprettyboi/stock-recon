@@ -2795,7 +2795,8 @@ def allocate_po_units(cfg, rows, log):
             pool.sort(key=lambda u: (u.get("received") or "9999", u["id"]))
             for u in pool[:need]:
                 c = (f"Sent to Takealot {dc} on PO {r['po']}. " + (u.get("comment") or "")).strip()
-                db.patch("units", f"id=eq.{u['id']}", {"po": r["po"], "location": dc, "comment": c, "updated_at": now})
+                db.patch("units", f"id=eq.{u['id']}", {"po": r["po"], "location": dc, "comment": c, "updated_at": now,
+                                                        "courier_shipment_id": None})   # an old return waybill no longer applies
                 u.update(po=r["po"], location=dc)
             got = min(need, len(pool))
             log(f"  PO {r['po']}: {got} × {g} moved from HOME to {dc}" + (f" ({need - got} not found at HOME)" if got < need else "") + ".")
