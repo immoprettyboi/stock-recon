@@ -1520,7 +1520,9 @@ function feeRates(){ const k=units.length+":"+units.filter(u=>u.fees!=null).leng
 const estFees=u=>{ if(u.fees!=null) return +u.fees; if(!SOLD.has(u.status)||isPrivate(u)) return 0; const r=feeRates(), g=(products.find(p=>p.sku===u.sku)||{}).product||u.product; return Math.round((u.gross||0)*(r.by[g]??r.all)*100)/100; };
 const estProfit=u=>SOLD.has(u.status) ? (u.gross||0)-estFees(u)-(u.cost||0) : null;
 /* when Takealot pays a sale out (from the server: the day its payment was recorded and the Thursday that pays it) */
-const payOf=u=>{ const o=((appState.order_pay||{}).orders||{})[u.order_id]; return o||null; };
+const payOf=u=>{ const all=(appState.order_pay||{}).orders||{};
+  if(u.match_method==="stock_loss"){ const k=Object.keys(all).filter(k=>k.startsWith("STOCKLOSS")).sort((a,b)=>all[b].rec.localeCompare(all[a].rec))[0]; return k?all[k]:null; }   // Takealot gives no order number for these
+  return all[u.order_id]||null; };
 const payCell=u=>{ if(isPrivate(u)) return '<span class="muted">–</span>'; const o=payOf(u);
   if(!o) return (appState.order_pay?'<span class="muted" title="Takealot hasn\'t recorded the payment yet (usually once it ships to the customer)">not yet</span>':'');
   const d=new Date(o.pay+"T12:00:00Z").toLocaleDateString("en-ZA",{weekday:"short",day:"numeric",month:"short",timeZone:"UTC"});
@@ -1920,7 +1922,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v101)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v102)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
