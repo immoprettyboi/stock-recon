@@ -711,6 +711,8 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
         <div class="field"><label for="a-qty">Quantity</label><input id="a-qty" type="number" min="1" max="200" value="1" required></div>
         <div class="field"><label for="a-cost">Cost per unit (R)</label><input id="a-cost" type="number" min="0" step="0.01" required placeholder="11500"></div>
         <div class="field"><label for="a-supplier">Supplier</label><input id="a-supplier" list="dl-suppliers" required placeholder="Pick one, or type a new name"><span class="hint" id="supHint"></span></div>
+        <div class="field"><label for="a-inv">Supplier invoice no.</label><input id="a-inv" list="dl-inv-add" placeholder="e.g. INV-10452" autocomplete="off">
+          <label class="note inline" style="margin-top:4px"><input type="checkbox" id="a-noinv"> No invoice</label><span class="hint" id="invHint"></span></div>
         <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid now</option><option value="owe">No, I owe the supplier</option><option value="upfront">Already paid upfront (before it arrived)</option></select><span class="hint" id="paidHint"></span></div>
         <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
         <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
@@ -785,12 +787,20 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
         <div class="field"><label for="dt-sup">Supplier</label><input id="dt-sup" list="dl-suppliers" required placeholder="e.g. Neemo"></div>
         <div class="field"><label for="dt-kind">What</label><select id="dt-kind">
           <option value="payment">Payment I made</option><option value="owe">Amount I now owe (invoice / extra)</option><option value="balance">Set what I owe today (balance)</option></select></div>
+        <div class="field" id="dt-invf"><label for="dt-inv">Invoice no.</label><input id="dt-inv" list="dl-inv-pay" placeholder="Which invoice?" autocomplete="off">
+          <label class="note inline" style="margin-top:4px"><input type="checkbox" id="dt-noinv"> No invoice</label><span class="hint" id="dtInvHint"></span></div>
         <div class="field"><label for="dt-amt">Amount (R)</label><input id="dt-amt" inputmode="decimal" required placeholder="e.g. 50000"></div>
         <div class="field"><label for="dt-date">Date</label><input id="dt-date" type="date"></div>
-        <div class="field wide"><label for="dt-note">Note</label><input id="dt-note" placeholder="optional, e.g. EFT ref, invoice number"></div>
+        <div class="field wide"><label for="dt-note">Note</label><input id="dt-note" placeholder="optional, e.g. EFT reference"></div>
         <div class="form-actions"><button class="btn primary" type="submit">Save</button><span class="note" id="debtMsg"></span></div>
       </form>
       <div class="tscroll"><table id="debtTable"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head" style="justify-content:space-between"><div><h2>Invoices</h2><p id="invSub">Supplier invoices from the stock you add, and what's still owed on each</p></div>
+        <div class="filters"><input type="search" id="invQ" placeholder="Search invoice no. or product" aria-label="Search invoices"><select id="invSup" aria-label="Supplier"><option value="">All suppliers</option></select>
+          <label class="note inline"><input type="checkbox" id="invAll"> Show paid</label></div></div>
+      <div class="tscroll"><table id="invTable"></table></div>
     </div>
     <div class="panel" id="debtHistPanel" hidden>
       <div class="sec-head"><h2 id="debtHistTitle">History</h2></div>
@@ -837,7 +847,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
 </div>
 
 <datalist id="dl-products"></datalist>
-<datalist id="dl-suppliers"></datalist>
+<datalist id="dl-suppliers"></datalist><datalist id="dl-inv-add"></datalist><datalist id="dl-inv-pay"></datalist>
 
 <dialog id="dlg" aria-labelledby="dlgTitle">
   <div class="dlg-head"><h2 id="dlgTitle">Unit</h2><div class="spacer"></div><button class="btn" id="dlgClose" type="button">Close</button></div>
@@ -852,6 +862,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div class="field"><label for="e-cond">Condition</label><select id="e-cond"><option value="new">New</option><option value="used">Used</option><option value="faulty">Faulty</option></select></div>
       <div class="field"><label for="e-received">Date received</label><input id="e-received" type="date"></div>
       <div class="field"><label for="e-po">PO number</label><input id="e-po" inputmode="numeric"></div>
+      <div class="field"><label for="e-inv">Supplier invoice no.</label><input id="e-inv" placeholder="blank = no invoice"></div>
       <div class="field"><label for="e-sn">IMEI / serial</label><input id="e-sn"></div>
       <div class="field"><label for="e-cost">Cost (R)</label><input id="e-cost" type="number" step="0.01" min="0"></div>
       <div class="field"><label for="e-order">Order ID</label><input id="e-order" inputmode="numeric"></div>
@@ -1426,7 +1437,7 @@ function filtered(){
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
     if(state.onlyMonth && !(SOLD.has(u.status) && inMonth(u))) return false;
-    if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment].join(" ").toLowerCase().includes(q)) return false;
+    if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment,u.invoice_no].join(" ").toLowerCase().includes(q)) return false;
     return true;
   }).sort((a,b)=>{
     const sa=a.order_id?0:1, sb2=b.order_id?0:1;
@@ -1922,7 +1933,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v102)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v103)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -1968,15 +1979,54 @@ function renderDebtors(){
       <td>${esc(r.n)}</td>
       <td class="num">${r.anchor||r.owe.length||r.paid.length?`<b class="${r.bal>0.005?"neg":r.bal<-0.005?"pos":""}">${R(r.bal)}</b>${r.bal<-0.005?`<div class="tal-st">paid upfront: ${R(-r.bal)} of stock still to come</div>`:""}`:'<span class="muted">not set</span>'}</td>
       <td class="nw">${r.anchor?`${fd(r.anchor.date)} · ${R(r.anchor.amount)}${r.bought.length?`<div class="tal-st">+ ${r.bought.length} unit${r.bought.length>1?"s":""} added since (${R(r.bought.reduce((a,u)=>a+u.cost,0))})</div>`:""}`:'<span class="muted">–</span>'}</td>
-      <td class="nw">${r.lastPay?`${fd(r.lastPay.date)} · ${R(r.lastPay.amount)}`:'<span class="muted">–</span>'}</td>
+      <td class="nw">${r.lastPay?`${fd(r.lastPay.date)} · ${R(r.lastPay.amount)}${r.lastPay.invoice_no?`<div class="tal-st">invoice ${esc(r.lastPay.invoice_no)}</div>`:""}`:'<span class="muted">–</span>'}${(()=>{ const o=invoicesOf(r.n).filter(i=>i.open>0.005); return o.length?`<div class="tal-st">${o.length} open invoice${o.length>1?"s":""} · ${R(o.reduce((a,i)=>a+i.open,0))}</div>`:""; })()}</td>
       <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button></td></tr>`).join("")}</tbody>
     <tfoot><tr><td>Total you owe</td><td class="num">${R(total)}</td><td colspan="3"></td></tr></tfoot>`;
   if(state.debtHist) showDebtHist(state.debtHist);
+  renderInvoices(); dtInvHint();
 }
+function renderInvoices(){
+  const t=$("#invTable"); if(!t) return;
+  const L0=allInvoices(), sups=[...new Set(L0.map(i=>i.sup))].sort((a,b)=>a.localeCompare(b));
+  const cur=$("#invSup").value; $("#invSup").innerHTML=`<option value="">All suppliers</option>`+sups.map(x=>`<option ${x===cur?"selected":""}>${esc(x)}</option>`).join("");
+  const q=$("#invQ").value.trim().toLowerCase(), all=$("#invAll").checked;
+  const L=L0.filter(i=>(!cur||i.sup===cur) && (all||q||i.open>0.005) && (!q || [i.no, ...Object.keys(i.items)].join(" ").toLowerCase().includes(q)));
+  const open=L0.filter(i=>i.open>0.005);
+  $("#invSub").textContent = L0.length ? `${open.length} open invoice${open.length===1?"":"s"} · ${R(open.reduce((a,i)=>a+i.open,0))} still to pay` : "Invoice numbers you type when adding stock appear here";
+  const st=i=>i.open<=0.005?'<span class="pill s-settled">Paid</span>':i.paid>0.005?'<span class="pill s-awaiting_fees">Part paid</span>':'<span class="pill s-return_me">Unpaid</span>';
+  t.innerHTML = L.length ? `<thead><tr><th>Supplier</th><th>Invoice no.</th><th>Date</th><th>What's on it</th><th class="num">Total</th><th class="num">Paid</th><th class="num">Still owed</th><th>Status</th><th></th></tr></thead><tbody>${L.map(i=>`<tr>
+    <td>${esc(i.sup)}</td><td class="mono">${esc(i.no)}</td><td class="nw">${fd(i.date)}</td>
+    <td style="min-width:220px">${Object.entries(i.items).map(([p,n])=>`${n} × ${esc(p)}`).join("<br>")||'<span class="muted">amount owed</span>'}</td>
+    <td class="num">${R(i.total)}</td><td class="num">${R(i.paid)}</td><td class="num"><b class="${i.open>0.005?"neg":""}">${R(i.open)}</b></td><td>${st(i)}</td>
+    <td class="nw">${i.open>0.005?`<button class="btn small primary" type="button" data-ipay="${esc(i.sup)}" data-ino="${esc(i.no)}">Pay</button> `:""}<button class="btn small" type="button" data-iunits="${esc(i.no)}">Units</button></td></tr>`).join("")}</tbody>`
+    : `<tbody><tr><td class="muted">${L0.length?(q?"No invoice matches.":"No open invoices: everything is paid."):"No invoices yet. Type the supplier's invoice number when you add stock."}</td></tr></tbody>`;
+}
+["#invQ","#invSup","#invAll"].forEach(id=>{ $(id).addEventListener("input",renderInvoices); $(id).addEventListener("change",renderInvoices); });
+$("#invTable").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.iunits){ state.only=null; state.status=""; state.loc=""; state.sup=""; $("#fLoc").value=""; $("#fSup").value=""; state.q=b.dataset.iunits; $("#q").value=state.q; setView("stock"); renderLedger(); window.scrollTo({top:0}); return; }
+  if(b.dataset.ipay){ const i=invoicesOf(b.dataset.ipay).find(x=>x.no===b.dataset.ino);
+    $("#dt-sup").value=b.dataset.ipay; $("#dt-kind").value="payment"; $("#dt-date").value=today(); $("#dt-noinv").checked=false; $("#dt-inv").value=b.dataset.ino; $("#dt-amt").value=i?i.open:"";
+    dtInvHint(); $("#debtForm").scrollIntoView({behavior:"smooth"}); $("#dt-amt").focus(); } });
+// the payment form's invoice box: the supplier's open invoices, and the amount still owed on the one you pick
+function dtInvHint(){
+  const kind=$("#dt-kind").value, sup=$("#dt-sup").value.trim(), inv=$("#dt-inv").value.trim();
+  $("#dt-invf").hidden = kind==="balance";
+  $("#dt-inv").disabled=$("#dt-noinv").checked; if($("#dt-noinv").checked) $("#dt-inv").value="";
+  const L=sup?invoicesOf(sup):[], open=L.filter(i=>i.open>0.005);
+  $("#dl-inv-pay").innerHTML=(kind==="payment"?open:L).map(i=>`<option value="${esc(i.no)}">${R0(i.open)} still owed · ${fd(i.date)}</option>`).join("");
+  const hit=L.find(i=>i.no.toLowerCase()===inv.toLowerCase());
+  $("#dtInvHint").textContent = $("#dt-noinv").checked ? (kind==="payment"?"Paid on account, not against one invoice":"Not on an invoice")
+    : hit ? `Invoice ${hit.no}: ${R(hit.total)} · paid ${R(hit.paid)} · still owed ${R(hit.open)}`
+    : inv ? (kind==="payment"?"Not an invoice in the app yet: the payment is saved against this number":"New invoice")
+    : kind==="payment" && open.length ? `${open.length} open invoice${open.length>1?"s":""}: pick one` : "";
+}
+["#dt-sup","#dt-inv","#dt-kind","#dt-noinv"].forEach(id=>{ $(id).addEventListener("input",dtInvHint); $(id).addEventListener("change",dtInvHint); });
+$("#dt-inv").addEventListener("change",()=>{ if($("#dt-kind").value!=="payment" || $("#dt-amt").value) return;
+  const i=invoicesOf($("#dt-sup").value.trim()).find(x=>x.no.toLowerCase()===$("#dt-inv").value.trim().toLowerCase()); if(i&&i.open>0) $("#dt-amt").value=i.open; });
 function showDebtHist(n){
   state.debtHist=n; const r=supplierOwed(n), rows=(ledger||[]).filter(x=>x.supplier.toLowerCase()===n.toLowerCase());
-  const items=[...rows.map(x=>({d:x.date, at:x.created_at, what:x.kind==="balance"?"Balance set":x.kind==="owe"?"Amount owed":"Payment", note:x.note, amt:x.kind==="payment"?-x.amount:x.amount, id:x.id, counts:!r.anchor||x.created_at>=r.anchor.created_at})),
-    ...r.bought.map(u=>({d:u.received||String(u.created_at).slice(0,10), at:u.created_at, what:"Stock added", note:u.product, amt:u.cost, counts:true}))].sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  const items=[...rows.map(x=>({d:x.date, at:x.created_at, what:x.kind==="balance"?"Balance set":x.kind==="owe"?"Amount owed":"Payment", note:(x.invoice_no?`Invoice ${x.invoice_no}${x.note?" · ":""}`:"")+(x.note||""), amt:x.kind==="payment"?-x.amount:x.amount, id:x.id, counts:!r.anchor||x.created_at>=r.anchor.created_at})),
+    ...r.bought.map(u=>({d:u.received||String(u.created_at).slice(0,10), at:u.created_at, what:"Stock added", note:(u.invoice_no?`Invoice ${u.invoice_no} · `:"")+u.product, amt:u.cost, counts:true}))].sort((a,b)=>String(a.at).localeCompare(String(b.at)));
   $("#debtHistPanel").hidden=false; $("#debtHistTitle").textContent=`History · ${n} · owe ${R(r.bal)}`;
   $("#debtHist").innerHTML = items.length ? `<thead><tr><th>Date</th><th>What</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead><tbody>${items.map(i=>`<tr class="${i.counts?"":"muted"}">
       <td class="nw">${fd(i.d)}</td><td>${esc(i.what)}${i.counts?"":' <span class="tal-st" style="display:inline">(before the latest balance)</span>'}</td><td>${esc(i.note||"")}</td>
@@ -1988,13 +2038,17 @@ $("#debtTable").addEventListener("click",e=>{ const b=e.target.closest("button")
   if(b.dataset.dhist){ showDebtHist(n); $("#debtHistPanel").scrollIntoView({behavior:"smooth"}); return; }
   $("#dt-sup").value=n; $("#dt-kind").value=b.dataset.dpay?"payment":"balance"; $("#dt-date").value=today();
   if(b.dataset.dset) $("#dt-amt").value=Math.max(0,Math.round(supplierOwed(n).bal*100)/100)||""; else $("#dt-amt").value="";
-  $("#debtForm").scrollIntoView({behavior:"smooth"}); $("#dt-amt").focus(); });
+  $("#dt-inv").value=""; $("#dt-noinv").checked=false; dtInvHint();
+  $("#debtForm").scrollIntoView({behavior:"smooth"}); (b.dataset.dpay?$("#dt-inv"):$("#dt-amt")).focus(); });
 $("#debtForm").addEventListener("submit",async e=>{ e.preventDefault();
   const amt=num($("#dt-amt").value), sup=$("#dt-sup").value.trim(), kind=$("#dt-kind").value;
   if(!sup){ toast("Type the supplier's name"); return; } if(amt==null || (kind!=="balance" && !amt)){ toast("Type the amount"); return; }
-  const {error}=await sb.from("supplier_ledger").insert({ supplier:sup, kind, amount:amt, date:$("#dt-date").value||today(), note:$("#dt-note").value.trim(), created_by:me?.email||null });
-  if(error) toast(/supplier_ledger/.test(errMsg(error))?"Run 12_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error));
-  else { toast(kind==="payment"?`Payment of ${R(amt)} to ${sup} saved`:kind==="owe"?`${R(amt)} added to what you owe ${sup}`:`${sup}: balance set to ${R(amt)}`); $("#dt-amt").value=""; $("#dt-note").value=""; state.debtHist=sup; loadAll(); } });
+  const inv=$("#dt-inv").value.trim(), noinv=$("#dt-noinv").checked;
+  if(kind!=="balance" && !inv && !noinv){ toast(kind==="payment"?"Which invoice are you paying? Pick it, or tick No invoice":"Type the invoice number, or tick No invoice"); $("#dt-inv").focus(); return; }
+  const row={ supplier:sup, kind, amount:amt, date:$("#dt-date").value||today(), note:$("#dt-note").value.trim(), created_by:me?.email||null, ...(kind!=="balance"&&inv?{invoice_no:inv}:{}) };
+  const {error}=await sb.from("supplier_ledger").insert(row);
+  if(error) toast(/invoice_no/.test(errMsg(error))?"Run 19_database_update.sql in Supabase first (adds invoice numbers)":/supplier_ledger/.test(errMsg(error))?"Run 12_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error));
+  else { toast(kind==="payment"?`Payment of ${R(amt)} to ${sup} saved`:kind==="owe"?`${R(amt)} added to what you owe ${sup}`:`${sup}: balance set to ${R(amt)}`); $("#dt-amt").value=""; $("#dt-note").value=""; $("#dt-inv").value=""; $("#dt-noinv").checked=false; state.debtHist=sup; loadAll(); } });
 $("#debtHist").addEventListener("click",async e=>{ const b=e.target.closest("[data-ddel]"); if(!b) return;
   if(b.dataset.sure!=="1"){ b.dataset.sure="1"; b.textContent="Tap again to remove"; b.classList.add("danger"); return; }
   const {error}=await sb.from("supplier_ledger").delete().eq("id",b.dataset.ddel);
@@ -2342,7 +2396,7 @@ function openEdit(id){
   $("#dlgTitle").textContent=u.product;
   const set=(id,v)=>$("#"+id).value=v??"";
   set("e-product",u.product); set("e-status",u.status); set("e-location",u.location||"HOME"); set("e-supplier",u.supplier); set("e-type",u.stock_type||"ICASA");
-  set("e-received",u.received); set("e-po",u.po); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
+  set("e-received",u.received); set("e-po",u.po); set("e-inv",u.invoice_no); set("e-sn",u.sn); set("e-cost",u.cost); set("e-order",u.order_id); set("e-sold",u.sold_date);
   set("e-gross",u.gross); set("e-fees",u.fees); set("e-return",u.return_date); set("e-qdate",u.query_date); set("e-qref",u.query_ref); set("e-comment",u.comment); set("e-cond",u.condition||"new"); $("#e-flag").checked=!!u.flag;
   $("#eConfirm").hidden=true; $("#ePS").hidden=true;
   $("#eKept").hidden=!(["JHB","CPT","DBN"].includes(u.location) && ["in_stock","awaiting_fees","settled"].includes(u.status));
@@ -2365,6 +2419,7 @@ $("#editForm").addEventListener("submit", async e=>{
     gross:num($("#e-gross").value), fees:num($("#e-fees").value), return_date:$("#e-return").value||null,
     comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
   if(units.some(x=>"condition" in x)) body.condition=$("#e-cond").value;
+  if(units.some(x=>"invoice_no" in x)) body.invoice_no=$("#e-inv").value.trim()||null;
   if(units.some(x=>"query_date" in x)){ body.query_date=$("#e-qdate").value||null; body.query_ref=$("#e-qref").value.trim(); }
   if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
   // a returned unit going back into stock: its old order no longer applies, so it can be matched to a new sale
@@ -2477,9 +2532,12 @@ function snHint(){ const n=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(
 $("#a-sn").addEventListener("input",snHint); $("#a-qty").addEventListener("input",snHint);
 $("#addForm").addEventListener("submit", async e=>{
   e.preventDefault();
+  const inv=$("#a-inv").value.trim(), noinv=$("#a-noinv").checked;
+  if(!inv && !noinv){ toast("Type the supplier's invoice number, or tick No invoice"); $("#a-inv").focus(); return; }
   const qty=Math.min(200,Math.max(1,+$("#a-qty").value||1)), sns=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean);
   const base={ product:$("#a-product").value.trim(), supplier:$("#a-supplier").value.trim(), location:$("#a-location").value, stock_type:$("#a-type").value,
-    received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app", condition:$("#a-cond").value };
+    received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app", condition:$("#a-cond").value,
+    ...(noinv?{}:{invoice_no:inv}) };
   const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
   const paid=$("#a-paid").value==="paid", total=qty*base.cost;
   $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
@@ -2490,13 +2548,36 @@ $("#addForm").addEventListener("submit", async e=>{
   }
   const {error}=await sb.from("units").insert(rows);
   if(!error && ledger!==null && paid && total>0){
-    await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"payment", amount:total, date:base.received||today(), note:`Paid on purchase: ${qty} × ${base.product}`, created_by:me?.email||null });
+    const pay={ supplier:base.supplier, kind:"payment", amount:total, date:base.received||today(), note:`Paid on purchase: ${qty} × ${base.product}`, created_by:me?.email||null };
+    const r1=await sb.from("supplier_ledger").insert(noinv?pay:{...pay, invoice_no:inv});
+    if(r1.error && !noinv) await sb.from("supplier_ledger").insert({...pay, note:pay.note+` (invoice ${inv})`});
   }
   $("#addBtn").disabled=false; $("#addMsg").textContent="";
-  if(error){ $("#addMsg").textContent="Couldn't save: "+errMsg(error); return; }
+  if(error){ $("#addMsg").textContent=/invoice_no/.test(errMsg(error))?"Run 19_database_update.sql in Supabase first (adds invoice numbers)":"Couldn't save: "+errMsg(error); return; }
   $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(paid?" · paid":` · ${R(total)} added to what you owe ${base.supplier}`):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
 });
 
+// a supplier's invoices: units bought on it + amounts owed on it, less payments made against it
+function invoicesOf(sup){
+  const S=(sup||"").toLowerCase(), m={};
+  const get=no=>m[no]=m[no]||{no, sup, total:0, paid:0, units:0, date:"", items:{}};
+  units.filter(u=>u.invoice_no && (u.supplier||"").toLowerCase()===S).forEach(u=>{ const i=get(u.invoice_no); i.sup=u.supplier; i.total+=+u.cost||0; i.units++; i.items[u.product]=(i.items[u.product]||0)+1;
+    const d=u.received||String(u.created_at).slice(0,10); if(!i.date||d<i.date) i.date=d; });
+  (ledger||[]).filter(r=>r.invoice_no && r.supplier.toLowerCase()===S).forEach(r=>{ const i=get(r.invoice_no); i.sup=r.supplier;
+    if(r.kind==="payment") i.paid+=+r.amount||0; else if(r.kind==="owe"){ i.total+=+r.amount||0; if(!i.date||r.date<i.date) i.date=r.date; } });
+  return Object.values(m).map(i=>({...i, open:Math.round((i.total-i.paid)*100)/100})).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+function allInvoices(){ const sups=[...new Set([...units.filter(u=>u.invoice_no).map(u=>u.supplier||""), ...(ledger||[]).filter(r=>r.invoice_no).map(r=>r.supplier)])];
+  const seen=new Set(); return sups.filter(x=>{ const k=x.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; }).flatMap(invoicesOf); }
+function invAddHint(){
+  const sup=$("#a-supplier").value.trim(), inv=$("#a-inv").value.trim(), L=sup?invoicesOf(sup):[];
+  $("#dl-inv-add").innerHTML=L.map(i=>`<option value="${esc(i.no)}">${esc(i.units)} unit${i.units===1?"":"s"} · ${R0(i.total)}</option>`).join("");
+  $("#a-inv").disabled=$("#a-noinv").checked; if($("#a-noinv").checked) $("#a-inv").value="";
+  const hit=L.find(i=>i.no.toLowerCase()===inv.toLowerCase());
+  $("#invHint").textContent = $("#a-noinv").checked ? "No invoice for this stock" : hit ? `Adds to invoice ${hit.no} (already ${hit.units} unit${hit.units===1?"":"s"}, ${R0(hit.total)})` : inv ? "New invoice" : "";
+}
+["#a-supplier","#a-inv"].forEach(id=>{ $(id).addEventListener("input",invAddHint); $(id).addEventListener("change",invAddHint); });
+$("#a-noinv").addEventListener("change",invAddHint);
 function addHints(){
   const sup=$("#a-supplier").value.trim(), known=units.some(u=>(u.supplier||"").toLowerCase()===sup.toLowerCase()) || (ledger||[]).some(r=>r.supplier.toLowerCase()===sup.toLowerCase());
   $("#supHint").textContent = sup && !known ? `New supplier: "${sup}" will be added` : "";
