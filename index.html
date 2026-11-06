@@ -1933,7 +1933,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v103)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v104)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2539,7 +2539,11 @@ $("#addForm").addEventListener("submit", async e=>{
     received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app", condition:$("#a-cond").value,
     ...(noinv?{}:{invoice_no:inv}) };
   const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
-  const paid=$("#a-paid").value==="paid", total=qty*base.cost;
+  const how=$("#a-paid").value, total=qty*base.cost;
+  // "paid upfront": the money went before the stock came. If that payment isn't in Debtors yet, record it now (dated before
+  // today's stock), so the stock is set against it and nothing shows as owed
+  const credit=Math.max(0,-supplierOwed(base.supplier).bal), upfrontNeed=how==="upfront" ? Math.max(0,Math.round((total-credit)*100)/100) : 0;
+  const paid=how==="paid" || upfrontNeed>0, payAmt=how==="paid" ? total : upfrontNeed;
   $("#addBtn").disabled=true; $("#addMsg").textContent="Saving…";
   // debtors: make sure counting has started for this supplier, so this stock is included
   if(ledger!==null && total>0 && !supplierOwed(base.supplier).anchor){
@@ -2547,14 +2551,14 @@ $("#addForm").addEventListener("submit", async e=>{
     await sb.from("supplier_ledger").insert({ supplier:base.supplier, kind:"balance", amount:b0, date:today(), note:"Started counting with new stock", created_by:me?.email||null });
   }
   const {error}=await sb.from("units").insert(rows);
-  if(!error && ledger!==null && paid && total>0){
-    const pay={ supplier:base.supplier, kind:"payment", amount:total, date:base.received||today(), note:`Paid on purchase: ${qty} × ${base.product}`, created_by:me?.email||null };
+  if(!error && ledger!==null && paid && payAmt>0){
+    const pay={ supplier:base.supplier, kind:"payment", amount:payAmt, date:base.received||today(), note:how==="upfront"?`Paid upfront, before it arrived: ${qty} × ${base.product}`:`Paid on purchase: ${qty} × ${base.product}`, created_by:me?.email||null };
     const r1=await sb.from("supplier_ledger").insert(noinv?pay:{...pay, invoice_no:inv});
     if(r1.error && !noinv) await sb.from("supplier_ledger").insert({...pay, note:pay.note+` (invoice ${inv})`});
   }
   $("#addBtn").disabled=false; $("#addMsg").textContent="";
   if(error){ $("#addMsg").textContent=/invoice_no/.test(errMsg(error))?"Run 19_database_update.sql in Supabase first (adds invoice numbers)":"Couldn't save: "+errMsg(error); return; }
-  $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(paid?" · paid":` · ${R(total)} added to what you owe ${base.supplier}`):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
+  $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(how==="owe"?` · ${R(total)} added to what you owe ${base.supplier}`:how==="upfront"?" · paid upfront":" · paid"):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
 });
 
 // a supplier's invoices: units bought on it + amounts owed on it, less payments made against it
@@ -2584,7 +2588,7 @@ function addHints(){
   const total=(parseInt($("#a-qty").value,10)||0)*(num($("#a-cost").value)||0);
   const v=$("#a-paid").value, cr=sup?supplierOwed(sup).bal:0;
   $("#paidHint").textContent = v==="owe" ? (total?`${R(total)} goes onto Debtors for ${sup||"this supplier"}`:"Goes onto Debtors")
-    : v==="upfront" ? (cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}`:`Record the upfront payment in Debtors first (Payment I made), so this stock is set against it`)
+    : v==="upfront" ? (cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}${total>-cr?`; the other ${R(total+cr)} is recorded as paid upfront now`:""}`:`Recorded as paid upfront: nothing is added to what you owe ${sup||"the supplier"}`)
     : "Not added to Debtors";
 }
 $("#a-cond").addEventListener("change",()=>{ const v=$("#a-cond").value; $("#condHint").textContent = v==="used" ? "Marked USED. Not counted for lead-time stock (only new units are offered)." : v==="faulty" ? "Marked FAULTY. Not counted for lead-time stock or sent to Takealot automatically." : ""; });
