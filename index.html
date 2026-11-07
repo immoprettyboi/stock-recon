@@ -637,6 +637,12 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div class="sec-head"><h2>Profit by supplier</h2><p id="psSub"></p></div>
       <div class="tscroll"><table id="bySupplier"></table></div>
     </div>
+    <div class="panel" id="watchPanel">
+      <div class="sec-head"><h2>🛟 Outage alert</h2><p id="watchSub">Get told if the server stops</p></div>
+      <p class="note" style="margin:0;max-width:90ch">The server can't warn you if it's switched off itself, so a free outside service watches it: the server checks in every 5 minutes, and if it goes quiet for an hour, that service e-mails you (and can notify your phone with its app).
+        Set up once: sign up free at <b>healthchecks.io</b> → <b>Add Check</b> → Period <b>5 minutes</b>, Grace <b>1 hour</b> → copy its <b>ping URL</b> (https://hc-ping.com/…) and paste it here.</p>
+      <form class="inline" id="watchForm" autocomplete="off" style="flex-wrap:wrap"><input id="watchUrl" placeholder="https://hc-ping.com/…" style="flex:1 1 320px"><button class="btn primary small" type="submit">Save</button></form>
+    </div>
   </section>
 
   <!-- STOCK -->
@@ -686,6 +692,10 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="cols">
       <div class="panel"><div class="sec-head"><h2>By product</h2><p>for the dates above</p></div><div class="tscroll"><table id="slByProd"></table></div></div>
       <div class="panel"><div class="sec-head"><h2>By supplier</h2><p>for the dates above · returns: all time</p></div><div class="tscroll"><table id="slBySup"></table></div></div>
+    </div>
+    <div class="cols">
+      <div class="panel"><div class="sec-head"><h2>Why customers return</h2><p id="rrSub">returns in the dates above, by product and reason</p></div><div class="tscroll"><table id="rrTable"></table></div></div>
+      <div class="panel"><div class="sec-head"><h2>Takealot fee check</h2><p id="fcSub">fees charged twice or higher than usual (last 45 days)</p></div><div class="tscroll"><table id="fcTable"></table></div></div>
     </div>
   </section>
 
@@ -802,6 +812,11 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
           <label class="note inline"><input type="checkbox" id="invAll"> Show paid</label></div></div>
       <div class="tscroll"><table id="invTable"></table></div>
     </div>
+    <div class="panel">
+      <div class="sec-head" style="justify-content:space-between"><div><h2>Supplier prices</h2><p id="spSub">What each supplier charged you per product, newest first</p></div>
+        <input type="search" id="spQ" placeholder="Search product or supplier" aria-label="Search supplier prices"></div>
+      <div class="tscroll"><table id="spTable"></table></div>
+    </div>
     <div class="panel" id="debtHistPanel" hidden>
       <div class="sec-head"><h2 id="debtHistTitle">History</h2></div>
       <div class="tscroll"><table id="debtHist"></table></div>
@@ -876,6 +891,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <label class="note inline wide"><input type="checkbox" id="e-flag"> Keep on the "Needs you" list</label>
     </div>
     <div class="note" id="eAudit"></div>
+    <details id="eHistWrap" hidden><summary class="note" style="cursor:pointer">Change history</summary><div class="tscroll"><table id="eHist"></table></div></details>
     <div class="form-actions">
       <button class="btn primary" type="submit" id="eSave">Save changes</button>
       <button class="btn" type="button" id="ePrivate">Sold privately…</button>
@@ -925,6 +941,16 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="field wide"><label for="bc-product">If it's the box barcode: which product?</label><input id="bc-product" list="dl-products" placeholder="Pick the product"></div>
     <div class="form-actions"><button class="btn primary" type="submit">Box barcode: remember it</button><div class="spacer"></div><button class="btn" type="button" id="bcSerial">It's a serial / IMEI</button></div>
   </form>
+</dialog>
+
+<dialog id="boxDlg" aria-labelledby="boxTitle">
+  <div class="dlg-head"><h2 id="boxTitle">Check the boxes</h2><div class="spacer"></div><button class="btn" id="boxCam" type="button">📷 Camera</button><button class="btn primary" id="boxClose" type="button">Done</button></div>
+  <div class="dlg-body">
+    <p class="note" id="boxInfo" style="margin:0"></p>
+    <div class="scanbar"><input id="boxScan" placeholder="Scan each box barcode (or its IMEI / serial)" aria-label="Scan a box" autocomplete="off" enterkeyhint="done"></div>
+    <div id="boxSum"></div>
+    <div class="tscroll"><table id="boxList"></table></div>
+  </div>
 </dialog>
 
 <dialog id="adamDlg" aria-labelledby="adamTitle">
@@ -1294,10 +1320,25 @@ function renderPayout(){
     <div class="tiles">${nx.slice(0,2).map((x,i)=>`<div class="tile${i?"":" hero"}"><span class="lbl">${i?"After that":"Next payout"}</span><span class="val">${R0(x.amount)}</span><span class="sub">${dn(x.date)} · ${x.n} transaction${x.n===1?"":"s"}</span></div>`).join("")||`<div class="tile"><span class="lbl">Next payout</span><span class="val">–</span><span class="sub">nothing waiting yet</span></div>`}
       <div class="tile"><span class="lbl">On your account</span><span class="val">${R0(+v.current||0)}</span><span class="sub">held back ${R0(+v.held_back||0)} · available ${R0(+v.available||0)}</span></div>
       ${v.last_payout?`<div class="tile"><span class="lbl">Last payout</span><span class="val">${R0(v.last_payout.amount)}</span><span class="sub">${dn(v.last_payout.date)}</span></div>`:""}</div>
-    <p class="note" style="margin:0">An estimate from Takealot's transactions; refunds or fees added before Sunday change it.</p>`;
+    <p class="note" style="margin:0">An estimate from Takealot's transactions; refunds or fees added before Sunday change it.</p>
+    ${(()=>{ const owed=allInvoices().filter(i=>i.open>0.005), oT=owed.reduce((a,i)=>a+i.open,0), dT=(ledger||[]).length?[...new Set((ledger||[]).map(r=>r.supplier))].reduce((a,n)=>a+Math.max(0,supplierOwed(n).bal),0):0;
+      const nxt=nx[0]?nx[0].amount:0, owe=Math.max(oT,dT);
+      return `<div class="sec-head" style="margin-top:6px"><h2>Cash flow</h2><p>next payout less what you owe suppliers</p></div>
+      <div class="tiles"><div class="tile"><span class="lbl">Coming in</span><span class="val">${R0(nxt)}</span><span class="sub">${nx[0]?dn(nx[0].date):"next payout"}</span></div>
+        <div class="tile"><span class="lbl">Owed to suppliers</span><span class="val">${R0(owe)}</span><span class="sub">${owed.length?`${owed.length} open invoice${owed.length>1?"s":""}`:"from Debtors"}</span></div>
+        <div class="tile hero"><span class="lbl">Left after paying them</span><span class="val"${nxt-owe<0?' style="color:var(--bad)"':""}>${R0(nxt-owe)}</span><span class="sub">to buy more stock</span></div></div>`; })()}`;
 }
+function renderWatch(){
+  const el=$("#watchSub"); if(!el) return; const v=appState.healthcheck||{};
+  if(document.activeElement!==$("#watchUrl")) $("#watchUrl").value=v.url||"";
+  el.textContent = v.url ? "✅ On: the server checks in every 5 minutes" : "Off: set it up below";
+}
+$("#watchForm").addEventListener("submit",async e=>{ e.preventDefault(); const url=$("#watchUrl").value.trim();
+  if(url && !/^https:\/\/[^\s]+$/.test(url)){ toast("Paste the full ping URL, starting with https://"); return; }
+  const {error}=await sb.from("app_state").upsert({key:"healthcheck", value:{url, set_by:me?.email||null}, updated_at:new Date().toISOString()},{onConflict:"key"});
+  if(error) toast(/app_state/.test(errMsg(error))?"Run 18_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)); else { toast(url?"Saved: the server checks in within 30 minutes":"Outage alert switched off"); loadAll(); } });
 function renderOverview(){
-  renderPayout();
+  renderPayout(); renderWatch();
   const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
   const G=sold.reduce((s,u)=>s+(u.gross||0),0), F=sold.reduce((s,u)=>s+(u.fees||0),0), C=sold.reduce((s,u)=>s+(u.cost||0),0), P=G-F-C;
   const awaiting=sold.filter(u=>u.status==="awaiting_fees").length;
@@ -1334,7 +1375,8 @@ function renderOverview(){
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
   const booked=u=>u.po && (ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender","returned-to-hub"].includes(x.status)) || expenses.some(e=>e.category==="adam_delivery" && (e.raw||{}).po===u.po && e.date>=(u.sold_date||"")));
-  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}`, d:`${u.product} · to ${(pipeline.find(x=>x.order_id===u.order_id)||{}).fulfilment_dc||u.location}${u.po?` · PO ${u.po}`:""}`}));
+  units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}${(()=>{ const d=((appState.leadtime_due||{}).orders||[]).find(x=>x.order===u.order_id); if(!d) return "";
+      const L=Math.round((new Date(d.due)-new Date(today()))/864e5); return ` · ${L<0?`⛔ ${-L} day${L<-1?"s":""} late`:L===0?"⏰ due today":L===1?"⏰ due tomorrow":`due ${fd(d.due)} (${L} days)`}`; })()}`, d:`${u.product} · to ${(pipeline.find(x=>x.order_id===u.order_id)||{}).fulfilment_dc||u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
@@ -1603,6 +1645,20 @@ function renderSales(){
   $("#slBySup").innerHTML=gtab(grp(u=>u.supplier),"Supplier",{h:'<th class="num">Returned</th><th class="num">Faulty</th>',
     r:k=>{ const x=supAll[k]||{n:0,r:0,f:0}; return `<td class="num">${x.r}${x.n?` <span class="muted">(${(x.r/x.n*100).toFixed(0)}%)</span>`:""}</td><td class="num">${x.f}</td>`; }});
   renderSales.rows=rows;
+  // why customers return: returns whose date falls in the chosen dates
+  const R2=rets.filter(r=>{ const d=String(r.return_date||"").slice(0,10); return (!SL.from||d>=SL.from)&&(!SL.to||d<=SL.to); });
+  const sold2={}; rows.forEach(u=>{ const g=(products.find(p=>p.sku===u.sku)||{}).product||u.product; sold2[g]=(sold2[g]||0)+1; });
+  const rm={}; R2.forEach(r=>{ const pr=products.find(p=>p.sku===r.sku), g=(pr&&pr.product&&pr.product!==IGNORE)?pr.product:(r.title||r.sku); const x=(rm[g]=rm[g]||{n:0,why:{}}); x.n+=(r.qty||1); const w=(r.reason||"No reason given").trim(); x.why[w]=(x.why[w]||0)+(r.qty||1); });
+  const rl=Object.entries(rm).sort((a,b)=>b[1].n-a[1].n);
+  $("#rrSub").textContent=R2.length?`${R2.reduce((a,r)=>a+(r.qty||1),0)} returned in these dates`:"returns in the dates above, by product and reason";
+  $("#rrTable").innerHTML=rl.length?`<thead><tr><th>Product</th><th class="num">Returned</th><th class="num">vs sold</th><th>Reasons</th></tr></thead><tbody>${rl.map(([g,x])=>`<tr><td>${esc(g)}</td><td class="num"><b>${x.n}</b></td><td class="num">${sold2[g]?`${(x.n/sold2[g]*100).toFixed(0)}% of ${sold2[g]}`:"–"}</td><td style="min-width:220px">${Object.entries(x.why).sort((a,b)=>b[1]-a[1]).map(([w,n])=>`${n} × ${esc(w)}`).join("<br>")}</td></tr>`).join("")}</tbody>`:`<tbody><tr><td class="muted">No customer returns in these dates.</td></tr></tbody>`;
+  // Takealot fee check (worked out by the server from your transactions)
+  const fc=appState.fee_check;
+  if(!fc){ $("#fcTable").innerHTML=`<tbody><tr><td class="muted">Fills in after the next sync (run 18_database_update.sql if you haven't).</td></tr></tbody>`; }
+  else { const st=Object.entries(fc.storage||{}).sort();
+    $("#fcSub").textContent=`${fc.orders} orders checked · ${(fc.flags||[]).length} to look at${st.length?` · storage fees: ${st.map(([m,v])=>`${MONL[+m.slice(5)-1]} ${R0(v)}`).join(", ")}`:""}`;
+    $("#fcTable").innerHTML=(fc.flags||[]).length?`<thead><tr><th>Date</th><th>Order</th><th>Product</th><th>What</th><th class="num">Charged</th><th class="num">Usual</th></tr></thead><tbody>${fc.flags.map(f=>`<tr><td class="nw">${fd(f.date)}</td><td class="mono">${esc(f.order)}</td><td>${esc(f.product)}</td><td class="warn-t">${esc(f.what)}</td><td class="num">${R(f.amount)}</td><td class="num">${R(f.usual)}</td></tr>`).join("")}</tbody>`
+      :`<tbody><tr><td class="muted">✅ Every fee looks normal.</td></tr></tbody>`; }
 }
 $("#slCsv").addEventListener("click",()=>{ const rows=renderSales.rows||[]; if(!rows.length){ toast("No sales to download for these dates"); return; }
   const q=v=>{ const t=v==null?"":String(v); return /[",\n;]/.test(t)?`"${t.replace(/"/g,'""')}"`:t; };
@@ -1790,7 +1846,7 @@ function renderPOs(){
       <td style="min-width:240px">${esc(contents(p))||'<span class="muted">–</span>'}</td><td class="num">${p.qty_sending??""}</td><td class="num">${rec}</td>
       <td>${x?`<span class="mono">${esc(x.waybill)}</span> <span class="pill ${shipPill(x.status)}">${esc(shipLabel(x.status))}</span>`:ad?`Adam <span class="muted">(${(ad.raw||{}).wrapped||0} wrapped)</span>${p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"")?((ad.raw||{}).dropped?' <span class="muted">· marking as shipped…</span>':` <button class="btn small primary" type="button" data-dropped="${esc(ad.id)}">📦 Handed to Adam</button>`):""}`:(p.shipped===false && !/receiv|clos|cancel/i.test(p.status||"") ? `<button class="btn small primary" type="button" data-adamdrop="${esc(p.po)}">📦 Handed to Adam</button>` : '<span class="muted">no courier found</span>')}</td>
       <td class="num">${cost!=null?R(cost):""}</td>
-      <td>${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}</td></tr>`; }).join("")}</tbody>
+      <td class="nw">${us?`<button class="btn small" type="button" data-poq="${esc(p.po)}">${us} in app</button>`:'<span class="muted">none in app</span>'}${!/receiv|clos|cancel/i.test(p.status||"")&&(p.items||[]).length?` <button class="btn small" type="button" data-boxcheck="${esc(p.po)}">📦 Check boxes</button>`:""}</td></tr>`; }).join("")}</tbody>
     <tfoot><tr><td colspan="8">${L.length} PO${L.length===1?"":"s"} shown</td><td class="num">${R(tot)}</td><td></td></tr></tfoot>`;
 }
 $("#poTable").addEventListener("click",async e=>{ const d=e.target.closest("[data-adamdrop]"); if(d){ openAdam(d.dataset.adamdrop); return; }
@@ -1934,7 +1990,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v105)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v106)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -1984,8 +2040,29 @@ function renderDebtors(){
       <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button></td></tr>`).join("")}</tbody>
     <tfoot><tr><td>Total you owe</td><td class="num">${R(total)}</td><td colspan="3"></td></tr></tfoot>`;
   if(state.debtHist) showDebtHist(state.debtHist);
-  renderInvoices(); dtInvHint();
+  renderInvoices(); dtInvHint(); renderSupPrices();
 }
+function renderSupPrices(){
+  const t=$("#spTable"); if(!t) return; const q=$("#spQ").value.trim().toLowerCase();
+  // one purchase = units of the same product from the same supplier on the same day / invoice
+  const buys={}; units.filter(u=>u.supplier && +u.cost>0 && (u.condition||"new")==="new").forEach(u=>{ const g=grpName(u.product), d=u.received||String(u.created_at).slice(0,10);
+    const k=g+"|"+u.supplier.trim().toLowerCase()+"|"+d+"|"+(u.invoice_no||""); const b=(buys[k]=buys[k]||{g, sup:u.supplier.trim(), d, inv:u.invoice_no||"", n:0, cost:0}); b.n++; b.cost+=+u.cost; });
+  const G={}; Object.values(buys).forEach(b=>{ b.unit=b.cost/b.n; ((G[b.g]=G[b.g]||{})[b.sup.toLowerCase()]=G[b.g][b.sup.toLowerCase()]||[]).push(b); });
+  const rows=[], ups=[];
+  Object.entries(G).forEach(([g,bySup])=>{ const lastOf=Object.values(bySup).map(L=>L.sort((a,b)=>b.d.localeCompare(a.d))[0]);
+    const cheapest=Math.min(...lastOf.map(b=>b.unit));
+    Object.values(bySup).forEach(L=>{ const last=L[0], prev=L[1], all=L.reduce((a,b)=>({n:a.n+b.n,c:a.c+b.cost}),{n:0,c:0});
+      const r={g, sup:last.sup, last, prev, min:Math.min(...L.map(b=>b.unit)), avg:all.c/all.n, n:all.n, best:last.unit===cheapest && lastOf.length>1};
+      if(prev && last.unit>prev.unit+0.5) ups.push(r); rows.push(r); }); });
+  const L=rows.filter(r=>!q||(r.g+" "+r.sup).toLowerCase().includes(q)).sort((a,b)=>a.g.localeCompare(b.g)||a.last.unit-b.last.unit);
+  $("#spSub").innerHTML = ups.length ? `<span class="neg">⚠️ ${ups.length} price${ups.length>1?"s":""} went up: ${ups.slice(0,3).map(r=>`${esc(r.sup)} · ${esc(r.g)} ${R0(r.prev.unit)} → ${R0(r.last.unit)}`).join("; ")}</span>` : "What each supplier charged you per product · ⭐ cheapest latest price";
+  t.innerHTML = L.length ? `<thead><tr><th>Product</th><th>Supplier</th><th class="num">Latest price</th><th>When</th><th class="num">Before that</th><th class="num">Lowest</th><th class="num">Average</th><th class="num">Units bought</th></tr></thead><tbody>${L.map(r=>`<tr>
+    <td>${esc(r.g)}</td><td>${esc(r.sup)}${r.best?" ⭐":""}</td>
+    <td class="num"><b class="${r.prev&&r.last.unit>r.prev.unit+0.5?"neg":r.prev&&r.last.unit<r.prev.unit-0.5?"pos":""}">${R0(r.last.unit)}</b>${r.prev&&Math.abs(r.last.unit-r.prev.unit)>0.5?` <span class="${r.last.unit>r.prev.unit?"neg":"pos"}">${r.last.unit>r.prev.unit?"▲":"▼"}</span>`:""}</td>
+    <td class="nw">${fd(r.last.d)}${r.last.inv?`<div class="tal-st">${esc(r.last.inv)}</div>`:""}</td><td class="num">${r.prev?R0(r.prev.unit):"–"}</td>
+    <td class="num">${R0(r.min)}</td><td class="num">${R0(r.avg)}</td><td class="num">${r.n}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">No purchases with a supplier and cost yet.</td></tr></tbody>`;
+}
+$("#spQ").addEventListener("input",renderSupPrices);
 function renderInvoices(){
   const t=$("#invTable"); if(!t) return;
   const L0=allInvoices(), sups=[...new Set(L0.map(i=>i.sup))].sort((a,b)=>a.localeCompare(b));
@@ -2404,7 +2481,19 @@ function openEdit(id){
   const how={import:"Imported from the October 2026 spreadsheet.",order:"Sale linked by the Takealot sync.",po:"Sale matched by the sync using the PO number.","po-home":"Sale matched by the sync: PO on the order, unit was at HOME.",fifo:"Sale matched by the sync: oldest unit at that warehouse.",manual:"Sale matched by hand."}[u.match_method]||"";
   const sx=shipFor(u);
   $("#eAudit").textContent=[how, u.sku?`Takealot SKU ${u.sku}.`:"", sx?`Courier Guy ${sx.waybill}: ${shipLabel(sx.status).toLowerCase()}${shipWhen(sx)?`, ${shipWhen(sx)}`:""}.`:"", u.updated_at?`Last changed ${ago(u.updated_at)}.`:""].filter(Boolean).join(" ");
-  calcBox(); $("#dlg").showModal();
+  calcBox(); $("#dlg").showModal(); loadUnitHistory(u.id);
+}
+/* who changed this unit and when (audit_log, from 20_database_update.sql) */
+const FIELD_NAMES={status:"Status",location:"Location",po:"PO",order_id:"Order",cost:"Cost",gross:"Sale",fees:"Fees",supplier:"Supplier",product:"Product",sold_date:"Sold",received:"Received",
+  comment:"Note",condition:"Condition",invoice_no:"Invoice",sn:"Serial",flag:"Check flag",courier_shipment_id:"Courier",match_method:"Matched by",arrived_at:"Back home",return_date:"Return date"};
+async function loadUnitHistory(id){
+  $("#eHistWrap").hidden=true;
+  const {data,error}=await sb.from("audit_log").select("at,action,who,changes").eq("tbl","units").eq("row_id",id).order("at",{ascending:false}).limit(50);
+  if(error||!data||!data.length||!$("#dlg").open||!editing||editing.id!==id) return;
+  const show=v=>v==null||v===""?"–":typeof v==="object"?JSON.stringify(v):String(v).length>60?String(v).slice(0,60)+"…":String(v);
+  $("#eHist").innerHTML=`<tbody>${data.map(x=>`<tr><td class="nw">${soldWhen({sold_date:x.at})}</td><td class="nw">${esc((x.who||"").split("@")[0]||"–")}</td><td>${
+    x.action==="insert"?"Added":x.action==="delete"?"Deleted":Object.entries(x.changes||{}).filter(([k])=>k!=="updated_by").map(([k,v])=>`<b>${esc(FIELD_NAMES[k]||k)}</b>: ${esc(show(v[0]))} → ${esc(show(v[1]))}`).join("<br>")}</td></tr>`).join("")}</tbody>`;
+  $("#eHistWrap").hidden=false;
 }
 $("#dlgClose").addEventListener("click",()=>$("#dlg").close());
 $("#e-order").addEventListener("change",()=>{ if($("#e-order").value && $("#e-status").value==="in_stock"){ $("#e-status").value=$("#e-fees").value?"settled":"awaiting_fees"; calcBox(); }});
@@ -2518,7 +2607,7 @@ async function camStart(){
       if(!res || camPaused) return;
       const c=res.getText(), now=Date.now();
       if(c===camLast.c && now-camLast.t<2500) return;  // the same code stays in view: count it once
-      camLast={c,t:now}; onScan(c);
+      camLast={c,t:now}; if($("#boxDlg").open) boxScanCode(c); else onScan(c);
     });
     $("#camMsg").textContent="Point the camera at a barcode. Keep scanning: each code is added as you go.";
   }catch(e){ $("#camMsg").textContent="Camera not available: "+(e.message||e)+". Allow camera access for this site and try again."; }
@@ -2528,6 +2617,46 @@ $("#camBtn").addEventListener("click",camStart);
 $("#camClose").addEventListener("click",camStop);
 $("#camDlg").addEventListener("close",()=>{ try{ camCtl&&camCtl.stop(); }catch(e){} camCtl=null; });
 
+
+/* box check before shipping: scan every box going on a PO; each must be the product the PO is for */
+let boxPO=null, boxScans=[];
+const grpName=n=>{ const p=products.find(x=>x.product===n||x.takealot_title===n); return (p&&p.product&&p.product!==IGNORE)?p.product:n; };
+function boxExpected(){ const p=poRow(boxPO)||{}; const m={};
+  (p.items||[]).forEach(it=>{ const pr=products.find(x=>String(x.sku)===String(it.sku)); const g=(pr&&pr.product&&pr.product!==IGNORE)?pr.product:(it.title||it.sku);
+    (m[g]=m[g]||{g, title:it.title, qty:0, ok:0}); m[g].qty+=+it.qty||0; }); return m; }
+function openBoxCheck(po){ boxPO=po; boxScans=[]; const p=poRow(po)||{};
+  $("#boxTitle").textContent=`Check the boxes · PO ${po}`;
+  $("#boxInfo").textContent=`To ${p.facility||p.warehouse||"Takealot"}: ${contents(p)}. Scan each box (or each unit's IMEI / serial) before you seal the shipment.`;
+  $("#boxScan").value=""; renderBoxCheck(); $("#boxDlg").showModal(); setTimeout(()=>$("#boxScan").focus(),50); }
+function boxScanCode(raw){
+  const c=String(raw||"").trim(); if(!c) return; const E=boxExpected();
+  const u=units.find(x=>x.sn && x.sn.trim()===c);
+  // the same box barcode is on every box of a product, so only a repeated IMEI / serial is a double scan
+  if(u && boxScans.some(x=>x.code===c && x.st!=="dup")){ boxScans.unshift({code:c, st:"dup", msg:"This unit was already scanned"}); return renderBoxCheck(); }
+  let r;
+  if(u){ const g=grpName(u.product);
+    if(!E[g]) r={st:"bad", msg:`This unit is ${u.product}: not on this PO`};
+    else if(u.po===boxPO) r={st:"ok", g, msg:`${u.product} · on this PO`};
+    else r={st:"warn", g, msg:`${u.product} · right product, but the app has it ${u.po?"on PO "+u.po:"at "+u.location}${u.order_id?" (order "+u.order_id+")":""}`}; }
+  else if(barcodes && barcodes[c]){ const g=grpName(barcodes[c]);
+    r=E[g] ? {st:"ok", g, msg:`Box: ${barcodes[c]}`} : {st:"bad", msg:`WRONG BOX: this is ${barcodes[c]}. The PO is for ${Object.keys(E).join(", ")}`}; }
+  else r={st:"unknown", msg:"Unknown barcode: check this box by eye (scan it once on Add stock so the app learns it)"};
+  boxScans.unshift({code:c, ...r}); renderBoxCheck();
+  try{ navigator.vibrate && navigator.vibrate(r.st==="ok"?60:[200,100,200]); }catch(e){}
+}
+function renderBoxCheck(){
+  const E=boxExpected(); boxScans.filter(x=>x.st==="ok"||x.st==="warn").forEach(x=>{ if(E[x.g]) E[x.g].ok++; });
+  const bad=boxScans.filter(x=>x.st==="bad").length, unk=boxScans.filter(x=>x.st==="unknown").length;
+  const rows=Object.values(E), done=rows.every(x=>x.ok===x.qty), over=rows.some(x=>x.ok>x.qty);
+  $("#boxSum").innerHTML=`<div class="calc">${rows.map(x=>`<div><span>${esc(x.g)}</span><b class="${x.ok===x.qty?"pos":x.ok>x.qty?"neg":""}">${x.ok} of ${x.qty}</b></div>`).join("")}</div>
+    <p class="note" style="margin:8px 0 0;font-weight:700;color:${bad||over?"var(--bad)":done&&!unk?"var(--ok)":"var(--muted)"}">${bad?`⛔ ${bad} wrong box${bad>1?"es":""}: take ${bad>1?"them":"it"} out before the courier collects.`:over?"⛔ More boxes than the PO asks for.":done?(unk?`✅ Count is right; ${unk} box${unk>1?"es":""} checked by eye.`:"✅ All boxes match the PO."):"Keep scanning…"}</p>`;
+  const icon={ok:"✅",warn:"⚠️",bad:"⛔",unknown:"❔",dup:"↺"};
+  $("#boxList").innerHTML=boxScans.length?`<tbody>${boxScans.map(x=>`<tr><td>${icon[x.st]}</td><td class="mono">${esc(x.code)}</td><td>${esc(x.msg)}</td></tr>`).join("")}</tbody>`:"";
+}
+$("#boxScan").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); boxScanCode($("#boxScan").value); $("#boxScan").value=""; } });
+$("#boxClose").addEventListener("click",()=>$("#boxDlg").close());
+$("#boxCam").addEventListener("click",camStart);
+$("#poTable").addEventListener("click",e=>{ const b=e.target.closest("[data-boxcheck]"); if(b){ e.stopPropagation(); openBoxCheck(b.dataset.boxcheck); } }, true);
 function snHint(){ const n=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean).length, q=+$("#a-qty").value||0;
   $("#snHint").textContent = n ? (n===q?`${n} serial numbers, one per unit.`:`${n} serial numbers for ${q} units. ${n<q?"The rest stay blank.":"Extra lines are ignored."}`) : ""; }
 $("#a-sn").addEventListener("input",snHint); $("#a-qty").addEventListener("input",snHint);

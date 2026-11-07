@@ -590,6 +590,10 @@ def price_tick(cfg, log, force=False):
     in fight mode, changes your price within your floor / ceiling. Watch mode only records what it would do."""
     import math, stockrecon_sync as S
     restart_if_updated(log)
+    try:
+        heartbeat(cfg)
+    except Exception:
+        pass
     _READ_LOG[0] = log
     global _READ_FAIL_SINCE
     if not hasattr(S, "_read_fail"):
@@ -1957,6 +1961,14 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 return_alerts(cfg, log)
             except Exception as e:
                 log("Return notifications failed: " + repr(e)[:200])
+            try:
+                leadtime_deadlines(cfg, log)
+            except Exception as e:
+                log("Lead-time deadlines failed: " + repr(e)[:200])
+            try:
+                weekly_backup(cfg, log)
+            except Exception as e:
+                log("Weekly backup failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
             try:
                 fetch_takealot_pos(ctx, cfg, auth, log)
@@ -2107,6 +2119,212 @@ def sale_watch(ctx, cfg, log):
             log("Sale watch failed: " + repr(e)[:150])
 
 
+def _send_mail(subject, body, attach=None, log=None):
+    """E-mail from the report Gmail (report_from + report_app_password) to report_to. attach: (filename, bytes, subtype)."""
+    import configparser, smtplib, ssl
+    from email.message import EmailMessage
+    cp = configparser.ConfigParser()
+    cp.read(HERE / "config.ini", encoding="utf-8")
+    c = cp["stockrecon"] if "stockrecon" in cp else {}
+    sender, app_pw = (c.get("report_from") or "").strip(), (c.get("report_app_password") or "").replace(" ", "").strip()
+    to = [x.strip() for x in (c.get("report_to") or "").replace(";", ",").split(",") if x.strip()]
+    if not (sender and app_pw and to) or "PASTE" in app_pw.upper():
+        return False
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = subject, f"Stock Recon <{sender}>", ", ".join(to)
+    msg.set_content(body)
+    if attach:
+        msg.add_attachment(attach[1], maintype="application", subtype=attach[2], filename=attach[0])
+    host = (c.get("report_smtp_host") or "smtp.gmail.com").strip()
+    port = int((c.get("report_smtp_port") or "465").strip())
+    user = (c.get("report_smtp_user") or sender).strip()
+    smtp = smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=60) if port == 465 else smtplib.SMTP(host, port, timeout=60)
+    with smtp:
+        if port != 465:
+            smtp.starttls(context=ssl.create_default_context())
+        smtp.login(user, app_pw)
+        smtp.send_message(msg)
+    return True
+
+
+def weekly_backup(cfg, log):
+    """Every Sunday evening: all the app's data as spreadsheet files (CSV) in one zip, e-mailed to report_to."""
+    now = datetime.now()
+    if now.weekday() != 6 or now.hour < 20:
+        return
+    flag = DEBUG_DIR / f"backup_{now.date().isoformat()}.txt"
+    if flag.exists():
+        return
+    tried = DEBUG_DIR / "backup_tried.txt"
+    try:
+        if __import__("time").time() - tried.stat().st_mtime < 3 * 3600:
+            return
+    except OSError:
+        pass
+    DEBUG_DIR.mkdir(exist_ok=True)
+    tried.write_text(now.isoformat(), encoding="utf-8")
+    import csv, io, zipfile, stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    tables = ["units", "takealot_sales", "products", "expenses", "supplier_ledger", "courier_shipments", "takealot_pos",
+              "takealot_returns", "takealot_recons", "price_rules", "barcodes", "leadtime_requests", "app_state"]
+    buf, counts = io.BytesIO(), {}
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for t in tables:
+            try:
+                rows = db.select(t, "select=*")
+            except Exception:
+                continue
+            counts[t] = len(rows)
+            keys = sorted({k for r in rows for k in r})
+            out = io.StringIO()
+            w = csv.writer(out)
+            w.writerow(keys)
+            for r in rows:
+                w.writerow([json.dumps(r.get(k), default=str) if isinstance(r.get(k), (dict, list)) else ("" if r.get(k) is None else r.get(k)) for k in keys])
+            z.writestr(f"{t}.csv", "\ufeff" + out.getvalue())
+    name = f"Stock Recon backup {now.date().isoformat()}.zip"
+    body = ("Hi,\n\nThe weekly backup of everything in Stock Recon is attached (one spreadsheet file per table).\n\n" +
+            "\n".join(f"  {t}: {n} rows" for t, n in counts.items()) + "\n\nKeep this e-mail: it's your copy if anything ever happens to the database.\n\nStock Recon")
+    try:
+        if _send_mail(f"Stock Recon: weekly backup {now.strftime('%d %b %Y')}", body, (name, buf.getvalue(), "zip"), log):
+            flag.write_text(now.isoformat(), encoding="utf-8")
+            log(f"Weekly backup e-mailed ({sum(counts.values())} rows, {len(buf.getvalue()) // 1024} KB).")
+    except Exception as e:
+        log("Weekly backup e-mail failed: " + repr(e)[:200])
+
+
+def leadtime_deadlines(cfg, log):
+    """Lead-time orders still at HOME with nothing booked: a phone reminder the day before the deadline, and when it's late.
+    Takealot charges an Order Cancellation Penalty if you don't deliver within the lead time."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    units = db.select("units", "select=id,product,order_id,po,location,status,match_method&match_method=eq.leadtime-home&status=in.(awaiting_fees,in_stock)")
+    units = [u for u in units if u.get("order_id") and u.get("location") == "HOME"]
+    if not units:
+        return
+    ships = db.select("courier_shipments", "select=reference,status,direction&direction=eq.to_takealot")
+    booked_pos = {m for c in ships if c.get("status") != "cancelled" for m in __import__("re").findall(r"\d{9}", str(c.get("reference") or ""))}
+    try:
+        adam = {str((e.get("raw") or {}).get("po")) for e in db.select("expenses", "select=raw&category=eq.adam_delivery")}
+    except Exception:
+        adam = set()
+    ids = ",".join(u["order_id"] for u in units)
+    sales = {s["order_id"]: s for s in db.select("takealot_sales", f"select=order_id,order_date,sku,fulfilment_dc,product_title&order_id=in.({ids})")}
+    days_of = {p["sku"]: int(((p.get("takealot_stock") or {}).get("LEADTIME") or {}).get("days") or 4) for p in db.select("products", "select=sku,takealot_stock")}
+    seen = _seen_load() or {}
+    done = seen.setdefault("lt_alert", {})
+    today = date.today()
+    deadlines = []
+    for u in units:
+        if u.get("po") and (u["po"] in booked_pos or u["po"] in adam):
+            continue
+        s = sales.get(u["order_id"])
+        if not s or not s.get("order_date"):
+            continue
+        od = datetime.fromisoformat(str(s["order_date"]).replace("Z", "+00:00")).date()
+        due = od + timedelta(days=days_of.get(s.get("sku"), 4))
+        left = (due - today).days
+        deadlines.append({"order": u["order_id"], "unit": u["id"], "due": due.isoformat(), "left": left, "dc": s.get("fulfilment_dc"), "title": s.get("product_title")})
+        if left > 1 or done.get(u["order_id"]) == today.isoformat():
+            continue
+        done[u["order_id"]] = today.isoformat()
+        when = "today" if left == 0 else "tomorrow" if left == 1 else f"{-left} day{'s' if left < -1 else ''} late"
+        notify(cfg, "⏰ Lead-time order due " + when, f"{str(s.get('product_title') or u['product'])[:50]} · order {u['order_id']} · to {s.get('fulfilment_dc') or 'Takealot'} by {due.strftime('%a %d %b')}. Book the courier or Adam so Takealot doesn't cancel it (penalty).",
+               url="./?view=overview", topic="price", log=log, tag="leadtime")
+        log(f"Lead-time reminder: order {u['order_id']} due {due} ({when}).")
+    seen["lt_alert"] = {k: v for k, v in done.items() if v >= (today - timedelta(days=14)).isoformat()}
+    _seen_save(seen)
+    _app_state(cfg, "leadtime_due", {"at": datetime.now().isoformat(timespec="seconds"), "orders": deadlines})
+
+
+def heartbeat(cfg):
+    """Tells an outside monitor (healthchecks.io, set in the app) that the server is alive, every 5 minutes.
+    If the pings stop (server down or stuck), that service alerts your phone / e-mail."""
+    import time as _t, stockrecon_sync as S, urllib.request
+    if _t.time() - getattr(S, "_HB_AT", 0) < 300:
+        return
+    S._HB_AT = _t.time()
+    try:
+        if _t.time() - getattr(S, "_HB_URL_AT", 0) > 1800:
+            rows = S.DB(cfg["url"], cfg["key"]).select("app_state", "select=value&key=eq.healthcheck")
+            S._HB_URL = ((rows[0].get("value") or {}).get("url") if rows else "") or ""
+            S._HB_URL_AT = _t.time()
+        url = getattr(S, "_HB_URL", "")
+        if url.startswith("https://"):
+            urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "StockRecon"}), timeout=10).read()
+    except Exception:
+        pass
+
+
+def fee_check(cfg, txs, when, kind):
+    """Takealot's fees per order, checked against the same product's usual fees: charged twice, or much higher than usual.
+    Also the storage fees per month."""
+    import re, statistics, stockrecon_sync as S
+    by = {}
+    for x in txs:
+        m = re.search(r"Order:\s*(\d+)", str(x.get("reference") or ""))
+        if not m:
+            continue
+        o = by.setdefault(m.group(1), {"pay": [], "succ": [], "succ_rev": [], "ful": [], "ful_rev": [], "date": None})
+        k, amt = kind(x).lower(), float(x.get("inc_vat") or 0)
+        if "order payment" in k:
+            o["pay"].append(amt)
+            o["date"] = (when(x) or datetime.now()).date().isoformat()
+        elif "success fee charge" in k:
+            o["succ"].append(-amt)
+        elif "success fee reversal" in k:
+            o["succ_rev"].append(amt)
+        elif "fulfilment fee charge" in k:
+            o["ful"].append(-amt)
+        elif "fulfilment fee reversal" in k:
+            o["ful_rev"].append(amt)
+    if not by:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    sku_of, title_of, qty_of = {}, {}, {}
+    ids = list(by)
+    for i in range(0, len(ids), 80):
+        for r in db.select("takealot_sales", f"select=order_id,sku,product_title,qty&order_id=in.({','.join(ids[i:i + 80])})"):
+            sku_of[r["order_id"]], title_of[r["order_id"]], qty_of[r["order_id"]] = r.get("sku"), r.get("product_title"), int(r.get("qty") or 1)
+    rate, ful = {}, {}
+    for oid, o in by.items():
+        pay = sum(o["pay"])
+        if pay > 0 and o["succ"]:
+            rate.setdefault(sku_of.get(oid), []).append(sum(o["succ"]) / pay)
+        if o["ful"]:
+            ful.setdefault(sku_of.get(oid), []).append(sum(o["ful"]) / qty_of.get(oid, 1))
+    flags = []
+    for oid, o in by.items():
+        sku, pay = sku_of.get(oid), sum(o["pay"])
+        name = (title_of.get(oid) or "")[:60]
+        net_succ = len(o["succ"]) - len(o["succ_rev"])
+        if o["pay"] and net_succ > len(o["pay"]):
+            flags.append({"order": oid, "product": name, "date": o["date"], "what": "Success fee charged twice",
+                          "amount": round(sum(o["succ"]) - sum(o["succ_rev"]), 2), "usual": round(sum(o["succ"]) / len(o["succ"]), 2)})
+        if len(o["ful"]) - len(o["ful_rev"]) > max(1, len(o["pay"])) and qty_of.get(oid, 1) == 1:
+            flags.append({"order": oid, "product": name, "date": o["date"], "what": "Fulfilment fee charged twice",
+                          "amount": round(sum(o["ful"]) - sum(o["ful_rev"]), 2), "usual": round(o["ful"][0], 2)})
+        rs = rate.get(sku) or []
+        if pay > 0 and o["succ"] and len(rs) >= 3 and not (o["pay"] and net_succ > len(o["pay"])):
+            med, r0 = statistics.median(rs), sum(o["succ"]) / pay
+            if r0 > med * 1.10 + 0.005:
+                flags.append({"order": oid, "product": name, "date": o["date"], "what": f"Success fee {r0 * 100:.1f}% of the sale (usually {med * 100:.1f}%)",
+                              "amount": round(sum(o["succ"]), 2), "usual": round(med * pay, 2)})
+        fs = ful.get(sku) or []
+        if o["ful"] and len(fs) >= 3:
+            med, f0 = statistics.median(fs), sum(o["ful"]) / qty_of.get(oid, 1)
+            if f0 > med * 1.15 + 1:
+                flags.append({"order": oid, "product": name, "date": o["date"], "what": "Fulfilment fee higher than usual",
+                              "amount": round(f0, 2), "usual": round(med, 2)})
+    storage = {}
+    for x in txs:
+        if "storage fee" in kind(x).lower() and when(x):
+            m = when(x).strftime("%Y-%m")
+            storage[m] = round(storage.get(m, 0) - float(x.get("inc_vat") or 0), 2)
+    _app_state(cfg, "fee_check", {"at": datetime.now().isoformat(timespec="seconds"), "orders": len(by),
+                                  "flags": sorted(flags, key=lambda f: str(f.get("date")), reverse=True)[:60], "storage": storage})
+
+
 def _app_state(cfg, key, value):
     """Save a figure for the app (table app_state, from 18_database_update.sql). Quietly skipped before that's run."""
     import stockrecon_sync as S
@@ -2201,6 +2419,10 @@ def payout_forecast(ctx, cfg, auth, log):
              "next": [{"date": k, "amount": round(v["amount"], 2), "n": v["n"]} for k, v in sorted(buckets.items())],
              "types": types, "check": check}
     _app_state(cfg, "payout", value)
+    try:
+        fee_check(cfg, txs, when, kind)
+    except Exception as e:
+        log("Fee check failed: " + repr(e)[:150])
     # per order: when Takealot recorded its payment and which Thursday pays it out
     paid_days = sorted({when(x).date() for x in payouts if when(x)})
     orders = {}

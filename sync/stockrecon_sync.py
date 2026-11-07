@@ -416,7 +416,20 @@ def main():
                 break
     log(f"Stock Recon sync started. Syncing every {cfg['interval']} minutes.")
     db = DB(cfg["url"], cfg["key"])
+    # watchdog (server only): if the loop hangs (e.g. a browser that never answers) for 40 minutes, exit so systemd
+    # starts the program again. A normal sync or a 10-minute repricer round is far shorter.
+    _beat = [time.time()]
+    if sys.platform.startswith("linux"):
+        import threading, os as _os
+        def _watch():
+            while True:
+                time.sleep(60)
+                if time.time() - _beat[0] > 40 * 60:
+                    log("Watchdog: the sync loop has been stuck for 40 minutes; restarting.")
+                    _os._exit(3)
+        threading.Thread(target=_watch, daemon=True).start()
     while True:
+        _beat[0] = time.time()
         try:
             run_sync(cfg)
         except Exception:                             # a network blip or a bad update must never stop the loop
@@ -425,6 +438,7 @@ def main():
         next_sync = time.time() + cfg["interval"] * 60
         fast = False
         while time.time() < next_sync:                # price fighter + "Sync now" check
+            _beat[0] = time.time()
             time.sleep(1 if fast else 30)             # a listing on "Every 4 sec": no pause between checks
             # price fighter: checks the listings you switched on, each at its own interval
             try:
