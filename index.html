@@ -1383,7 +1383,7 @@ function renderOverview(){
   removalRows().filter(z=>z.st.startsWith("Arrived")).forEach(z=>items.push({go:"removals", tag:"Removal", t:`Removal order arrived · ${z.r.title}`, d:`Order ${z.r.order_id} · ${z.r.reason||""}. Check it, then Back in stock (used) or Faulty.`}));
   undeliveredPOs().forEach(p=>items.push({adampo:p.po, tag:"Delivery", t:`Who delivered PO ${p.po}?`, d:`${p.qty_sending??"?"} unit${p.qty_sending===1?"":"s"} to ${p.facility||p.warehouse||""} · ${contents(p)} · no Courier Guy booking found. If Adam took it, record it here.`}));
   // a shipment Takealot turned away whose units are already set to come back is tracked under "Coming back to you"
-  const handledRts=x=>x.direction==="to_takealot" && ["returned-to-sender","returned-to-hub"].includes(x.status) && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && units.some(u=>u.courier_shipment_id===s.id)));
+  const handledRts=x=>x.direction==="to_takealot" && ["returned-to-sender","returned-to-hub"].includes(x.status) && (units.some(u=>u.courier_shipment_id===x.id) || ships.some(s=>s.direction==="from_takealot" && (s.waybill||"").toUpperCase()===(x.waybill||"").toUpperCase()+"-R" && (s.status==="delivered" || units.some(u=>u.courier_shipment_id===s.id))));   // its return waybill is linked, or already delivered back
   ships.filter(x=>SHIP_BAD.has(x.status) && !handledRts(x) && (Date.now()-new Date(x.created_at))<30*864e5).forEach(x=>items.push({go:"ship", tag:"Courier", t:`Courier problem · ${x.waybill} (${x.reference||"no reference"})`, d:`${shipLabel(x.status)}${x.takealot_dc?` · ${x.direction==="to_takealot"?"to":"from"} ${x.takealot_dc}`:""}`}));
   // 1. delivered to Takealot but not received: Takealot may have rejected it and kept it (Courier Guy then says "Delivered")
   pos.forEach(p=>{ if(/receiv|clos|cancel/i.test(p.status||"")) return;
@@ -1990,7 +1990,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v106)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v107)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
