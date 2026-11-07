@@ -2004,14 +2004,19 @@ def _seen_load():
 
 
 def _seen_save(d):
+    """Saved safely (written to a temp file, then swapped in). Returns False if it couldn't be saved,
+    so callers don't send notifications they can't remember sending."""
     try:
         DEBUG_DIR.mkdir(exist_ok=True)
         for k in ("sales", "returns"):
             if k in d:                                   # never create an empty list: that would skip the first-run seeding
-                d[k] = d[k][-3000:]
-        SEEN_FILE.write_text(json.dumps(d), encoding="utf-8")
+                d[k] = d[k][-20000:]                     # far more than 90 days of sales, so old ones are never "new" again
+        tmp = SEEN_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d), encoding="utf-8")
+        tmp.replace(SEEN_FILE)
+        return True
     except Exception:
-        pass
+        return False
 
 
 def sale_alerts(cfg, sales, log, full=False):
@@ -2036,13 +2041,15 @@ def sale_alerts(cfg, sales, log, full=False):
         if not first and not re.search(r"cancel", st, re.I):
             new.append(r)
     if new or first:
-        _seen_save(seen)
+        if not _seen_save(seen):
+            return                   # couldn't remember them: better no notification than the same one every 2 minutes
     if first or not new:
         return
     today = datetime.now().date().isoformat()
     seen.setdefault("day", {})
     if seen["day"].get("d") != today:
         seen["day"] = {"d": today, "n": 0, "g": 0.0}
+    lines = []
     for r in new:
         q = int(r.get("quantity") or r.get("qty") or 1)
         price = float(r.get("selling_price") or r.get("gross") or 0)      # Takealot's selling_price is the whole line
@@ -2054,9 +2061,20 @@ def sale_alerts(cfg, sales, log, full=False):
         body = (f"{q} × " if q > 1 else "") + f"{title} · R{price:,.0f}" + (f" · {dc}" if dc else "") + \
                (" · lead time: send one in" if lead else "") + \
                f"\nToday: {seen['day']['n']} sold · R{seen['day']['g']:,.0f}"
-        notify(cfg, "🛒 New sale" + (" (lead time)" if lead else ""), body.replace(",", " "), url="./?view=sales", topic="price", log=log, tag="sale")
+        lines.append((lead, body.split("\n")[0]))
         log("Sale notification: " + body.split("\n")[0])
     _seen_save(seen)
+    total = f"Today: {seen['day']['n']} sold · R{seen['day']['g']:,.0f}"
+    if len(lines) == 1:                                  # one notification per check, however many sales came in
+        title = "🛒 New sale" + (" (lead time)" if lines[0][0] else "")
+        text = lines[0][1] + "\n" + total
+    else:
+        title = f"🛒 {len(lines)} new sales" + (" (incl. lead time)" if any(l for l, _ in lines) else "")
+        text = "\n".join(t for _, t in lines[:6]) + ("\n…" if len(lines) > 6 else "") + "\n" + total
+    try:
+        notify(cfg, title, text.replace(",", " "), url="./?view=sales", topic="price", log=log, tag="sale")
+    except Exception as e:
+        log("Sale notification failed: " + repr(e)[:120])
 
 
 def return_alerts(cfg, log):
@@ -2076,14 +2094,16 @@ def return_alerts(cfg, log):
         seen.setdefault("returns", []).append(str(r.get("return_id")))
     if not new and not first:
         return
-    _seen_save(seen)
-    if first:
+    if not _seen_save(seen) or first:
         return
     for r in new:
         body = f"{str(r.get('title') or '')[:60]}" + (f" × {r['qty']}" if (r.get("qty") or 1) > 1 else "") + \
                (f" · {r['dc']}" if r.get("dc") else "") + (f" · {r['reason']}" if r.get("reason") else "") + \
                (f" · {r['outcome']}" if r.get("outcome") else "") + f" · order {r.get('order_id')}"
-        notify(cfg, "↩️ Customer return", body, url="./?view=removals", topic="price", log=log, tag="return")
+        try:
+            notify(cfg, "↩️ Customer return", body, url="./?view=removals", topic="price", log=log, tag=f"return-{r.get('return_id')}")
+        except Exception as e:
+            log("Return notification failed: " + repr(e)[:120])
         log("Return notification: " + body)
 
 
@@ -2221,16 +2241,29 @@ def leadtime_deadlines(cfg, log):
         s = sales.get(u["order_id"])
         if not s or not s.get("order_date"):
             continue
-        od = datetime.fromisoformat(str(s["order_date"]).replace("Z", "+00:00")).date()
-        due = od + timedelta(days=days_of.get(s.get("sku"), 4))
+        odt = datetime.fromisoformat(str(s["order_date"]).replace("Z", "+00:00"))
+        if odt.tzinfo:
+            odt = odt.astimezone(__import__("zoneinfo").ZoneInfo("Africa/Johannesburg"))
+        due = odt.date()
+        n = days_of.get(s.get("sku"), 4)
+        while n > 0:                                      # lead time is in working days (Mon-Fri)
+            due += timedelta(days=1)
+            if due.weekday() < 5:
+                n -= 1
         left = (due - today).days
         deadlines.append({"order": u["order_id"], "unit": u["id"], "due": due.isoformat(), "left": left, "dc": s.get("fulfilment_dc"), "title": s.get("product_title")})
         if left > 1 or done.get(u["order_id"]) == today.isoformat():
             continue
         done[u["order_id"]] = today.isoformat()
+        seen["lt_alert"] = done
+        if not _seen_save(seen):
+            continue                                      # couldn't note it: don't risk repeating it every sync
         when = "today" if left == 0 else "tomorrow" if left == 1 else f"{-left} day{'s' if left < -1 else ''} late"
-        notify(cfg, "⏰ Lead-time order due " + when, f"{str(s.get('product_title') or u['product'])[:50]} · order {u['order_id']} · to {s.get('fulfilment_dc') or 'Takealot'} by {due.strftime('%a %d %b')}. Book the courier or Adam so Takealot doesn't cancel it (penalty).",
-               url="./?view=overview", topic="price", log=log, tag="leadtime")
+        try:
+          notify(cfg, "⏰ Lead-time order due " + when, f"{str(s.get('product_title') or u['product'])[:50]} · order {u['order_id']} · to {s.get('fulfilment_dc') or 'Takealot'} by {due.strftime('%a %d %b')}. Book the courier or Adam so Takealot doesn't cancel it (penalty).",
+               url="./?view=overview", topic="price", log=log, tag=f"leadtime-{u['order_id']}")
+        except Exception as e:
+            log("Lead-time notification failed: " + repr(e)[:120])
         log(f"Lead-time reminder: order {u['order_id']} due {due} ({when}).")
     seen["lt_alert"] = {k: v for k, v in done.items() if v >= (today - timedelta(days=14)).isoformat()}
     _seen_save(seen)
