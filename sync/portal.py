@@ -2093,8 +2093,14 @@ def sale_watch(ctx, cfg, log):
             if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
                 S._SALE_WATCH_ERR = _t.time()
                 log(f"Sale watch: Takealot answered {r.status} (sale notifications then come with the 30-minute sync)")
+                _app_state(cfg, "sale_watch", {"at": datetime.now().isoformat(timespec="seconds"), "ok": False, "status": r.status})
             return
-        sale_alerts(cfg, (r.json() or {}).get("sales") or [], log)
+        rows = (r.json() or {}).get("sales") or []
+        sale_alerts(cfg, rows, log)
+        if _t.time() - getattr(S, "_SALE_WATCH_OK", 0) > 1800:            # let the app see it's alive (every 30 min)
+            S._SALE_WATCH_OK = _t.time()
+            _app_state(cfg, "sale_watch", {"at": datetime.now().isoformat(timespec="seconds"), "ok": True, "rows": len(rows),
+                                            "seeded": "sales" in (_seen_load() or {})})
     except Exception as e:
         if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
             S._SALE_WATCH_ERR = _t.time()
