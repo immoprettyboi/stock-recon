@@ -518,7 +518,7 @@ def _webpush():
             return None, None
 
 
-def notify(cfg, title, body, url="./", topic="price", log=None):
+def notify(cfg, title, body, url="./", topic="price", log=None, tag=None):
     """Send a notification to every phone that switched notifications on in the app."""
     import stockrecon_sync as S
     key_file = HERE / "vapid_private.pem"
@@ -537,7 +537,7 @@ def notify(cfg, title, body, url="./", topic="price", log=None):
         if log:
             log("Notifications: couldn't install pywebpush.")
         return
-    payload = json.dumps({"title": title, "body": body, "url": url, "tag": topic})
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag or topic})
     results = []
     for x in subs:
         who = (x.get("user_email") or "?").split("@")[0]
@@ -658,6 +658,10 @@ def price_tick(cfg, log, force=False):
                         _fight_one(ctx, tk, db, r, prods.get(r["sku"]) or {}, auth, log)
                     except Exception as e:
                         log(f"Price fighter {r['sku']}: {repr(e)[:160]}")
+                try:
+                    sale_watch(ctx, cfg, log)                 # new sales -> phone, every 2 minutes
+                except Exception:
+                    pass
                 if _time.time() > t_end - 3:
                     break
                 # in a live fight (Buy Box changed in the last 10 min) check every 2 s; when it's quiet every 5 s,
@@ -1414,6 +1418,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 if not batch or len(batch) < 100 or (total and len(sales) >= total) or pg >= 100:
                     break
                 pg += 1
+            try:
+                sale_alerts(cfg, sales, log, full=True)         # any sale the 2-minute watch didn't catch
+            except Exception as e:
+                log("Sale notifications failed: " + repr(e)[:150])
 
             # ---- Takealot's monthly Stock Recon report (missing stock to claim)
             try:
@@ -1945,6 +1953,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                 evening_summary(cfg, log)
             except Exception as e:
                 log("Evening summary failed: " + repr(e)[:200])
+            try:
+                return_alerts(cfg, log)
+            except Exception as e:
+                log("Return notifications failed: " + repr(e)[:200])
             # ---- Takealot shipments (POs) and what was in each
             try:
                 fetch_takealot_pos(ctx, cfg, auth, log)
@@ -1967,6 +1979,126 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
 
 
 BALANCE_LOG = DEBUG_DIR / "balance_log.jsonl"
+
+
+SEEN_FILE = DEBUG_DIR / "alerts_seen.json"
+
+
+def _seen_load():
+    try:
+        return json.loads(SEEN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _seen_save(d):
+    try:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        for k in ("sales", "returns"):
+            if k in d:                                   # never create an empty list: that would skip the first-run seeding
+                d[k] = d[k][-3000:]
+        SEEN_FILE.write_text(json.dumps(d), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def sale_alerts(cfg, sales, log, full=False):
+    """A phone notification for every new Takealot sale (orders seen for the first time).
+    sales: Takealot's sales rows (order_id, sku, product_title, quantity, selling_price, sale_status, dc ...).
+    The first time it runs it only remembers what's there, so nothing old is announced."""
+    import re
+    seen = _seen_load()
+    first = seen is None or "sales" not in seen
+    if first and not full:
+        return                       # the first list must be the sync's full one (90 days), or older sales would be announced later
+    seen = seen or {}
+    known = set(seen.get("sales", []))
+    new = []
+    for r in sales or []:
+        k = f"{r.get('order_id')}|{r.get('sku')}"
+        if not r.get("order_id") or k in known:
+            continue
+        known.add(k)
+        seen.setdefault("sales", []).append(k)
+        st = str(r.get("sale_status") or "")
+        if not first and not re.search(r"cancel", st, re.I):
+            new.append(r)
+    if new or first:
+        _seen_save(seen)
+    if first or not new:
+        return
+    today = datetime.now().date().isoformat()
+    seen.setdefault("day", {})
+    if seen["day"].get("d") != today:
+        seen["day"] = {"d": today, "n": 0, "g": 0.0}
+    for r in new:
+        q = int(r.get("quantity") or r.get("qty") or 1)
+        price = float(r.get("selling_price") or r.get("gross") or 0)      # Takealot's selling_price is the whole line
+        seen["day"]["n"] += q
+        seen["day"]["g"] += price
+        lead = re.search(r"lead", str(r.get("sale_status") or ""), re.I)
+        dc = str(r.get("stock_source_region") or r.get("dc") or r.get("fulfilment_dc") or "").strip()
+        title = str(r.get("product_title") or "")[:60]
+        body = (f"{q} × " if q > 1 else "") + f"{title} · R{price:,.0f}" + (f" · {dc}" if dc else "") + \
+               (" · lead time: send one in" if lead else "") + \
+               f"\nToday: {seen['day']['n']} sold · R{seen['day']['g']:,.0f}"
+        notify(cfg, "🛒 New sale" + (" (lead time)" if lead else ""), body.replace(",", " "), url="./?view=sales", topic="price", log=log, tag="sale")
+        log("Sale notification: " + body.split("\n")[0])
+    _seen_save(seen)
+
+
+def return_alerts(cfg, log):
+    """A phone notification for every new customer return (from the returns the sync saved)."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    since = (date.today() - timedelta(days=14)).isoformat()
+    try:
+        rets = db.select("takealot_returns", f"select=return_id,order_id,title,qty,dc,reason,outcome,return_date&return_date=gte.{since}")
+    except Exception:
+        return
+    seen = _seen_load() or {}
+    first = "returns" not in seen
+    known = set(seen.get("returns", []))
+    new = [r for r in rets if str(r.get("return_id")) not in known]
+    for r in new:
+        seen.setdefault("returns", []).append(str(r.get("return_id")))
+    if not new and not first:
+        return
+    _seen_save(seen)
+    if first:
+        return
+    for r in new:
+        body = f"{str(r.get('title') or '')[:60]}" + (f" × {r['qty']}" if (r.get("qty") or 1) > 1 else "") + \
+               (f" · {r['dc']}" if r.get("dc") else "") + (f" · {r['reason']}" if r.get("reason") else "") + \
+               (f" · {r['outcome']}" if r.get("outcome") else "") + f" · order {r.get('order_id')}"
+        notify(cfg, "↩️ Customer return", body, url="./?view=removals", topic="price", log=log, tag="return")
+        log("Return notification: " + body)
+
+
+def sale_watch(ctx, cfg, log):
+    """From the repricer's browser: look at Takealot's latest sales every 2 minutes (with the Seller API key)."""
+    import time as _t, stockrecon_sync as S
+    if _t.time() - getattr(S, "_SALE_WATCH_AT", 0) < 120:
+        return
+    S._SALE_WATCH_AT = _t.time()
+    key = _creds_key()
+    if not key:
+        return
+    start = (date.today() - timedelta(days=1)).isoformat()
+    end = date.today().isoformat()
+    try:
+        r = ctx.request.get(f"{SALES_API}?filters=start_date%3A{start}%2Cend_date%3A{end}&page_size=100&page_number=1",
+                            headers={"Authorization": f"Key {key}", "Accept": "application/json"}, timeout=30_000)
+        if not r.ok:
+            if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
+                S._SALE_WATCH_ERR = _t.time()
+                log(f"Sale watch: Takealot answered {r.status} (sale notifications then come with the 30-minute sync)")
+            return
+        sale_alerts(cfg, (r.json() or {}).get("sales") or [], log)
+    except Exception as e:
+        if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
+            S._SALE_WATCH_ERR = _t.time()
+            log("Sale watch failed: " + repr(e)[:150])
 
 
 def _app_state(cfg, key, value):
