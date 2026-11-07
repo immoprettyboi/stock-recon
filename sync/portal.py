@@ -2322,6 +2322,8 @@ def fee_check(cfg, txs, when, kind):
     rate, ful = {}, {}
     for oid, o in by.items():
         pay = sum(o["pay"])
+        if not sku_of.get(oid):
+            continue
         if pay > 0 and o["succ"]:
             rate.setdefault(sku_of.get(oid), []).append(sum(o["succ"]) / pay)
         if o["ful"]:
@@ -2337,6 +2339,8 @@ def fee_check(cfg, txs, when, kind):
         if len(o["ful"]) - len(o["ful_rev"]) > max(1, len(o["pay"])) and qty_of.get(oid, 1) == 1:
             flags.append({"order": oid, "product": name, "date": o["date"], "what": "Fulfilment fee charged twice",
                           "amount": round(sum(o["ful"]) - sum(o["ful_rev"]), 2), "usual": round(o["ful"][0], 2)})
+        if not sku:
+            continue                                     # product unknown (older than the app): only the double-charge checks apply
         rs = rate.get(sku) or []
         if pay > 0 and o["succ"] and len(rs) >= 3 and not (o["pay"] and net_succ > len(o["pay"])):
             med, r0 = statistics.median(rs), sum(o["succ"]) / pay
