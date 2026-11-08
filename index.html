@@ -725,7 +725,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
           <label class="note inline" style="margin-top:4px"><input type="checkbox" id="a-noinv"> No invoice</label><span class="hint" id="invHint"></span></div>
         <div class="field"><label for="a-paid">Paid for?</label><select id="a-paid"><option value="paid">Yes, paid now</option><option value="owe">No, I owe the supplier</option><option value="upfront">Already paid upfront (before it arrived)</option></select><span class="hint" id="paidHint"></span></div>
         <div class="field"><label for="a-received">Date received</label><input id="a-received" type="date" required></div>
-        <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
+        <div class="field"><label for="a-location">Location</label><select id="a-location"><option>HOME</option><option value="INBOUND">On the way to me (not here yet)</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
         <div class="field"><label for="a-cond">Condition</label><select id="a-cond"><option value="new">New</option><option value="used">Used</option><option value="faulty">Faulty</option></select><span class="hint" id="condHint"></span></div>
         <div class="field"><label for="a-type">Type of stock</label><select id="a-type"><option>ICASA</option><option>TDRA</option></select></div>
         <div class="field"><label for="a-po">Takealot PO number</label><input id="a-po" inputmode="numeric" placeholder="Blank if not sent in yet"></div>
@@ -871,7 +871,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="grid">
       <div class="field wide"><label for="e-product">Product</label><input id="e-product" list="dl-products" required></div>
       <div class="field"><label for="e-status">Status</label><select id="e-status"></select></div>
-      <div class="field"><label for="e-location">Location</label><select id="e-location"><option>HOME</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
+      <div class="field"><label for="e-location">Location</label><select id="e-location"><option>HOME</option><option value="INBOUND">On the way to me (not here yet)</option><option>JHB</option><option>CPT</option><option>DBN</option></select></div>
       <div class="field"><label for="e-supplier">Supplier</label><input id="e-supplier" list="dl-suppliers"></div>
       <div class="field"><label for="e-type">Type of stock</label><select id="e-type"><option>ICASA</option><option>TDRA</option></select></div>
       <div class="field"><label for="e-cond">Condition</label><select id="e-cond"><option value="new">New</option><option value="used">Used</option><option value="faulty">Faulty</option></select></div>
@@ -1389,7 +1389,7 @@ function renderOverview(){
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   { const G={}; units.filter(snNeeded).forEach(u=>{ const k=snKey(u); (G[k]=G[k]||[]).push(u); });
     Object.entries(G).forEach(([k,L])=>items.push({snkey:k, tag:"Serials", t:`Add serial numbers · ${L.length} × ${L[0].product}${L[0].invoice_no?` (${L[0].invoice_no})`:""}`,
-      d:`Paid upfront${L[0].received?` · received ${fd(L[0].received)}`:""}. When it arrives, tap here and scan each serial.`})); }
+      d:`Paid upfront${L[0].location==="INBOUND"?" · on the way to you (not on Takealot lead time yet)":""}${L[0].received?` · bought ${fd(L[0].received)}`:""}. When it arrives, tap here and scan each serial: that books it in at HOME.`})); }
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
   removalRows().filter(z=>z.st.startsWith("Arrived")).forEach(z=>items.push({go:"removals", tag:"Removal", t:`Removal order arrived · ${z.r.title}`, d:`Order ${z.r.order_id} · ${z.r.reason||""}. Check it, then Back in stock (used) or Faulty.`}));
@@ -1486,7 +1486,7 @@ function filtered(){
   return units.filter(u=>{
     if(SOLD.has(u.status)) return false;                 // sold units live on the Sales page
     if(state.only && !state.only.has(u.product)) return false;
-    if(state.where && !(u.status==="in_stock" && (state.where==="home" ? u.location==="HOME" : u.location!=="HOME"))) return false;
+    if(state.where && !(u.status==="in_stock" && (state.where==="home" ? u.location==="HOME" : ["JHB","CPT","DBN"].includes(u.location)))) return false;
     if(state.status && u.status!==state.status) return false;
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
@@ -1502,7 +1502,7 @@ function filtered(){
 }
 function renderWhere(){
   const inS=units.filter(u=>u.status==="in_stock");
-  const home=inS.filter(u=>u.location==="HOME"), tal=inS.filter(u=>u.location!=="HOME");
+  const home=inS.filter(u=>u.location==="HOME"), tal=inS.filter(u=>["JHB","CPT","DBN"].includes(u.location));
   const val=a=>R0(a.reduce((t,u)=>t+(Number(u.cost)||0),0));
   const dcs=["JHB","CPT","DBN"].map(d=>[d,tal.filter(u=>u.location===d).length]).filter(x=>x[1]);
   const btn=(k,l,n,sub)=>`<button type="button" role="tab" data-w="${k}" aria-selected="${state.where===k}"><div class="w-l">${l}</div><div class="w-n">${n}</div><div class="w-s">${sub}</div></button>`;
@@ -2002,7 +2002,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v109)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v110)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2639,7 +2639,7 @@ let snUnits=[];
 function openSerials(key){ snUnits=units.filter(u=>snNeeded(u) && snKey(u)===key).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
   if(!snUnits.length){ toast("All serial numbers are in"); return; }
   const u=snUnits[0]; $("#snTitle").textContent=`Add serial numbers · ${snUnits.length} × ${u.product}`;
-  $("#snInfo").textContent=`${u.supplier||""}${u.invoice_no?` · invoice ${u.invoice_no}`:""}${u.received?` · received ${fd(u.received)}`:""}. Scan each unit's serial / IMEI (or type it). Blank lines are left for later.`;
+  $("#snInfo").textContent=`${u.location==="INBOUND"?"Saving a serial books that unit in at HOME (it has arrived). ":""}${u.supplier||""}${u.invoice_no?` · invoice ${u.invoice_no}`:""}${u.received?` · received ${fd(u.received)}`:""}. Scan each unit's serial / IMEI (or type it). Blank lines are left for later.`;
   $("#snTable").innerHTML=`<tbody>${snUnits.map((x,i)=>`<tr><td class="num muted">${i+1}</td><td><input class="sn-in" data-sid="${esc(x.id)}" placeholder="Serial / IMEI" style="width:100%;font-family:var(--mono)"></td><td class="nw">${esc(x.location)}</td></tr>`).join("")}</tbody>`;
   $("#snScan").value=""; $("#snDlg").showModal(); setTimeout(()=>$("#snScan").focus(),50); }
 function snPut(code){ code=String(code||"").trim(); if(!code) return; const ins=[...document.querySelectorAll(".sn-in")];
@@ -2656,7 +2656,7 @@ $("#snSave").addEventListener("click",async()=>{ const ins=[...document.querySel
   $("#snSave").disabled=true; let ok=0, err=null;
   for(const i of ins){ const u=units.find(x=>x.id===i.dataset.sid); if(!u) continue;
     const comment=String(u.comment||"").replace(/\[serial needed\] Paid upfront: add the serial number when it arrives\.\s*/,"").replace(/\[serial needed\]\s*/,"").trim();
-    const {error}=await sb.from("units").update({sn:i.value.trim(), comment, updated_at:new Date().toISOString()}).eq("id",u.id);
+    const {error}=await sb.from("units").update({sn:i.value.trim(), comment, ...(u.location==="INBOUND"?{location:"HOME"}:{}), updated_at:new Date().toISOString()}).eq("id",u.id);   // scanned = it's here
     if(error){ err=error; break; } ok++; }
   $("#snSave").disabled=false;
   if(err){ toast(`Saved ${ok}; then: ${errMsg(err)}`); } else { toast(`${ok} serial number${ok===1?"":"s"} saved`); $("#snDlg").close(); }
@@ -2763,11 +2763,11 @@ function addHints(){
   const total=(parseInt($("#a-qty").value,10)||0)*(num($("#a-cost").value)||0);
   const v=$("#a-paid").value, cr=sup?supplierOwed(sup).bal:0;
   $("#paidHint").textContent = v==="owe" ? (total?`${R(total)} goes onto Debtors for ${sup||"this supplier"}`:"Goes onto Debtors")
-    : v==="upfront" ? (cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}${total>-cr?`; the other ${R(total+cr)} is recorded as paid upfront now`:""}`:`Recorded as paid upfront: nothing is added to what you owe ${sup||"the supplier"}`)
+    : v==="upfront" ? ($("#a-location").value==="HOME"?"Not here yet? Set Location to \u201cOn the way to me\u201d so Takealot can't sell it before it arrives. ":"")+(cr<-0.005?`Uses up your upfront payment: ${R(-cr)} paid in advance to ${sup}${total>-cr?`; the other ${R(total+cr)} is recorded as paid upfront now`:""}`:`Recorded as paid upfront: nothing is added to what you owe ${sup||"the supplier"}`)
     : "Not added to Debtors";
 }
 $("#a-cond").addEventListener("change",()=>{ const v=$("#a-cond").value; $("#condHint").textContent = v==="used" ? "Marked USED. Not counted for lead-time stock (only new units are offered)." : v==="faulty" ? "Marked FAULTY. Not counted for lead-time stock or sent to Takealot automatically." : ""; });
-["#a-supplier","#a-qty","#a-cost","#a-paid"].forEach(id=>{ $(id).addEventListener("input",addHints); $(id).addEventListener("change",addHints); });
+["#a-supplier","#a-qty","#a-cost","#a-paid","#a-location"].forEach(id=>{ $(id).addEventListener("input",addHints); $(id).addEventListener("change",addHints); });
 
 /* ---------------- boot ---------------- */
 render();
