@@ -998,9 +998,23 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
            "floor_used": floor, "my_price": my_price}
     cfgn = {"url": db.base.replace("/rest/v1/", ""), "key": db.h["apikey"]}
     alerts = []
-    if rule.get("winning") is not None and bool(rule.get("winning")) != winning:
-        alerts.append(("✅ You won the Buy Box" if winning else "❌ You lost the Buy Box",
-                       f"{title} · Buy Box R{bb_price:,.0f}" + ("" if winning else f" (you R{my_price:,.0f})")))
+    # three states: the Buy Box (Fastest Delivery), the Best Price box (cheapest, but on lead time), or neither
+    state = "win" if winning else "best" if live.get("slot") == "lowest_priced" else "lost"
+    tms = _tload()
+    prev = (tms.get("bbstate") or {}).get(sku)
+    if prev is None and rule.get("winning") is not None:
+        prev = "win" if rule.get("winning") else "lost"
+    if prev != state:
+        tms.setdefault("bbstate", {})[sku] = state
+        _tsave(tms)
+        if prev is not None:
+            if state == "win":
+                alerts.append(("✅ You won the Buy Box", f"{title} · Buy Box R{bb_price:,.0f}"))
+            elif state == "best":
+                alerts.append(("🏷️ You have the Best Price box", f"{title} · you're the cheapest at R{my_price:,.0f}. "
+                               f"The Fastest Delivery box is with a seller who has warehouse stock (R{bb_price:,.0f})."))
+            else:
+                alerts.append(("❌ You lost the Buy Box", f"{title} · Buy Box R{bb_price:,.0f} (you R{my_price:,.0f})"))
     if target is not None and int(target) != int(my_price):
         if not fight:
             action = "would_" + ("lower" if action in ("lowered", "at_floor") else "reset" if action == "reset" else "follow" if action == "follow" else "raise")
