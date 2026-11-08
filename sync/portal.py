@@ -2365,11 +2365,17 @@ def pudo_sync(cfg, log):
         return None
     ships = []
     for x in items[:50]:
+        def place(addr, contact):
+            a0 = addr if isinstance(addr, dict) else {}
+            c0 = contact if isinstance(contact, dict) else {}
+            who = pick(c0, "name", "company") or pick(a0, "company", "name")
+            where = pick(a0, "terminal_name", "locker_name", "place_name", "local_area", "city", "entered_address", "street_address")
+            return " · ".join(str(v) for v in (who, where) if v)
         ca, da = x.get("collection_address") or {}, x.get("delivery_address") or {}
         ships.append({"id": pick(x, "id"), "waybill": pick(x, "short_tracking_reference", "custom_tracking_reference", "tracking_reference"),
                       "status": str(pick(x, "status") or ""), "created": str(pick(x, "time_created") or "")[:16],
-                      "from": pick(ca, "company", "name", "locker_name", "street_address") or pick(x, "collection_name") or "",
-                      "to": pick(da, "company", "name", "locker_name", "street_address") or pick(x, "delivery_name") or "",
+                      "from": place(ca, x.get("collection_contact")) or pick(x, "collection_name") or "",
+                      "to": place(da, x.get("delivery_contact")) or pick(x, "delivery_name") or "",
                       "ref": pick(x, "customer_reference") or "", "service": pick(x, "service_level_code") or "",
                       "eta": str(pick(x, "estimated_delivery_to", "estimated_delivery_from") or "")[:10]})
     _app_state(cfg, "pudo_shipments", {"at": datetime.now().isoformat(timespec="seconds"), "list": ships})
