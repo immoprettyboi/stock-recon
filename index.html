@@ -568,6 +568,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <button class="tab" role="tab" aria-selected="false" data-view="price">Price fighter <span class="n" id="cntPf"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="removals">Removal orders <span class="n badge" id="cntRem"></span></button>
       <button class="tab" role="tab" aria-selected="false" data-view="check">Stock check <span class="n badge" id="cntCheck"></span></button>
+      <button class="tab" role="tab" aria-selected="false" data-view="adjust">Stock adjustments</button>
       <button class="tab" role="tab" aria-selected="false" data-view="products">Takealot products</button>
     </nav>
   </div>
@@ -767,6 +768,31 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="panel">
       <div class="sec-head"><h2>Takealot POs</h2><p>Every shipment you've made to Takealot: what was in it, sent vs received, and what the courier charged</p></div>
       <div class="tscroll"><table id="poTable"></table></div>
+    </div>
+  </section>
+
+  <!-- STOCK ADJUSTMENTS -->
+  <section id="view-adjust" class="stack" hidden>
+    <div class="panel">
+      <div class="sec-head"><h2>Remove units from stock</h2><p>For units added by mistake, duplicates, or stock lost / damaged / written off. A full record is kept below, and you can put a unit back.</p></div>
+      <div class="filters">
+        <select id="adjProd" aria-label="Product"><option value="">Pick a product…</option></select>
+        <select id="adjLoc" aria-label="Location"><option value="">Any location</option></select>
+        <input type="search" id="adjQ" placeholder="Supplier, serial, invoice…" aria-label="Search units">
+      </div>
+      <div class="tscroll"><table id="adjTable"></table></div>
+      <form class="grid" id="adjForm" autocomplete="off">
+        <div class="field"><label for="adjReason">Reason</label><select id="adjReason" required>
+          <option value="">Choose…</option><option>Added by mistake</option><option>Duplicate entry</option><option>Wrong product (re-added correctly)</option>
+          <option>Lost</option><option>Damaged / broken</option><option>Stolen</option><option>Written off</option><option>Used for the business</option><option>Other</option></select></div>
+        <div class="field wide"><label for="adjNote">Note</label><input id="adjNote" placeholder="What happened (optional)"></div>
+        <div class="field wide"><label class="note inline"><input type="checkbox" id="adjOffDebt"> Also take it off what I owe the supplier</label><span class="hint" id="adjDebtHint"></span></div>
+        <div class="form-actions"><button class="btn danger" type="submit" id="adjBtn" disabled>Remove 0 units</button><span class="note" id="adjMsg"></span></div>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>Adjustment history</h2><p id="adjSub">Every unit removed from stock, and why</p></div>
+      <div class="tscroll"><table id="adjHist"></table></div>
     </div>
   </section>
 
@@ -1042,7 +1068,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Johannesburg"});   // SA date, also just after midnight
 
-let appState={}, units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
+let adjustments=null, appState={}, units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
   const p=(soldWhen.f||(soldWhen.f=new Intl.DateTimeFormat("en-ZA",{timeZone:"Africa/Johannesburg",day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false}))).formatToParts(d).reduce((a,x)=>(a[x.type]=x.value,a),{});
@@ -1128,6 +1154,8 @@ async function loadAllNow(){
       for(let i=0;i<ids.length;i+=150){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
         if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(awaiting.has(x.order_id)) talStatus[x.order_id]=x.sale_status; }); } }
+    { const {data,error}=await sb.from("stock_adjustments").select("*").order("at",{ascending:false}).limit(300);   // 21_database_update.sql
+      adjustments = error ? null : data; }
     { const {data,error}=await sb.from("app_state").select("*");                      // 18_database_update.sql
       appState = error ? {} : Object.fromEntries(data.map(r=>[r.key, r.key==="pudo" ? {has_key:!!(r.value||{}).api_key} : r.value])); }
     { const {data,error}=await sb.from("price_rules").select("*");
@@ -1165,7 +1193,7 @@ function setView(v){
   if(!$("#view-"+v)) v="overview";
   state.view=v;
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
-  ["overview","stock","sales","match","add","ship","expenses","debtors","price","removals","check","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
+  ["overview","stock","sales","match","add","ship","expenses","debtors","price","removals","check","adjust","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
   if(v==="add" && matchMedia("(pointer:fine)").matches) setTimeout(()=>$("#a-scan").focus(),50);   // ready for a USB scanner
@@ -1184,6 +1212,7 @@ function setView(v){
     debtors:'<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20a6.5 6.5 0 0 0-3-5.5"/>',
     price:'<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
     removals:'<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+    adjust:'<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
     check:'<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/>',
     products:'<path d="M6 7h12l-1 13H7z"/><path d="M9 7a3 3 0 0 1 6 0"/>',
     more:'<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
@@ -1728,6 +1757,74 @@ document.addEventListener("click",e=>{ if(e.target.id==="soldHintGo"){ SL.q=stat
 function goSales(st,q){ SL.st=st||""; $("#slSt").value=SL.st; SL.q=q||""; $("#slQ").value=SL.q; setSlRange("all"); setView("sales"); window.scrollTo({top:0}); }
 setTimeout(()=>setSlRange("month"),0);
 
+
+/* ---------------- stock adjustments: remove units, keep the record ---------------- */
+const ADJ_UNDEBT=new Set(["Added by mistake","Duplicate entry","Wrong product (re-added correctly)"]);
+function adjPool(){ const g=$("#adjProd").value, loc=$("#adjLoc").value, q=$("#adjQ").value.trim().toLowerCase();
+  if(!g) return []; return units.filter(u=>["in_stock","missing_query"].includes(u.status) && !u.order_id && grpName(u.product)===g && (!loc||u.location===loc)
+    && (!q||[u.supplier,u.sn,u.invoice_no,u.po,u.comment].join(" ").toLowerCase().includes(q))).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))); }
+function renderAdjust(){
+  const t=$("#adjTable"); if(!t) return;
+  const kp=$("#adjProd").value, groups=[...new Set(units.filter(u=>["in_stock","missing_query"].includes(u.status)&&!u.order_id).map(u=>grpName(u.product)))].sort((a,b)=>a.localeCompare(b));
+  $("#adjProd").innerHTML=`<option value="">Pick a product…</option>`+groups.map(g=>`<option>${esc(g)}</option>`).join(""); $("#adjProd").value=kp;
+  const kl=$("#adjLoc").value; $("#adjLoc").innerHTML=`<option value="">Any location</option>`+LOCS.map(l=>`<option value="${l}">${l==="INBOUND"?"On the way to me":l}</option>`).join(""); $("#adjLoc").value=kl;
+  const L=adjPool(), sel=new Set([...document.querySelectorAll(".adj-cb:checked")].map(c=>c.value));
+  t.innerHTML = !$("#adjProd").value ? `<tbody><tr><td class="muted">Pick a product to see its units in stock.</td></tr></tbody>` : L.length ? `<thead><tr><th><input type="checkbox" id="adjAll" aria-label="Select all"></th><th>Added</th><th>Supplier</th><th>Location</th><th>Received</th><th>Serial</th><th>Invoice</th><th class="num">Cost</th><th>Note</th></tr></thead><tbody>${L.map(u=>`<tr>
+      <td><input type="checkbox" class="adj-cb" value="${esc(u.id)}" ${sel.has(u.id)?"checked":""}></td><td class="nw">${soldWhen({sold_date:u.created_at})}</td><td>${esc(u.supplier||"")}</td><td>${esc(u.location==="INBOUND"?"On the way":u.location)}</td>
+      <td class="nw">${fd(u.received)}</td><td class="mono">${esc(u.sn||"–")}</td><td>${esc(u.invoice_no||"–")}</td><td class="num">${R(u.cost)}</td><td style="min-width:180px">${esc(String(u.comment||"").slice(0,80))}</td></tr>`).join("")}</tbody>`
+    : `<tbody><tr><td class="muted">No unsold units of this product in stock.</td></tr></tbody>`;
+  adjCount();
+  // history
+  const H=$("#adjHist");
+  if(adjustments===null){ H.innerHTML=`<tbody><tr><td class="muted">Run 21_database_update.sql in Supabase to switch this on.</td></tr></tbody>`; $("#adjForm").hidden=true; return; }
+  $("#adjForm").hidden=false;
+  const rem=adjustments.filter(a=>a.kind==="remove");
+  $("#adjSub").textContent = rem.length ? `${rem.reduce((t,a)=>t+a.qty,0)} unit${rem.reduce((t,a)=>t+a.qty,0)===1?"":"s"} removed · ${R(rem.filter(a=>!a.restored_at).reduce((t,a)=>t+(+a.value||0),0))} of stock` : "Every unit removed from stock, and why";
+  H.innerHTML = adjustments.length ? `<thead><tr><th>When</th><th>Who</th><th>Reason</th><th>Product</th><th class="num">Units</th><th class="num">Value</th><th>Note</th><th>Units removed</th><th></th></tr></thead><tbody>${adjustments.map(a=>`<tr class="${a.restored_at?"muted":""}">
+      <td class="nw">${soldWhen({sold_date:a.at})}</td><td>${esc((a.who||"").split("@")[0])}</td><td>${esc(a.reason)}${a.off_debtors?'<div class="tal-st">taken off Debtors</div>':""}</td>
+      <td>${esc(a.product||"")}</td><td class="num">${a.qty}</td><td class="num">${R(a.value)}</td><td>${esc(a.note||"")}</td>
+      <td style="min-width:200px;font-size:12px">${(a.units||[]).map(u=>`${esc(u.supplier||"")} · ${fd(u.received)}${u.sn?` · <span class="mono">${esc(u.sn)}</span>`:""}${u.invoice_no?` · ${esc(u.invoice_no)}`:""} · ${R(u.cost)}`).join("<br>")}</td>
+      <td class="nw">${a.restored_at?`<span class="tal-st">put back ${fd(String(a.restored_at).slice(0,10))}</span>`:`<button class="btn small" type="button" data-adjundo="${a.id}">Put back</button>`}</td></tr>`).join("")}</tbody>`
+    : `<tbody><tr><td class="muted">Nothing removed yet.</td></tr></tbody>`;
+}
+function adjCount(){ const n=document.querySelectorAll(".adj-cb:checked").length, v=[...document.querySelectorAll(".adj-cb:checked")].reduce((t,c)=>t+(+(units.find(u=>u.id===c.value)||{}).cost||0),0);
+  $("#adjBtn").disabled=!n; $("#adjBtn").textContent=`Remove ${n} unit${n===1?"":"s"}${n?` (${R0(v)})`:""}`;
+  const r=$("#adjReason").value; $("#adjDebtHint").textContent = !r ? "" : $("#adjOffDebt").checked ? "What you owe the supplier goes down by their cost (for stock you never really bought)." : "What you owe the supplier stays the same (you still have to pay for it)."; }
+["#adjProd","#adjLoc"].forEach(id=>$(id).addEventListener("change",renderAdjust));
+$("#adjQ").addEventListener("input",renderAdjust);
+$("#adjTable").addEventListener("change",e=>{ if(e.target.id==="adjAll") document.querySelectorAll(".adj-cb").forEach(c=>c.checked=e.target.checked); adjCount(); });
+$("#adjReason").addEventListener("change",()=>{ $("#adjOffDebt").checked=ADJ_UNDEBT.has($("#adjReason").value); adjCount(); });
+$("#adjOffDebt").addEventListener("change",adjCount);
+$("#adjForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const ids=[...document.querySelectorAll(".adj-cb:checked")].map(c=>c.value), L=units.filter(u=>ids.includes(u.id)), reason=$("#adjReason").value;
+  if(!L.length){ toast("Tick the units to remove"); return; } if(!reason){ toast("Choose a reason"); return; }
+  const value=Math.round(L.reduce((t,u)=>t+(+u.cost||0),0)*100)/100, off=$("#adjOffDebt").checked, g=grpName(L[0].product);
+  if(!confirm(`Remove ${L.length} × ${g} (${R(value)}) from stock?\nReason: ${reason}\n${off?"Also taken off what you owe the supplier.":"What you owe the supplier stays the same."}\n\nA full record is kept and you can put them back.`)) return;
+  $("#adjBtn").disabled=true; $("#adjMsg").textContent="Saving…";
+  // 1. the record first (with the units exactly as they are), so nothing is ever lost
+  const snap=L.map(u=>{ const c={...u}; return c; });
+  const {data:rec,error:e1}=await sb.from("stock_adjustments").insert({ who:me?.email||null, kind:"remove", reason, note:$("#adjNote").value.trim()||null, product:g, qty:L.length, value, off_debtors:off, units:snap }).select("id").single();
+  if(e1){ $("#adjMsg").textContent=/stock_adjustments/.test(errMsg(e1))?"Run 21_database_update.sql in Supabase first":"Couldn't save: "+errMsg(e1); $("#adjBtn").disabled=false; return; }
+  // 2. keep Debtors right: units still owed for (lost / damaged ...) that were counted in a supplier's balance stay owed
+  if(!off && ledger!==null){ const bySup={}; L.forEach(u=>{ const so=supplierOwed(u.supplier||""); if(so.anchor && so.bought.some(b=>b.id===u.id)) bySup[u.supplier]=(bySup[u.supplier]||0)+(+u.cost||0); });
+    for(const [sup,amt] of Object.entries(bySup)) await sb.from("supplier_ledger").insert({ supplier:sup, kind:"owe", amount:amt, date:today(), note:`Stock removed (adjustment #${rec.id}, ${reason}): still owed`, created_by:me?.email||null }); }
+  // 3. remove the units
+  const {error:e2}=await sb.from("units").delete().in("id",L.map(u=>u.id));
+  $("#adjBtn").disabled=false; $("#adjMsg").textContent="";
+  if(e2){ toast("Record saved, but the units couldn't be removed: "+errMsg(e2)); await sb.from("stock_adjustments").delete().eq("id",rec.id); loadAll(); return; }
+  $("#adjNote").value=""; $("#adjReason").value=""; toast(`Removed ${L.length} × ${g} · record kept`);
+  await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});   // lead time follows straight away
+  loadAll(); });
+$("#adjHist").addEventListener("click",async e=>{ const b=e.target.closest("[data-adjundo]"); if(!b) return;
+  const a=(adjustments||[]).find(x=>String(x.id)===b.dataset.adjundo); if(!a) return;
+  if(!confirm(`Put back ${a.qty} × ${a.product} into stock, exactly as they were?`)) return;
+  const rows=(a.units||[]).map(u=>{ const c={...u}; delete c.updated_at; return c; });
+  const {error}=await sb.from("units").upsert(rows,{onConflict:"id"});
+  if(error){ toast("Couldn't put them back: "+errMsg(error)); return; }
+  if(!a.off_debtors && ledger!==null) await sb.from("supplier_ledger").delete().like("note",`Stock removed (adjustment #${a.id},%`);
+  await sb.from("stock_adjustments").update({restored_at:new Date().toISOString()}).eq("id",a.id);
+  await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"});
+  toast(`Put back ${a.qty} × ${a.product}`); loadAll(); });
 /* ---------------- needs matching ---------------- */
 function productFor(sku){ const p=products.find(x=>x.sku===sku); return p && p.product && p.product!==IGNORE ? p.product : null; }
 function renderMatch(){
@@ -2052,7 +2149,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v113)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v114)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2521,7 +2618,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); renderAdjust(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); renderProducts();
 }
 
 /* ---------------- edit dialog ---------------- */
