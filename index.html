@@ -899,6 +899,10 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
     <div class="panel">
       <div class="sec-head"><h2>Takealot products</h2><p>Each Takealot SKU is linked once to your own product name. The sync uses this to match sales to stock.</p></div>
       <p class="note" style="margin:0;max-width:85ch"><b>Lead time:</b> how many units each listing offers from your own stock (HOME). Type a number and tap <b>Set</b>: the PC changes it on the Seller Portal within a minute. 0 takes the listing off lead time.</p>
+      <div class="filters"><input type="search" id="prQ" placeholder="Search listing, SKU or your product…" aria-label="Search Takealot products">
+        <select id="prSt" aria-label="Status"><option value="">All statuses</option><option value="buyable">Buyable</option><option value="not">Not buyable</option></select>
+        <select id="prLt" aria-label="Lead time"><option value="">Any lead time</option><option value="auto">Match HOME (auto)</option><option value="manual">Only when I tap Set</option><option value="fixed">Fixed number</option><option value="on">On lead time now</option></select>
+        <label class="note inline"><input type="checkbox" id="prUnl"> Not linked yet</label><span class="note" id="prCount"></span></div>
       <div class="tscroll"><table id="prodTable"></table></div>
     </div>
   </section>
@@ -2187,7 +2191,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v117)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v118)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2608,14 +2612,26 @@ function renderProducts(){
         <option value="auto" ${p.leadtime_fixed!=null&&p.leadtime_fixed<0?"selected":""}>Match what's at HOME (auto)</option>
         <option value="fixed" ${p.leadtime_fixed!=null&&p.leadtime_fixed>=0?"selected":""}>Always keep at this number (supplier stock)</option>
       </select>${st}</td>`; };
-  $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Status</th><th>Lead time</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr>
+  $("#prodTable").innerHTML = list.length ? `<thead><tr><th>Takealot listing</th><th>SKU</th><th>Status</th><th>Lead time</th><th>Your product</th></tr></thead><tbody>${list.map(p=>`<tr data-pr="${esc(p.sku)}">
     <td>${esc(p.takealot_title)}</td><td class="mono">${esc(p.sku)}</td><td class="nw">${esc(p.takealot_status||"")}</td>${ltCell(p)}
     <td><select data-sku="${esc(p.sku)}" aria-label="Your product for ${esc(p.takealot_title)}">
       <option value="">Not linked yet</option>
       <option value="${IGNORE}" ${p.product===IGNORE?"selected":""}>Don't track this product</option>
       ${names.map(n=>`<option ${n===p.product?"selected":""}>${esc(n)}</option>`).join("")}
     </select></td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">Products appear here after the first sync.</td></tr></tbody>`;
+  prFilter();
 }
+// search / filters: hide rows (so a lead time you're typing isn't lost)
+function prFilter(){ const q=($("#prQ").value||"").trim().toLowerCase(), st=$("#prSt").value, lt=$("#prLt").value, unl=$("#prUnl").checked; let n=0, all=0;
+  document.querySelectorAll("#prodTable tr[data-pr]").forEach(tr=>{ all++; const p=products.find(x=>x.sku===tr.dataset.pr)||{}; const buy=/buyable/i.test(p.takealot_status||"")&&!/not/i.test(p.takealot_status||"");
+    const f=p.leadtime_fixed, ltq=((p.takealot_stock||{}).LEADTIME||{}).qty||0;
+    const show=(!q || [p.takealot_title,p.sku,p.product,p.takealot_status].join(" ").toLowerCase().includes(q))
+      && (!st || (st==="buyable"?buy:!buy))
+      && (!lt || (lt==="auto"?(f!=null&&f<0):lt==="manual"?f==null:lt==="fixed"?(f!=null&&f>=0):ltq>0))
+      && (!unl || !p.product);
+    tr.style.display=show?"":"none"; if(show) n++; });
+  $("#prCount").textContent = n<all ? `${n} of ${all}` : ""; }
+["#prQ","#prSt","#prLt","#prUnl"].forEach(id=>{ $(id).addEventListener("input",prFilter); $(id).addEventListener("change",prFilter); });
 $("#prodTable").addEventListener("click", async e=>{
   const b=e.target.closest("[data-lts]"); if(!b) return;
   const sku=b.dataset.lts, q=$(`[data-ltq="${CSS.escape(sku)}"]`), qty=parseInt(q.value,10);
