@@ -943,6 +943,15 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
   </form>
 </dialog>
 
+<dialog id="snDlg" aria-labelledby="snTitle">
+  <div class="dlg-head"><h2 id="snTitle">Add serial numbers</h2><div class="spacer"></div><button class="btn" id="snCam" type="button">📷 Camera</button><button class="btn primary" id="snSave" type="button">Save</button><button class="btn" id="snClose" type="button">Close</button></div>
+  <div class="dlg-body">
+    <p class="note" id="snInfo" style="margin:0"></p>
+    <div class="scanbar"><input id="snScan" placeholder="Scan each serial / IMEI: it goes into the next empty line" aria-label="Scan a serial" autocomplete="off" enterkeyhint="done"></div>
+    <div class="tscroll"><table id="snTable"></table></div>
+  </div>
+</dialog>
+
 <dialog id="boxDlg" aria-labelledby="boxTitle">
   <div class="dlg-head"><h2 id="boxTitle">Check the boxes</h2><div class="spacer"></div><button class="btn" id="boxCam" type="button">📷 Camera</button><button class="btn primary" id="boxClose" type="button">Done</button></div>
   <div class="dlg-body">
@@ -1378,6 +1387,9 @@ function renderOverview(){
   units.filter(u=>u.order_id && toSend.has(u.order_id) && !u.flag && !booked(u)).forEach(u=>items.push({u, tag:"Send in", t:`Send in for lead-time order ${u.order_id}${(()=>{ const d=((appState.leadtime_due||{}).orders||[]).find(x=>x.order===u.order_id); if(!d) return "";
       const L=Math.round((new Date(d.due)-new Date(today()))/864e5); return ` · ${L<0?`⛔ ${-L} day${L<-1?"s":""} late`:L===0?"⏰ due today":L===1?"⏰ due tomorrow":`due ${fd(d.due)} (${L} days)`}`; })()}`, d:`${u.product} · to ${(pipeline.find(x=>x.order_id===u.order_id)||{}).fulfilment_dc||u.location}${u.po?` · PO ${u.po}`:""}`}));
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
+  { const G={}; units.filter(snNeeded).forEach(u=>{ const k=snKey(u); (G[k]=G[k]||[]).push(u); });
+    Object.entries(G).forEach(([k,L])=>items.push({snkey:k, tag:"Serials", t:`Add serial numbers · ${L.length} × ${L[0].product}${L[0].invoice_no?` (${L[0].invoice_no})`:""}`,
+      d:`Paid upfront${L[0].received?` · received ${fd(L[0].received)}`:""}. When it arrives, tap here and scan each serial.`})); }
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
   removalRows().filter(z=>z.st.startsWith("Arrived")).forEach(z=>items.push({go:"removals", tag:"Removal", t:`Removal order arrived · ${z.r.title}`, d:`Order ${z.r.order_id} · ${z.r.reason||""}. Check it, then Back in stock (used) or Faulty.`}));
@@ -1404,7 +1416,7 @@ function renderOverview(){
       items.push({go:"overview", tag:"Lead time", t:`${p.takealot_title||p.product}: ${q} on lead time, ${home[p.product]||0} at HOME`, d:"Takealot could sell stock you don't have. The next sync sets it right; tap Sync now on the sync card to do it straight away."}); }); }
   $("#attnSub").textContent = items.length ? `${items.length} item${items.length>1?"s":""}` : "";
   $("#attn").innerHTML = items.length ? items.slice(0,14).map(i=>`
-    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.adampo?`data-adampo="${esc(i.adampo)}"`:`data-go="${i.go}"`}>
+    <button class="attn-item" type="button" ${i.u?`data-id="${esc(i.u.id)}"`:i.adampo?`data-adampo="${esc(i.adampo)}"`:i.snkey?`data-snkey="${esc(i.snkey)}"`:`data-go="${i.go}"`}>
       <span class="pill ${i.u?"s-"+i.u.status:"s-awaiting_fees"}">${esc(i.tag)}</span>
       <span><div class="t">${esc(i.t)}</div><div class="d">${esc(i.d)}</div></span>
       <span class="muted" aria-hidden="true">›</span>
@@ -1462,7 +1474,7 @@ function renderOverview(){
     : `<tbody><tr><td class="muted">No delivery costs in ${esc(mLabel)}.</td></tr></tbody>`;
 }
 $("#retTable").addEventListener("click",e=>{const b=e.target.closest("[data-id]"); if(b) openEdit(b.dataset.id);});
-$("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.adampo) openAdam(b.dataset.adampo); else if(b.dataset.go) setView(b.dataset.go);});
+$("#attn").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b) return; if(b.dataset.snkey) return openSerials(b.dataset.snkey); if(b.dataset.id) openEdit(b.dataset.id); else if(b.dataset.adampo) openAdam(b.dataset.adampo); else if(b.dataset.go) setView(b.dataset.go);});
 $("#wait").addEventListener("click",e=>{const b=e.target.closest("[data-status]"); if(!b) return;
   if(SOLD.has(b.dataset.status)) return goSales(b.dataset.status);
   state.only=null; state.status=b.dataset.status; state.loc=""; state.sup=""; state.q=""; $("#q").value=""; $("#fLoc").value=""; $("#fSup").value="";
@@ -1990,7 +2002,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v108)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v109)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2510,6 +2522,7 @@ $("#editForm").addEventListener("submit", async e=>{
     comment:$("#e-comment").value.trim(), flag:$("#e-flag").checked };
   if(units.some(x=>"condition" in x)) body.condition=$("#e-cond").value;
   if(units.some(x=>"invoice_no" in x)) body.invoice_no=$("#e-inv").value.trim()||null;
+  if($("#e-sn").value.trim() && /\[serial needed\]/.test($("#e-comment").value)) body.comment=$("#e-comment").value.replace(/\[serial needed\] Paid upfront: add the serial number when it arrives\.\s*/,"").replace(/\[serial needed\]\s*/,"").trim();
   if(units.some(x=>"query_date" in x)){ body.query_date=$("#e-qdate").value||null; body.query_ref=$("#e-qref").value.trim(); }
   if(body.order_id && body.order_id!==editing.order_id) body.match_method="manual";
   // a returned unit going back into stock: its old order no longer applies, so it can be matched to a new sale
@@ -2607,7 +2620,7 @@ async function camStart(){
       if(!res || camPaused) return;
       const c=res.getText(), now=Date.now();
       if(c===camLast.c && now-camLast.t<2500) return;  // the same code stays in view: count it once
-      camLast={c,t:now}; if($("#boxDlg").open) boxScanCode(c); else onScan(c);
+      camLast={c,t:now}; if($("#snDlg").open) snPut(c); else if($("#boxDlg").open) boxScanCode(c); else onScan(c);
     });
     $("#camMsg").textContent="Point the camera at a barcode. Keep scanning: each code is added as you go.";
   }catch(e){ $("#camMsg").textContent="Camera not available: "+(e.message||e)+". Allow camera access for this site and try again."; }
@@ -2618,6 +2631,36 @@ $("#camClose").addEventListener("click",camStop);
 $("#camDlg").addEventListener("close",()=>{ try{ camCtl&&camCtl.stop(); }catch(e){} camCtl=null; });
 
 
+
+/* serial numbers still to add (stock paid upfront, added before it arrived) */
+const snNeeded=u=>!String(u.sn||"").trim() && /\[serial needed\]/.test(u.comment||"") && !["settled"].includes(u.status);
+const snKey=u=>[u.product,u.supplier||"",u.invoice_no||"",u.received||""].join("|");
+let snUnits=[];
+function openSerials(key){ snUnits=units.filter(u=>snNeeded(u) && snKey(u)===key).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+  if(!snUnits.length){ toast("All serial numbers are in"); return; }
+  const u=snUnits[0]; $("#snTitle").textContent=`Add serial numbers · ${snUnits.length} × ${u.product}`;
+  $("#snInfo").textContent=`${u.supplier||""}${u.invoice_no?` · invoice ${u.invoice_no}`:""}${u.received?` · received ${fd(u.received)}`:""}. Scan each unit's serial / IMEI (or type it). Blank lines are left for later.`;
+  $("#snTable").innerHTML=`<tbody>${snUnits.map((x,i)=>`<tr><td class="num muted">${i+1}</td><td><input class="sn-in" data-sid="${esc(x.id)}" placeholder="Serial / IMEI" style="width:100%;font-family:var(--mono)"></td><td class="nw">${esc(x.location)}</td></tr>`).join("")}</tbody>`;
+  $("#snScan").value=""; $("#snDlg").showModal(); setTimeout(()=>$("#snScan").focus(),50); }
+function snPut(code){ code=String(code||"").trim(); if(!code) return; const ins=[...document.querySelectorAll(".sn-in")];
+  if(ins.some(i=>i.value.trim()===code) || units.some(u=>String(u.sn||"").trim()===code)){ toast(`${code} is already used`); try{navigator.vibrate&&navigator.vibrate([200,100,200]);}catch(e){} return; }
+  const e=ins.find(i=>!i.value.trim()); if(!e){ toast("Every line has a serial: tap Save"); return; }
+  e.value=code; e.closest("tr").style.background="var(--ok-soft)"; try{navigator.vibrate&&navigator.vibrate(60);}catch(err){}
+  const left=ins.filter(i=>!i.value.trim()).length; $("#snScan").placeholder=left?`${left} to go: scan the next serial`:"All done: tap Save"; }
+$("#snScan").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); snPut($("#snScan").value); $("#snScan").value=""; } });
+$("#snClose").addEventListener("click",()=>$("#snDlg").close());
+$("#snCam").addEventListener("click",camStart);
+$("#snSave").addEventListener("click",async()=>{ const ins=[...document.querySelectorAll(".sn-in")].filter(i=>i.value.trim());
+  if(!ins.length){ toast("Scan or type at least one serial"); return; }
+  const vals=ins.map(i=>i.value.trim()); if(new Set(vals).size!==vals.length){ toast("The same serial is on two lines"); return; }
+  $("#snSave").disabled=true; let ok=0, err=null;
+  for(const i of ins){ const u=units.find(x=>x.id===i.dataset.sid); if(!u) continue;
+    const comment=String(u.comment||"").replace(/\[serial needed\] Paid upfront: add the serial number when it arrives\.\s*/,"").replace(/\[serial needed\]\s*/,"").trim();
+    const {error}=await sb.from("units").update({sn:i.value.trim(), comment, updated_at:new Date().toISOString()}).eq("id",u.id);
+    if(error){ err=error; break; } ok++; }
+  $("#snSave").disabled=false;
+  if(err){ toast(`Saved ${ok}; then: ${errMsg(err)}`); } else { toast(`${ok} serial number${ok===1?"":"s"} saved`); $("#snDlg").close(); }
+  loadAll(); });
 /* box check before shipping: scan every box going on a PO; each must be the product the PO is for */
 let boxPO=null, boxScans=[];
 const grpName=n=>{ const p=products.find(x=>x.product===n||x.takealot_title===n); return (p&&p.product&&p.product!==IGNORE)?p.product:n; };
@@ -2668,7 +2711,9 @@ $("#addForm").addEventListener("submit", async e=>{
   const base={ product:$("#a-product").value.trim(), supplier:$("#a-supplier").value.trim(), location:$("#a-location").value, stock_type:$("#a-type").value,
     received:$("#a-received").value, po:$("#a-po").value.trim(), cost:num($("#a-cost").value)||0, status:"in_stock", source:"app", condition:$("#a-cond").value,
     ...(noinv?{}:{invoice_no:inv}) };
-  const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||""}));
+  // paid upfront = usually not here yet: units without a serial get a reminder to add it when the stock arrives
+  const upfrontNoSn=$("#a-paid").value==="upfront";
+  const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||"", ...(upfrontNoSn&&!sns[i]?{comment:"[serial needed] Paid upfront: add the serial number when it arrives."}:{})}));
   const how=$("#a-paid").value, total=qty*base.cost;
   // "paid upfront": the money went before the stock came. If that payment isn't in Debtors yet, record it now (dated before
   // today's stock), so the stock is set against it and nothing shows as owed

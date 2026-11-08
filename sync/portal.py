@@ -1966,6 +1966,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Lead-time deadlines failed: " + repr(e)[:200])
             try:
+                serial_reminder(cfg, log)
+            except Exception as e:
+                log("Serial reminder failed: " + repr(e)[:200])
+            try:
                 weekly_backup(cfg, log)
             except Exception as e:
                 log("Weekly backup failed: " + repr(e)[:200])
@@ -2268,6 +2272,33 @@ def leadtime_deadlines(cfg, log):
     seen["lt_alert"] = {k: v for k, v in done.items() if v >= (today - timedelta(days=14)).isoformat()}
     _seen_save(seen)
     _app_state(cfg, "leadtime_due", {"at": datetime.now().isoformat(timespec="seconds"), "orders": deadlines})
+
+
+def serial_reminder(cfg, log):
+    """Once a day (from 09:00): stock you paid upfront and added before it arrived still has no serial numbers."""
+    now = datetime.now()
+    if now.hour < 9:
+        return
+    seen = _seen_load() or {}
+    if seen.get("sn_day") == now.date().isoformat():
+        return
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    rows = db.select("units", "select=id,product,sn,status,invoice_no,comment&comment=ilike.*serial%20needed*&status=neq.settled")
+    rows = [u for u in rows if not str(u.get("sn") or "").strip()]
+    seen["sn_day"] = now.date().isoformat()
+    if not _seen_save(seen) or not rows:
+        return
+    by = {}
+    for u in rows:
+        k = u["product"] + (f" ({u['invoice_no']})" if u.get("invoice_no") else "")
+        by[k] = by.get(k, 0) + 1
+    body = " · ".join(f"{n} × {k}" for k, n in sorted(by.items(), key=lambda x: -x[1])[:4]) + \
+           ". When the stock arrives, open Needs you → Add serial numbers and scan them."
+    try:
+        notify(cfg, f"🔢 {len(rows)} unit{'s' if len(rows) != 1 else ''} still need a serial number", body, url="./?view=overview", topic="price", log=log, tag="serials")
+    except Exception as e:
+        log("Serial reminder failed: " + repr(e)[:120])
 
 
 def heartbeat(cfg):
