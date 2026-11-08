@@ -866,6 +866,15 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     if not plid:
         db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": "Listing not found on Takealot yet (next sync)"})
         return
+    # nothing to sell (no stock at any Takealot warehouse and 0 on lead time): don't fight. Lowering the price can't win
+    # the Buy Box without stock, only drag the price down, and it would keep sending notifications.
+    tsk = prod.get("takealot_stock") or {}
+    sellable = sum(int((tsk.get(d) or {}).get("qty") or 0) for d in ("JHB", "CPT", "DBN")) + int((tsk.get("LEADTIME") or {}).get("qty") or 0)
+    if tsk and sellable <= 0:
+        msg = "No stock to sell on Takealot: not fighting until stock is back"
+        if rule.get("last_action") != msg:
+            db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": msg, "winning": False})
+        return
     live = _read_live(page, plid, offer_id, mine)
     if not live:
         db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso})      # keep last_action: try again next check
