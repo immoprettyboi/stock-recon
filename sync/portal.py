@@ -2795,6 +2795,23 @@ def apply_leadtime_requests(ctx, cfg, auth, offers, log, sales=None):
                 errs = (r.json() or {}).get("validation_errors")
             except Exception:
                 pass
+            if errs and "leadtime days" in str(errs).lower() and qty > 0:
+                # a new listing with no lead-time days: Takealot won't take lead-time stock until they're set.
+                # Set them (same as your other listings: 4 working days unless another listing says otherwise), then try again.
+                days = 4
+                try:
+                    ds = [int(((x.get("leadtime_days") or {}).get("minimum")) or 0) for x in by_sku.values() if (x.get("total_merchant_stock") or 0) > 0]
+                    days = max([d for d in ds if d > 0] or [4])
+                except Exception:
+                    pass
+                r = ctx.request.patch(f"https://{API_HOST}/v2/offers/offer/{o['offer_id']}", headers={**auth, "content-type": "application/json"},
+                                      data=json.dumps({"leadtime_days": days, "leadtime_stock": [{"merchant_warehouse_id": mw, "quantity": qty}]}), timeout=60_000)
+                errs = None
+                try:
+                    errs = (r.json() or {}).get("validation_errors")
+                except Exception:
+                    pass
+                log(f"Lead-time stock: set lead-time days to {days} on {sku} first: {'ok' if r.ok and not errs else 'refused'}.")
             title = ((o.get("tsin") or {}).get("title") or sku)[:60]
             if r.ok and not errs:
                 ok, msg = True, f"Changed from {before} to {qty}"
