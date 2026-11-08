@@ -747,6 +747,13 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div class="tscroll"><table id="shipTo"></table></div>
     </div>
     <div class="panel">
+      <div class="sec-head"><h2>📦 Pudo lockers</h2><p id="pudoSub">Your Pudo locker bookings</p></div>
+      <form class="inline" id="pudoForm" autocomplete="off" style="flex-wrap:wrap" hidden>
+        <input id="pudoKey" type="password" placeholder="Paste your Pudo API key" autocomplete="off" style="flex:1 1 280px"><button class="btn primary small" type="submit">Save key</button>
+        <span class="note">Pudo website → sign in → Settings → API keys → Create API Key. Only the server uses it.</span></form>
+      <div class="tscroll"><table id="pudoTable"></table></div>
+    </div>
+    <div class="panel">
       <div class="sec-head"><h2>Takealot POs</h2><p>Every shipment you've made to Takealot: what was in it, sent vs received, and what the courier charged</p></div>
       <div class="tscroll"><table id="poTable"></table></div>
     </div>
@@ -1111,7 +1118,7 @@ async function loadAllNow(){
         const {data,error}=await sb.from("takealot_sales").select("order_id,sale_status,order_date").in("order_id",ids.slice(i,i+150));
         if(!error) data.forEach(x=>{ talTime[x.order_id]=x.order_date; if(awaiting.has(x.order_id)) talStatus[x.order_id]=x.sale_status; }); } }
     { const {data,error}=await sb.from("app_state").select("*");                      // 18_database_update.sql
-      appState = error ? {} : Object.fromEntries(data.map(r=>[r.key,r.value])); }
+      appState = error ? {} : Object.fromEntries(data.map(r=>[r.key, r.key==="pudo" ? {has_key:!!(r.value||{}).api_key} : r.value])); }
     { const {data,error}=await sb.from("price_rules").select("*");
       pfRules = error ? null : data; }
     { const {data,error}=await sb.from("supplier_ledger").select("*").order("created_at",{ascending:true});
@@ -1880,6 +1887,21 @@ function adamShips(){
       status:done, direction:"to_takealot", cost:e.amount, note:e.description,
       expected_delivery_from: r.dropped ? null : e.date, created_at:e.date, when: r.dropped ? `handed to Adam ${fd(r.dropped_at||e.date)} · he delivers ${fd(e.date)}` : `planned ${fd(e.date)}` }; });
 }
+function renderPudo(){
+  const t=$("#pudoTable"); if(!t) return; const st=appState.pudo_status, L=(appState.pudo_shipments||{}).list||[], has=!!(appState.pudo||{}).has_key;
+  $("#pudoForm").hidden = has && st && st.ok;
+  $("#pudoSub").textContent = !has ? "Paste your Pudo API key to see your locker bookings here" : !st ? "Key saved: your bookings appear within 10 minutes" :
+    st.ok ? `${st.count} booking${st.count===1?"":"s"} · updated ${String(st.at).slice(11,16)} · you get a notification when a parcel is ready to collect` : `⚠️ Pudo didn't accept the key (${st.error}). Check it and paste it again.`;
+  t.innerHTML = L.length ? `<thead><tr><th>Tracking</th><th>Created</th><th>From</th><th>To</th><th>Status</th><th>Expected</th><th>Reference</th></tr></thead><tbody>${L.map(x=>`<tr>
+    <td class="mono">${esc(x.waybill||"")}</td><td class="nw">${esc(String(x.created||"").slice(0,10))}</td><td>${esc(x.from||"")}</td><td>${esc(x.to||"")}</td>
+    <td><span class="pill ${/deliver|collected-by|complete/i.test(x.status)?"s-settled":/cancel/i.test(x.status)?"s-in_stock":/fail|return/i.test(x.status)?"s-return_me":"s-awaiting_fees"}">${esc(shipLabel(x.status))}</span></td>
+    <td class="nw">${x.eta?fd(x.eta):""}</td><td>${esc(x.ref||"")}</td></tr>`).join("")}</tbody>` : "";
+}
+$("#pudoForm").addEventListener("submit",async e=>{ e.preventDefault(); const k=$("#pudoKey").value.trim(); if(!k){ toast("Paste the API key first"); return; }
+  const {error}=await sb.from("app_state").upsert({key:"pudo", value:{api_key:k, has_key:true, set_by:me?.email||null}, updated_at:new Date().toISOString()},{onConflict:"key"});
+  $("#pudoKey").value="";
+  if(error) toast(/app_state/.test(errMsg(error))?"Run 18_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error));
+  else { await sb.from("app_state").delete().eq("key","pudo_status"); await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"}); toast("Pudo key saved: your bookings appear in about a minute"); setTimeout(loadAll,60000); loadAll(); } });
 function renderShips(){
   const all=$("#shipAll").checked, q=shipQ();
   const list=ships.concat(adamShips()).filter(x=>q ? shipText(x).includes(q) : (all||!SHIP_DONE.has(x.status)));
@@ -1895,7 +1917,7 @@ function renderShips(){
   $("#shipFrom").innerHTML=table(list,"from_takealot");
   $("#shipTo").innerHTML=table(list,"to_takealot");
   $("#cntShip").textContent=ships.concat(adamShips()).filter(x=>!SHIP_DONE.has(x.status)).length||"";
-  renderPOs();
+  renderPOs(); renderPudo();
 }
 $("#shipAll").addEventListener("change",renderShips);
 $("#shipQ").addEventListener("input",()=>{ clearTimeout(renderShips._t); renderShips._t=setTimeout(renderShips,150); });
@@ -2002,7 +2024,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v110)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v111)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{

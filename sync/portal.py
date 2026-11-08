@@ -1970,6 +1970,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Serial reminder failed: " + repr(e)[:200])
             try:
+                pudo_sync(cfg, log)
+            except Exception as e:
+                log("Pudo bookings failed: " + repr(e)[:200])
+            try:
                 weekly_backup(cfg, log)
             except Exception as e:
                 log("Weekly backup failed: " + repr(e)[:200])
@@ -2299,6 +2303,84 @@ def serial_reminder(cfg, log):
         notify(cfg, f"🔢 {len(rows)} unit{'s' if len(rows) != 1 else ''} still need a serial number", body, url="./?view=overview", topic="price", log=log, tag="serials")
     except Exception as e:
         log("Serial reminder failed: " + repr(e)[:120])
+
+
+def pudo_sync(cfg, log):
+    """Your Pudo locker bookings (API key pasted in the app, Shipments page). Saved for the app, and a phone notification
+    when a parcel's status changes (e.g. ready to collect at the locker)."""
+    import re, urllib.request, urllib.error, urllib.parse, stockrecon_sync as S, time as _t
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        rows = db.select("app_state", "select=value&key=eq.pudo")
+    except Exception:
+        return
+    key = ((rows[0].get("value") or {}).get("api_key") if rows else "") or ""
+    if not key:
+        return
+    if key == getattr(S, "_PUDO_KEY", None) and _t.time() - getattr(S, "_PUDO_AT", 0) < 600:   # every 10 minutes is plenty
+        return
+    if key != getattr(S, "_PUDO_KEY", None):
+        S._PUDO_HOW = None                                     # a new key: work out again how Pudo wants it
+    S._PUDO_AT, S._PUDO_KEY = _t.time(), key
+    def get(host, path, how):
+        url = f"https://{host}{path}" + (("&" if "?" in path else "?") + "api_key=" + urllib.parse.quote(key) if how == "query" else "")
+        h = {"Accept": "application/json", "User-Agent": "StockRecon"}
+        if how == "bearer":
+            h["Authorization"] = f"Bearer {key}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=30) as r:
+            return json.loads(r.read().decode("utf-8") or "null")
+    st = getattr(S, "_PUDO_HOW", None)
+    tries = [st] if st else [(h, a) for h in ("api-pudo.co.za", "api-tcg.co.za") for a in ("bearer", "query")]
+    data, err = None, ""
+    for host, how in tries:
+        try:
+            data = get(host, "/shipments?order_by=time_created&order=desc&limit=50", how)
+            S._PUDO_HOW = (host, how)
+            break
+        except urllib.error.HTTPError as e:
+            err = f"{host} ({how}): {e.code}"
+        except Exception as e:
+            err = f"{host} ({how}): {repr(e)[:80]}"
+    if data is None:
+        S._PUDO_HOW = None
+        _app_state(cfg, "pudo_status", {"at": datetime.now().isoformat(timespec="seconds"), "ok": False, "error": err})
+        return
+    items = data.get("shipments") if isinstance(data, dict) else data
+    items = items if isinstance(items, list) else []
+    def pick(x, *ks):
+        for k in ks:
+            v = x.get(k)
+            if v not in (None, ""):
+                return v
+        return None
+    ships = []
+    for x in items[:50]:
+        ca, da = x.get("collection_address") or {}, x.get("delivery_address") or {}
+        ships.append({"id": pick(x, "id"), "waybill": pick(x, "short_tracking_reference", "custom_tracking_reference", "tracking_reference"),
+                      "status": str(pick(x, "status") or ""), "created": str(pick(x, "time_created") or "")[:16],
+                      "from": pick(ca, "company", "name", "locker_name", "street_address") or pick(x, "collection_name") or "",
+                      "to": pick(da, "company", "name", "locker_name", "street_address") or pick(x, "delivery_name") or "",
+                      "ref": pick(x, "customer_reference") or "", "service": pick(x, "service_level_code") or "",
+                      "eta": str(pick(x, "estimated_delivery_to", "estimated_delivery_from") or "")[:10]})
+    _app_state(cfg, "pudo_shipments", {"at": datetime.now().isoformat(timespec="seconds"), "list": ships})
+    _app_state(cfg, "pudo_status", {"at": datetime.now().isoformat(timespec="seconds"), "ok": True, "host": S._PUDO_HOW[0], "count": len(ships),
+                                    "keys": sorted(items[0].keys())[:40] if items and isinstance(items[0], dict) else []})
+    # tell the phones when a parcel's status changes (first run only remembers)
+    seen = _seen_load() or {}
+    first = "pudo" not in seen
+    old = seen.get("pudo", {})
+    changed = [p for p in ships if p["waybill"] and old.get(p["waybill"]) != p["status"]]
+    seen["pudo"] = {p["waybill"]: p["status"] for p in ships if p["waybill"]}
+    if not _seen_save(seen) or first:
+        return
+    for p in changed:
+        nice = p["status"].replace("-", " ")
+        try:
+            notify(cfg, ("📦 Pudo parcel ready to collect" if re.search(r"delivered|ready-for-collection|in-locker", p["status"], re.I) else "📦 Pudo parcel: " + nice),
+                   f"{p['waybill']}" + (f" · {p['ref']}" if p.get("ref") else "") + (f" · from {p['from']}" if p.get("from") else "") + f" · {nice}",
+                   url="./?view=ship", topic="price", log=log, tag=f"pudo-{p['waybill']}")
+        except Exception as e:
+            log("Pudo notification failed: " + repr(e)[:120])
 
 
 def heartbeat(cfg):
