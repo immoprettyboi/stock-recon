@@ -1432,7 +1432,8 @@ function renderOverview(){
   { const c=courierHealth(); if(c.state==="bad") items.push({go:"overview", tag:"Sync", t:"Courier Guy sync needs you", d:c.msg}); }
   { const nb=expenses.filter(e=>e.category==="bank_review"); if(nb.length) items.push({go:"expenses", tag:"Bank", t:`Sort ${nb.length} bank payment${nb.length>1?"s":""}`, d:`From your FNB statement: ${R(nb.reduce((a,e)=>a+e.amount,0))} the app doesn't know yet. Pick what each one is.`}); }
   if(sales.length) items.push({go:"match", tag:"Sync", t:`${sales.length} sale${sales.length>1?"s":""} need matching`, d:"The sync couldn't tell which unit was sold"});
-  const unlinked=products.filter(p=>!p.product).length;
+  const holds=p=>{ const t=p.takealot_stock||{}; return ["JHB","CPT","DBN","LEADTIME"].some(d=>((t[d]||{}).qty||0)>0) || units.some(u=>u.sku===p.sku); };
+  const unlinked=products.filter(p=>!p.product && (p.takealot_status==="Buyable" || holds(p))).length;   // new / not-buyable listings with nothing on them don't nag
   if(unlinked) items.push({go:"products", tag:"Sync", t:`${unlinked} Takealot product${unlinked>1?"s":""} not linked yet`, d:"Link them so their sales can be matched"});
   const toSend=new Set(pipeline.filter(x=>["Confirmed Shipment","New Lead Time Order"].includes(x.sale_status)).map(x=>x.order_id));
   const booked=u=>u.po && (ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender","returned-to-hub"].includes(x.status)) || expenses.some(e=>e.category==="adam_delivery" && (e.raw||{}).po===u.po && e.date>=(u.sold_date||"")));
@@ -2191,7 +2192,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v118)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v119)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
