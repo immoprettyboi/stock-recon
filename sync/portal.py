@@ -1860,11 +1860,15 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             # ---- offers (best effort, saved for reference: names, SKUs, stock at Takealot)
             try:
                 global LAST_OFFERS
-                offers, n = [], 1
+                offers, n, filt = [], 1, ""   # no status filter: new listings (e.g. pending / not buyable) come through too
                 while n <= 50:
                     url = (f"https://{API_HOST}/v2/offers/detailed?page_number={n}&page_size=100"
-                           f"&sort_key=date_added&sort_dir=asc&status_ids=1&status_ids=2&status_ids=3")
+                           f"&sort_key=date_added&sort_dir=asc{filt}")
                     rr = ctx.request.get(url, headers=auth, timeout=60_000)
+                    if not rr.ok and not filt and n == 1:
+                        filt = "&status_ids=1&status_ids=2&status_ids=3"
+                        log(f"Offers feed answered {rr.status} without a status filter; using the old filter")
+                        continue
                     if not rr.ok:
                         log(f"Offers feed answered {rr.status}")
                         break
@@ -2827,7 +2831,9 @@ def save_offer_stock(cfg, offers, log):
             continue
         status = ((o.get("status") or {}).get("description") or "")
         total = (o.get("total_takealot_stock") or 0) + (o.get("total_stock_on_way") or 0) + (o.get("total_stock_in_receiving") or 0)
-        if sku not in known and status != "Buyable" and not total:
+        # keep every live listing (Buyable or Not Buyable, e.g. a new lead-time listing with no stock yet);
+        # only skip disabled listings that hold nothing and aren't in the products table already
+        if sku not in known and status.lower().startswith("disabled") and not total:
             continue
         stock = {}
         for w in ((o.get("stock") or {}).get("takealot_warehouse") or []):
@@ -2843,6 +2849,13 @@ def save_offer_stock(cfg, offers, log):
         row = {"sku": sku, "tsin": str(o.get("tsin_id") or ""), "takealot_title": ((o.get("tsin") or {}).get("title") or ""),
                "takealot_status": status, "takealot_stock": stock, "stock_updated_at": now}
         rows.append(row)
+    try:  # what the offers feed returned, so the app can show listings that didn't come through
+        seen = [{"sku": str(o.get("merchant_sku") or ""), "plid": ((o.get("tsin") or {}).get("productline_id")),
+                 "title": ((o.get("tsin") or {}).get("title") or "")[:90],
+                 "status": ((o.get("status") or {}).get("description") or "")} for o in offers]
+        _app_state(cfg, "offers_seen", {"at": now, "count": len(offers), "offers": seen})
+    except Exception as e:
+        log("Stock check: couldn't save the offers list: " + repr(e)[:150])
     try:
         if rows:
             db.insert("products", rows, upsert_on="sku")
