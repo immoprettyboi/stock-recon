@@ -658,7 +658,18 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <input type="search" id="q" placeholder="Search product, order ID, PO, serial…" aria-label="Search">
       <select id="fLoc" aria-label="Location"><option value="">All locations</option></select>
       <select id="fSup" aria-label="Supplier"><option value="">All suppliers</option></select>
+      <select id="fProd" aria-label="Product"><option value="">All products</option></select>
+      <select id="fCond" aria-label="Condition"><option value="">New, used &amp; faulty</option><option value="new">New only</option><option value="used">Used only</option><option value="faulty">Faulty only</option></select>
+      <select id="fType" aria-label="Type of stock"><option value="">ICASA &amp; TDRA</option><option>ICASA</option><option>TDRA</option></select>
       <input type="checkbox" id="fMonth" hidden>
+    </div>
+    <div class="filters">
+      <label class="note inline">Received from <input type="date" id="fFrom"></label>
+      <label class="note inline">to <input type="date" id="fTo"></label>
+      <select id="fSort" aria-label="Sort"><option value="">Oldest received first</option><option value="new">Newest received first</option><option value="prod">Product A–Z</option><option value="cost_hi">Cost: highest first</option><option value="cost_lo">Cost: lowest first</option><option value="age">Longest in stock first</option></select>
+      <label class="note inline"><input type="checkbox" id="fNoSn"> No serial number</label>
+      <label class="note inline"><input type="checkbox" id="fNoInv"> No invoice no.</label>
+      <button class="btn small" type="button" id="fClear">Clear filters</button>
     </div>
     <div class="chips" id="chips"></div>
     <p class="note" id="soldHint" hidden></p>
@@ -1017,7 +1028,7 @@ const STATUS = {
 const SOLD = new Set(["awaiting_fees","settled"]);
 const isPrivate = u => /^PRIVATE-/.test(u.order_id||"") || u.match_method==="private";
 const stLabel = u => u.match_method==="stock_loss" ? "Stock loss: paid by Takealot" : isPrivate(u) && SOLD.has(u.status) ? "Sold privately" : (STATUS[u.status]?.short||u.status);
-const LOCS = ["JHB","CPT","DBN","HOME"];
+const LOCS = ["JHB","CPT","DBN","HOME","INBOUND"];
 const IGNORE = "__ignore__";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1453,7 +1464,7 @@ function renderOverview(){
     </button>`).join("") : `<div class="empty">Nothing waiting on Takealot.</div>`;
 
   const prods=[...new Set(stock.map(u=>u.product))].sort();
-  $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l}</th>`).join("")}<th class="num">Total</th><th class="num">Avg cost</th><th class="num">At cost</th></tr></thead>
+  $("#onhand").innerHTML = prods.length ? `<thead><tr><th>Product</th>${LOCS.map(l=>`<th class="num">${l==="INBOUND"?"On the way":l}</th>`).join("")}<th class="num">Total</th><th class="num">Avg cost</th><th class="num">At cost</th></tr></thead>
     <tbody>${prods.map(p=>{const tot=stock.filter(u=>u.product===p), v=tot.reduce((s,u)=>s+u.cost,0);return `<tr><td>${esc(p)}</td>${LOCS.map(l=>{const n=tot.filter(u=>u.location===l).length;return `<td class="num ${n?"":"muted"}">${n||"·"}</td>`}).join("")}<td class="num"><b>${tot.length}</b></td><td class="num">${R0(v/tot.length)}</td><td class="num">${R0(v)}</td></tr>`}).join("")}</tbody>
     <tfoot><tr><td>Total</td>${LOCS.map(l=>`<td class="num">${stock.filter(u=>u.location===l).length}</td>`).join("")}<td class="num">${stock.length}</td><td class="num">${stock.length?R0(stockV/stock.length):""}</td><td class="num">${R0(stockV)}</td></tr></tfoot>`
     : `<tbody><tr><td class="muted">No unsold stock.</td></tr></tbody>`;
@@ -1497,10 +1508,23 @@ function filtered(){
     if(state.status && u.status!==state.status) return false;
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
+    if(state.prod && grpName(u.product)!==state.prod) return false;
+    if(state.cond && (u.condition||"new")!==state.cond) return false;
+    if(state.stype && (u.stock_type||"ICASA")!==state.stype) return false;
+    if(state.from && String(u.received||"")<state.from) return false;
+    if(state.to && String(u.received||"")>state.to) return false;
+    if(state.noSn && String(u.sn||"").trim()) return false;
+    if(state.noInv && u.invoice_no) return false;
     if(state.onlyMonth && !(SOLD.has(u.status) && inMonth(u))) return false;
     if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment,u.invoice_no].join(" ").toLowerCase().includes(q)) return false;
     return true;
   }).sort((a,b)=>{
+    const so=state.sort;
+    if(so==="new") return String(b.received||"").localeCompare(String(a.received||"")) || a.product.localeCompare(b.product);
+    if(so==="prod") return a.product.localeCompare(b.product) || String(a.received||"").localeCompare(String(b.received||""));
+    if(so==="cost_hi") return (+b.cost||0)-(+a.cost||0);
+    if(so==="cost_lo") return (+a.cost||0)-(+b.cost||0);
+    if(so==="age") return String(a.received||"9").localeCompare(String(b.received||"9"));
     const sa=a.order_id?0:1, sb2=b.order_id?0:1;
     if(sa!==sb2) return sa-sb2;
     if(sa===0) return (b.sold_date||"").localeCompare(a.sold_date||"") || (b.order_id||"").localeCompare(a.order_id||"");
@@ -1577,6 +1601,10 @@ $("#chips").addEventListener("click",e=>{const c=e.target.closest("[data-s]"); i
 $("#q").addEventListener("input",e=>{state.only=null; state.q=e.target.value; clearTimeout(renderLedger._t); renderLedger._t=setTimeout(renderLedger,150);});
 $("#fLoc").addEventListener("change",e=>{state.only=null; state.loc=e.target.value; renderLedger();});
 $("#fSup").addEventListener("change",e=>{state.only=null; state.sup=e.target.value; renderLedger();});
+for(const [id,k,chk] of [["#fProd","prod"],["#fCond","cond"],["#fType","stype"],["#fFrom","from"],["#fTo","to"],["#fSort","sort"],["#fNoSn","noSn",1],["#fNoInv","noInv",1]])
+  $(id).addEventListener("change",e=>{ state.only=null; state[k]=chk?e.target.checked:e.target.value; renderLedger(); });
+$("#fClear").addEventListener("click",()=>{ Object.assign(state,{only:null,where:"",status:"",q:"",loc:"",sup:"",prod:"",cond:"",stype:"",from:"",to:"",sort:"",noSn:false,noInv:false});
+  ["#q","#fLoc","#fSup","#fProd","#fCond","#fType","#fFrom","#fTo","#fSort"].forEach(id=>$(id).value=""); $("#fNoSn").checked=false; $("#fNoInv").checked=false; renderLedger(); });
 $("#fMonth").addEventListener("change",e=>{state.onlyMonth=e.target.checked; renderLedger();});
 for(const el of [$("#ledger"),$("#cards")]){
   el.addEventListener("click",e=>{const r=e.target.closest("[data-id]"); if(r) openEdit(r.dataset.id);});
@@ -2024,7 +2052,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v111)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v112)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2485,9 +2513,11 @@ function renderLists(){
   $("#dl-products").innerHTML=prods.map(p=>`<option value="${esc(p)}">`).join("");
   $("#dl-suppliers").innerHTML=sups.map(p=>`<option value="${esc(p)}">`).join("");
   const kl=$("#fLoc").value, ks=$("#fSup").value;
-  $("#fLoc").innerHTML=`<option value="">All locations</option>`+LOCS.map(l=>`<option>${l}</option>`).join("");
+  $("#fLoc").innerHTML=`<option value="">All locations</option>`+LOCS.map(l=>`<option value="${l}">${l==="INBOUND"?"On the way to me":l}</option>`).join("");
   $("#fSup").innerHTML=`<option value="">All suppliers</option>`+sups.map(s=>`<option>${esc(s)}</option>`).join("");
   $("#fLoc").value=kl; $("#fSup").value=ks;
+  const kp=$("#fProd").value, groups=[...new Set(units.filter(u=>!SOLD.has(u.status)).map(u=>grpName(u.product)))].sort((a,b)=>a.localeCompare(b));
+  $("#fProd").innerHTML=`<option value="">All products</option>`+groups.map(g=>`<option>${esc(g)}</option>`).join(""); $("#fProd").value=kp;
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
