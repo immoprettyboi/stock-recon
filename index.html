@@ -2149,7 +2149,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v114)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v115)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2788,7 +2788,7 @@ let snUnits=[];
 function openSerials(key){ snUnits=units.filter(u=>snNeeded(u) && snKey(u)===key).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
   if(!snUnits.length){ toast("All serial numbers are in"); return; }
   const u=snUnits[0]; $("#snTitle").textContent=`Add serial numbers · ${snUnits.length} × ${u.product}`;
-  $("#snInfo").textContent=`${u.location==="INBOUND"?"Saving a serial books that unit in at HOME (it has arrived). ":""}${u.supplier||""}${u.invoice_no?` · invoice ${u.invoice_no}`:""}${u.received?` · received ${fd(u.received)}`:""}. Scan each unit's serial / IMEI (or type it). Blank lines are left for later.`;
+  $("#snInfo").textContent=`${u.location==="INBOUND"?(u.po?`Saving a serial books that unit in (it has arrived) on PO ${u.po}. `:"Saving a serial books that unit in at HOME (it has arrived). "):""}${u.supplier||""}${u.invoice_no?` · invoice ${u.invoice_no}`:""}${u.received?` · received ${fd(u.received)}`:""}. Scan each unit's serial / IMEI (or type it). Blank lines are left for later.`;
   $("#snTable").innerHTML=`<tbody>${snUnits.map((x,i)=>`<tr><td class="num muted">${i+1}</td><td><input class="sn-in" data-sid="${esc(x.id)}" placeholder="Serial / IMEI" style="width:100%;font-family:var(--mono)"></td><td class="nw">${esc(x.location)}</td></tr>`).join("")}</tbody>`;
   $("#snScan").value=""; $("#snDlg").showModal(); setTimeout(()=>$("#snScan").focus(),50); }
 function snPut(code){ code=String(code||"").trim(); if(!code) return; const ins=[...document.querySelectorAll(".sn-in")];
@@ -2805,7 +2805,7 @@ $("#snSave").addEventListener("click",async()=>{ const ins=[...document.querySel
   $("#snSave").disabled=true; let ok=0, err=null;
   for(const i of ins){ const u=units.find(x=>x.id===i.dataset.sid); if(!u) continue;
     const comment=String(u.comment||"").replace(/\[serial needed\] Paid upfront: add the serial number when it arrives\.\s*/,"").replace(/\[serial needed\]\s*/,"").trim();
-    const {error}=await sb.from("units").update({sn:i.value.trim(), comment, ...(u.location==="INBOUND"?{location:"HOME"}:{}), updated_at:new Date().toISOString()}).eq("id",u.id);   // scanned = it's here
+    const {error}=await sb.from("units").update({sn:i.value.trim(), comment, ...(u.location==="INBOUND"?{location: u.po ? (String((poRow(u.po)||{}).facility||(poRow(u.po)||{}).warehouse||"HOME").slice(0,3).toUpperCase()) : "HOME"}:{}), updated_at:new Date().toISOString()}).eq("id",u.id);   // scanned = it's here
     if(error){ err=error; break; } ok++; }
   $("#snSave").disabled=false;
   if(err){ toast(`Saved ${ok}; then: ${errMsg(err)}`); } else { toast(`${ok} serial number${ok===1?"":"s"} saved`); $("#snDlg").close(); }
