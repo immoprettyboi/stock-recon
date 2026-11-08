@@ -1641,7 +1641,7 @@ function renderLedger(){
     <td class="mono">${esc(u.po||"")}</td><td class="mono">${esc(u.order_id||"")}</td><td>${esc(u.invoice_no||"")}</td><td class="mono-s">${esc(u.sn||"")}</td>
     <td class="num">${R(u.cost)}</td></tr>`).join("") || `<tr><td colspan="${LCOLS.length}" class="muted">No units match these filters.</td></tr>`;
   $("#ledger tfoot").innerHTML=`<tr><td colspan="${LCOLS.length-1}">${L2.length} unit${L2.length===1?"":"s"} shown${L2.length!==rows.length?` (of ${rows.length})`:""}</td><td class="num">${R(C2)}</td></tr>`;
-  $("#cards").innerHTML = rows.length ? rows.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
+  $("#cards").innerHTML = L2.length ? L2.slice(0,300).map(u=>{const p=profit(u);return `<div class="card" tabindex="0" data-id="${esc(u.id)}">
     <div class="r1"><span class="p">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?'<span class="flag">CHECK</span>':""}</span><span class="pill s-${u.status}">${esc(stLabel(u))}</span></div>${talLine(u)?`<div class="tal-st">Takealot: ${esc(talLine(u))}</div>`:""}
     <div class="meta"><span>${esc(u.supplier)}</span><span>${esc(u.location)}</span><span>In ${fd(u.received)}</span>${u.arrived_at?`<span>Back home ${fd(u.arrived_at)}</span>`:""}${u.po?`<span>PO ${esc(u.po)}</span>`:""}${u.order_id?`<span>Order ${esc(u.order_id)}</span>`:""}${u.sold_date?`<span>Sold ${soldWhen(u)}</span>`:""}</div>
     <div class="money"><span>Cost ${R(u.cost)}</span>${u.gross!=null?`<span>Sale ${R(u.gross)}</span>`:""}${u.fees!=null?`<span>Fees ${R(u.fees)}</span>`:""}${p!=null?`<b class="${p<0?"neg":"pos"}">Profit ${R(p)}</b>`:""}</div></div>`}).join("") : `<div class="empty">No units match these filters.</div>`;
@@ -2187,7 +2187,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v116)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v117)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
