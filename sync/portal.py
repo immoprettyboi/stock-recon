@@ -2150,6 +2150,10 @@ def sale_watch(ctx, cfg, log):
             return
         rows = (r.json() or {}).get("sales") or []
         sale_alerts(cfg, rows, log)
+        try:
+            leadtime_on_sale(ctx, cfg, rows, {"Authorization": f"Key {key}", "Accept": "application/json"}, log)
+        except Exception as e:
+            log("Lead time after a sale: " + repr(e)[:150])
         if _t.time() - getattr(S, "_SALE_WATCH_OK", 0) > 1800:            # let the app see it's alive (every 30 min)
             S._SALE_WATCH_OK = _t.time()
             _app_state(cfg, "sale_watch", {"at": datetime.now().isoformat(timespec="seconds"), "ok": True, "rows": len(rows),
@@ -2158,6 +2162,42 @@ def sale_watch(ctx, cfg, log):
         if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
             S._SALE_WATCH_ERR = _t.time()
             log("Sale watch failed: " + repr(e)[:150])
+
+
+def leadtime_on_sale(ctx, cfg, rows, auth, log):
+    """A new order on a listing that follows HOME stock (lead time = auto): set lead time on every listing of that
+    product straight away (within ~2 minutes), so two listings sharing the same units can't both sell the last one."""
+    import stockrecon_sync as S
+    seen = getattr(S, "_LT_SALE_SEEN", None)
+    ids = {str(x.get("order_id")) + ":" + str(x.get("sku")) for x in rows}
+    if seen is None:                                   # first look after a start: remember what's there, act on what's new
+        S._LT_SALE_SEEN = ids
+        return
+    new = [x for x in rows if str(x.get("order_id")) + ":" + str(x.get("sku")) not in seen]
+    if not new:
+        return
+    db = S.DB(cfg["url"], cfg["key"])
+    prods = db.select("products", "select=sku,product,leadtime_fixed")
+    auto = {str(p["sku"]) for p in prods if p.get("leadtime_fixed") is not None and int(p["leadtime_fixed"]) < 0}
+    hit = [x for x in new if str(x.get("sku")) in auto]
+    if not hit:
+        S._LT_SALE_SEEN = seen | ids
+        return
+    offers, n = [], 1
+    while n <= 20:
+        rr = ctx.request.get(f"https://{API_HOST}/v2/offers/detailed?page_number={n}&page_size=100&sort_key=date_added&sort_dir=asc",
+                             headers=auth, timeout=60_000)
+        if not rr.ok:
+            log(f"Lead time after a sale: offers feed answered {rr.status}; the next sync will set it")
+            return                                     # not marked seen: try again in 2 minutes
+        got = (rr.json() or {}).get("offers") or []
+        offers += got
+        if len(got) < 100:
+            break
+        n += 1
+    log(f"Lead time after a sale: {len(hit)} new order(s) on an auto lead-time listing: checking every listing of that product.")
+    apply_leadtime_requests(ctx, cfg, auth, offers, log, rows)
+    S._LT_SALE_SEEN = seen | ids
 
 
 def _send_mail(subject, body, attach=None, log=None):
