@@ -2052,7 +2052,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v112)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v113)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2757,6 +2757,12 @@ function snHint(){ const n=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(
 $("#a-sn").addEventListener("input",snHint); $("#a-qty").addEventListener("input",snHint);
 $("#addForm").addEventListener("submit", async e=>{
   e.preventDefault();
+  // a box barcode typed / scanned into the Product box: use the product it belongs to
+  { const pv=$("#a-product").value.trim();
+    if(barcodes && barcodes[pv]){ $("#a-product").value=barcodes[pv]; toast(`That's the box barcode of ${barcodes[pv]}: product set to it`); }
+    else if(pv && !units.some(u=>u.product===pv) && !products.some(p=>p.product===pv||p.takealot_title===pv)){
+      if(/^[A-Z0-9-]{6,}$/i.test(pv) && !/\s/.test(pv)){ toast(`"${pv}" looks like a barcode or serial, not a product name. Pick the product from the list.`); $("#a-product").focus(); return; }
+      if(!confirm(`"${pv}" is a new product name (not in your stock or Takealot list yet). Add it as a new product?`)) return; } }
   const inv=$("#a-inv").value.trim(), noinv=$("#a-noinv").checked;
   if(!inv && !noinv){ toast("Type the supplier's invoice number, or tick No invoice"); $("#a-inv").focus(); return; }
   const qty=Math.min(200,Math.max(1,+$("#a-qty").value||1)), sns=$("#a-sn").value.split("\n").map(s=>s.trim()).filter(Boolean);
