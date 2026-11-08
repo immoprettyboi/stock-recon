@@ -2322,25 +2322,35 @@ def pudo_sync(cfg, log):
     if key != getattr(S, "_PUDO_KEY", None):
         S._PUDO_HOW = None                                     # a new key: work out again how Pudo wants it
     S._PUDO_AT, S._PUDO_KEY = _t.time(), key
-    def get(host, path, how):
-        url = f"https://{host}{path}" + (("&" if "?" in path else "?") + "api_key=" + urllib.parse.quote(key) if how == "query" else "")
-        h = {"Accept": "application/json", "User-Agent": "StockRecon"}
+    def get(base, path, how):
+        url = f"https://{base}{path}" + (("&" if "?" in path else "?") + "api_key=" + urllib.parse.quote(key) if how == "query" else "")
+        h = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 StockRecon"}
         if how == "bearer":
             h["Authorization"] = f"Bearer {key}"
+        elif how == "x-api-key":
+            h["X-API-KEY"] = key
         with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=30) as r:
             return json.loads(r.read().decode("utf-8") or "null")
     st = getattr(S, "_PUDO_HOW", None)
-    tries = [st] if st else [(h, a) for h in ("api-pudo.co.za", "api-tcg.co.za") for a in ("bearer", "query")]
-    data, err = None, ""
-    for host, how in tries:
+    tries = [st] if st else [(b, pth, a) for b in ("api-tcg.co.za", "api-pudo.co.za", "api-tcg.co.za/api/v1", "api-pudo.co.za/api/v1")
+                             for pth in ("/shipments", "/tracking/shipments?days=30&page=1")
+                             for a in ("bearer", "query", "x-api-key")]
+    data, errs = None, []
+    for base, pth, how in tries:
         try:
-            data = get(host, "/shipments?order_by=time_created&order=desc&limit=50", how)
-            S._PUDO_HOW = (host, how)
+            data = get(base, pth, how)
+            S._PUDO_HOW = (base, pth, how)
             break
         except urllib.error.HTTPError as e:
-            err = f"{host} ({how}): {e.code}"
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")[:80].replace(key, "KEY")
+            except Exception:
+                pass
+            errs.append(f"{base}{pth.split('?')[0]} {how}: {e.code} {body}")
         except Exception as e:
-            err = f"{host} ({how}): {repr(e)[:80]}"
+            errs.append(f"{base}{pth.split('?')[0]} {how}: {repr(e)[:60]}")
+    err = " | ".join(errs)[:1500]
     if data is None:
         S._PUDO_HOW = None
         _app_state(cfg, "pudo_status", {"at": datetime.now().isoformat(timespec="seconds"), "ok": False, "error": err})
@@ -2363,7 +2373,7 @@ def pudo_sync(cfg, log):
                       "ref": pick(x, "customer_reference") or "", "service": pick(x, "service_level_code") or "",
                       "eta": str(pick(x, "estimated_delivery_to", "estimated_delivery_from") or "")[:10]})
     _app_state(cfg, "pudo_shipments", {"at": datetime.now().isoformat(timespec="seconds"), "list": ships})
-    _app_state(cfg, "pudo_status", {"at": datetime.now().isoformat(timespec="seconds"), "ok": True, "host": S._PUDO_HOW[0], "count": len(ships),
+    _app_state(cfg, "pudo_status", {"at": datetime.now().isoformat(timespec="seconds"), "ok": True, "host": "/".join(S._PUDO_HOW[:2]), "count": len(ships),
                                     "keys": sorted(items[0].keys())[:40] if items and isinstance(items[0], dict) else []})
     # tell the phones when a parcel's status changes (first run only remembers)
     seen = _seen_load() or {}
