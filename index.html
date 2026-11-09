@@ -1115,9 +1115,16 @@ async function start(session){
     .on("postgres_changes",{event:"*",schema:"public",table:"expenses"},()=>debounceLoad())
     .on("postgres_changes",{event:"*",schema:"public",table:"takealot_pos"},()=>debounceLoad())
     .subscribe();
-  clearInterval(start._t); start._t=setInterval(loadAll, 5*60*1000);
+  clearInterval(start._t); start._t=setInterval(()=>{ if(document.hidden) loadAll.stale=true; else loadAll(); }, 5*60*1000);
 }
-let _dl; function debounceLoad(){ clearTimeout(_dl); _dl=setTimeout(loadAll,600); }
+// live changes: while the app is in the background, just remember to reload when it's opened again (saves the phone's
+// battery and stops a busy sync from redrawing a hidden app over and over). In front: wait for a quiet 1.5 s,
+// but never more than 6 s behind during a long burst of changes.
+let _dl, _dlFirst=0; function debounceLoad(){
+  if(document.hidden){ loadAll.stale=true; return; }
+  const now=Date.now(); if(!_dlFirst) _dlFirst=now;
+  clearTimeout(_dl); _dl=setTimeout(()=>{ _dlFirst=0; loadAll(); }, now-_dlFirst>6000 ? 0 : 1500); }
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden && loadAll.stale && me){ loadAll.stale=false; loadAll(); } });
 async function selectAll(table, q="*"){
   let out=[], from=0;
   for(;;){ const {data,error}=await sb.from(table).select(q).range(from,from+999); if(error) throw error; out=out.concat(data); if(data.length<1000) return out; from+=1000; }
@@ -1200,6 +1207,7 @@ function setView(v){
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", String(b.dataset.view===v)));
   ["overview","stock","sales","match","add","ship","expenses","debtors","price","removals","check","adjust","products"].forEach(k=>$("#view-"+k).hidden=k!==v);
   try{ localStorage.setItem("sr-view",v); }catch(e){}
+  if(window._lazyDirty && _lazyDirty[v]){ const f=_lazyDirty[v]; _lazyDirty[v]=false; try{ f(); }catch(e){ console.error(e); } }
   if(v==="add" && !$("#a-received").value) $("#a-received").value=today();
   if(v==="add" && matchMedia("(pointer:fine)").matches) setTimeout(()=>$("#a-scan").focus(),50);   // ready for a USB scanner
 }
@@ -2192,7 +2200,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v119)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v120)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2432,6 +2440,7 @@ function setupHBars(){
       l.addEventListener("click",()=>el.scrollBy({left:-Math.max(200,el.clientWidth*.6),behavior:"smooth"}));
       r.addEventListener("click",()=>el.scrollBy({left: Math.max(200,el.clientWidth*.6),behavior:"smooth"}));
     }
+    if(el.closest("[hidden]")){ if(!bar.hidden) bar.hidden=true; return; }     // on a page that isn't showing: no layout work
     const wide=el.scrollWidth>el.clientWidth+4 && el.offsetParent!==null;
     if(bar.hidden!==!wide) bar.hidden=!wide;
     if(wide){ const track=bar.querySelector(".track"); track.firstElementChild.style.width=(el.scrollWidth*(track.clientWidth/el.clientWidth))+"px"; track.scrollLeft=el.scrollLeft*(track.scrollWidth-track.clientWidth)/Math.max(1,el.scrollWidth-el.clientWidth); }
@@ -2673,8 +2682,11 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); renderAdjust(); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); renderProducts();
+  renderLists(); renderSync(); renderOverview(); lazyRender("adjust",renderAdjust); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); lazyRender("products",renderProducts);
 }
+// pages without a menu counter are only drawn when they're open (and again when you go to them)
+var _lazyDirty={};
+function lazyRender(view, fn){ if(state.view===view) { _lazyDirty[view]=false; fn(); } else _lazyDirty[view]=fn; }
 
 /* ---------------- edit dialog ---------------- */
 let editing=null;
