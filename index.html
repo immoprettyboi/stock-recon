@@ -2271,7 +2271,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v122)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v123)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2611,8 +2611,14 @@ function claimRows(){
   const saved=appState.claims||{}, out=[];
   const rejectedPO=new Set(ships.filter(x=>x.direction==="to_takealot"&&["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)).map(x=>poOf(x)).filter(Boolean));
   pos.filter(p=>p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && /receiv|closed/i.test(p.status||"") && (Date.now()-new Date(p.due_date))<120*864e5 && !rejectedPO.has(String(p.po)))
-    .forEach(p=>{ const miss=p.qty_sending-p.qty_received, us=units.filter(u=>u.po===String(p.po)), avg=us.length?us.reduce((a,u)=>a+(u.cost||0),0)/us.length:0;
-      out.push({key:"po:"+p.po, kind:"Short receipt", what:`PO ${p.po} (${p.warehouse||p.facility||""}): received ${p.qty_received} of ${p.qty_sending}`, detail:contents(p), units:miss, value:Math.round(miss*avg), date:p.due_date}); });
+    .forEach(p=>{ const us=units.filter(u=>u.po===String(p.po)); if(!us.length) return;      // only POs the app tracks (from the start date on)
+      const miss=p.qty_sending-p.qty_received;
+      // which lines came up short, valued at what those units cost you
+      const lines=(Array.isArray(p.items)?p.items:[]).filter(i=>i.received!=null && +i.received<+i.qty).map(i=>{ const n=+i.qty-+i.received;
+        const same=units.filter(u=>(u.sku&&u.sku===i.sku)||grpName(u.product)===grpName(i.title)).filter(u=>+u.cost>0), c=same.length?same.reduce((a,u)=>a+u.cost,0)/same.length:0;
+        return {n, t:i.title, v:n*c}; });
+      out.push({key:"po:"+p.po, kind:"Short receipt", what:`PO ${p.po} (${p.warehouse||p.facility||""}): received ${p.qty_received} of ${p.qty_sending}`,
+        detail:lines.length?"Missing: "+lines.map(l=>`${l.n} × ${l.t}`).join(", "):contents(p), units:miss, value:Math.round(lines.reduce((a,l)=>a+l.v,0)), date:p.due_date}); });
   units.filter(u=>u.status==="missing_query").forEach(u=>out.push({key:"unit:"+u.id, kind:"Query", what:u.product, detail:[u.location, u.po?`PO ${u.po}`:"", u.query_ref?`ref ${u.query_ref}`:""].filter(Boolean).join(" · "), units:1, value:u.cost||0, date:u.query_date||"", unit:u.id, ref0:u.query_ref}));
   recons.filter(r=>r.missing_units>0).forEach(r=>out.push({key:"recon:"+r.month, kind:"Monthly recon", what:`${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)} Stock Recon`, detail:(r.missing||[]).map(x=>x.title).join(", "), units:r.missing_units, value:Number(r.claim_value)||0, date:r.claim_date||"", recon:r.month,
     status0:r.claim_status, ref0:r.claim_ref}));
