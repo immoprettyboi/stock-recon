@@ -648,6 +648,11 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
 
   <!-- STOCK -->
   <section id="view-stock" class="stack" hidden>
+    <div class="panel" id="siPanel" hidden>
+      <div class="sec-head" style="justify-content:space-between"><div><h2>📤 Send in next</h2><p id="siSub">What to take from HOME to Takealot, and why</p></div>
+        <button class="btn small" type="button" id="siCopy">Copy list</button></div>
+      <div class="tscroll"><table id="siTable"></table></div>
+    </div>
     <div class="panel" id="rsPanel">
       <div class="sec-head" style="justify-content:space-between"><div><h2>Restock planner</h2><p id="rsSub">What to send to each Takealot warehouse before it runs out</p></div>
         <label class="note inline">Keep enough for <select id="rsDays"><option>14</option><option selected>21</option><option>30</option></select> days</label></div>
@@ -806,6 +811,11 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div class="sec-head"><h2>Stock check: app vs Takealot</h2><p id="checkSub"></p></div>
       <p class="note" style="margin:0;max-width:80ch">For each product and warehouse: units the app has <b>In stock</b> there, next to what Takealot holds, including stock on its way or being received. A red difference means a unit is missing, sold without being recorded, or sitting in the wrong place.</p>
       <div class="tscroll"><table id="checkTable"></table></div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2>🧾 Takealot claims</h2><p id="claimSub">Stock Takealot short-received, lost or is being queried: what you're owed and where each claim stands</p></div>
+      <label class="note" style="margin:0"><input type="checkbox" id="claimAll"> Show paid and skipped</label>
+      <div class="tscroll"><table id="claimTable"></table></div>
     </div>
     <div class="panel">
       <div class="sec-head"><h2>Takealot's monthly Stock Recon</h2><p id="reconSub">Downloaded by the PC on the 1st of every month</p></div>
@@ -1624,6 +1634,32 @@ function renderRestock(){
     <td class="num ${r.days<7?"neg":r.days<14?"warn-t":""}"><b>${r.have===0?"out of stock":isFinite(r.days)?Math.round(r.days)+" day"+(Math.round(r.days)===1?"":"s"):"–"}</b></td>
     <td class="num">${r.need?`<b>${r.need}</b>`:'<span class="muted">–</span>'}</td><td class="num ${r.need>r.home?"warn-t":""}">${r.home}</td></tr>`).join("")}</tbody>` : "";
 }
+/* send-in suggestions: HOME stock that would earn more inside a Takealot warehouse
+   (a warehouse running low, or a listing stuck in the Best Price box because it's only on lead time) */
+function sendInRows(){
+  const target=+($("#rsDays")?.value||21), grp=p=>p.product;
+  const home={}; units.forEach(u=>{ if(u.location==="HOME" && u.status==="in_stock" && !u.order_id && !u.po && (u.condition||"new")==="new"){ const k=(products.find(p=>p.sku===u.sku)||{}).product||u.product; home[k]=(home[k]||0)+1; } });
+  const out=[], left={...home};
+  const live=products.filter(p=>p.product && p.product!==IGNORE && p.takealot_stock);
+  // 1. warehouses that will run out (same maths as the restock planner)
+  const G={}; live.forEach(p=>["JHB","CPT","DBN"].forEach(dc=>{ const x=p.takealot_stock[dc]; if(!x) return; const g=(G[p.product+"|"+dc]=G[p.product+"|"+dc]||{prod:p.product,dc,have:0,sold:0});
+    g.have+=(x.qty||0)+(x.receiving||0)+(x.on_way||0); g.sold+=(x.sold_30d||0); }));
+  Object.values(G).filter(g=>g.sold>0).map(g=>({...g, need:Math.max(0,Math.ceil(g.sold/30*target-g.have)), days:g.have/(g.sold/30)})).filter(g=>g.need>0).sort((a,b)=>a.days-b.days)
+    .forEach(g=>{ const n=Math.min(g.need, left[g.prod]||0); if(n>0){ left[g.prod]-=n; out.push({prod:g.prod, dc:g.dc, n, why:g.have?`${g.dc} runs out in about ${Math.round(g.days)} day${Math.round(g.days)===1?"":"s"} (${g.sold} sold in 30 days)`:`${g.dc} is out of stock (${g.sold} sold in 30 days)`}); } });
+  // 2. listings in the Best Price box: a competitor wins the main Buy Box only because their stock is in a warehouse
+  (pfRules||[]).filter(r=>r.enabled && !r.winning && /^Best Price/.test(r.last_action||"")).forEach(r=>{ const p=products.find(x=>x.sku===r.sku); if(!p||!p.product) return;
+    const k=p.product; if(out.some(o=>o.prod===k)) return; const n=Math.min(2, left[k]||0); if(!n) return;
+    const st=p.takealot_stock||{}, dc=["JHB","CPT","DBN"].sort((a,b)=>((st[b]||{}).sold_30d||0)-((st[a]||{}).sold_30d||0))[0]||"JHB";
+    left[k]-=n; out.push({prod:k, dc, n, why:`${p.takealot_title||k}: you're cheapest but only on lead time, so a seller with warehouse stock gets the Buy Box (R${Math.round(r.bb_price||0).toLocaleString("en-ZA")})`}); });
+  return out;
+}
+function renderSendIn(){
+  const L=sendInRows(); $("#siPanel").hidden=!L.length; if(!L.length) return;
+  $("#siSub").textContent=`${L.reduce((a,x)=>a+x.n,0)} unit${L.reduce((a,x)=>a+x.n,0)===1?"":"s"} from HOME · for Adam's next drop or a courier booking`;
+  $("#siTable").innerHTML=`<thead><tr><th>Product</th><th>To</th><th class="num">Units</th><th>Why</th></tr></thead><tbody>${L.map(x=>`<tr><td>${esc(x.prod)}</td><td>${esc(x.dc)}</td><td class="num"><b>${x.n}</b></td><td style="min-width:260px">${esc(x.why)}</td></tr>`).join("")}</tbody>`;
+}
+$("#siCopy").addEventListener("click",async()=>{ const L=sendInRows(); const txt="Send in:\n"+L.map(x=>`${x.n} x ${x.prod} -> ${x.dc}`).join("\n");
+  try{ await navigator.clipboard.writeText(txt); toast("List copied"); }catch(e){ toast(txt); } });
 function ledgerCols(){ return [
   {k:"product", l:"Product", v:u=>u.product},
   {k:"status", l:"Status", v:u=>stLabel(u), sel:true},
@@ -1636,7 +1672,7 @@ function ledgerCols(){ return [
   {k:"sn", l:"Serial", v:u=>u.sn||""},
   {k:"cost", l:"Cost", v:u=>String(u.cost??""), sv:u=>+u.cost||0, num:true}]; }
 function renderLedger(){
-  renderWhere(); renderRestock();
+  renderWhere(); renderRestock(); renderSendIn();
   const unsold=units.filter(u=>!SOLD.has(u.status));
   const counts={"":unsold.length}; Object.keys(STATUS).forEach(k=>counts[k]=units.filter(u=>u.status===k).length);
   if(SOLD.has(state.status)) state.status="";
@@ -1674,7 +1710,7 @@ function renderLedger(){
     $("#soldHint").hidden=!n; if(n) $("#soldHint").innerHTML=`${n} sold unit${n===1?"":"s"} also match "${esc(state.q)}". <button class="btn small" type="button" id="soldHintGo">Show on Sales</button>`; }
   renderSales();
 }
-$("#rsDays").addEventListener("change",renderRestock);
+$("#rsDays").addEventListener("change",()=>{ renderRestock(); renderSendIn(); });
 state.cf={}; state.cs=null;
 $("#ledger").addEventListener("input",e=>{ const f=e.target.closest("[data-lf]"); if(!f) return; state.cf[f.dataset.lf]=f.value.trim(); clearTimeout(renderLedger._c); renderLedger._c=setTimeout(renderLedger,150); });
 $("#ledger").addEventListener("change",e=>{ const f=e.target.closest("select[data-lf]"); if(!f) return; state.cf[f.dataset.lf]=f.value; renderLedger(); });
@@ -1703,6 +1739,15 @@ function feeRates(){ const k=units.length+":"+units.filter(u=>u.fees!=null).leng
   const v={by:Object.fromEntries(Object.entries(by).filter(([k,x])=>x.g>0).map(([k,x])=>[k,x.f/x.g])), all:all.g?all.f/all.g:0.12}; feeRates.k=k; feeRates.v=v; return v; }
 const estFees=u=>{ if(u.fees!=null) return +u.fees; if(!SOLD.has(u.status)||isPrivate(u)) return 0; const r=feeRates(), g=(products.find(p=>p.sku===u.sku)||{}).product||u.product; return Math.round((u.gross||0)*(r.by[g]??r.all)*100)/100; };
 const estProfit=u=>SOLD.has(u.status) ? (u.gross||0)-estFees(u)-(u.cost||0) : null;
+/* delivery-in cost per unit: the courier and Adam costs of the PO it went to Takealot on, shared over that PO's units */
+function inCost(u){ if(!u||!u.po) return 0;
+  const k=units.length+":"+ships.length+":"+expenses.length;
+  if(inCost.k!==k){ const cost={}, n={};
+    ships.filter(x=>x.direction==="to_takealot" && x.status!=="cancelled" && x.cost!=null).forEach(x=>{ const po=poOf(x); if(po) cost[po]=(cost[po]||0)+Number(x.cost||0); });
+    expenses.filter(e=>e.category==="adam_delivery" && (e.raw||{}).po).forEach(e=>{ const po=String(e.raw.po); cost[po]=(cost[po]||0)+Number(e.amount||0); });
+    units.forEach(v=>{ if(v.po) n[v.po]=(n[v.po]||0)+1; });
+    inCost.m=Object.fromEntries(Object.entries(cost).map(([po,c])=>[po, n[po]?c/n[po]:0])); inCost.k=k; }
+  return Math.round((inCost.m[u.po]||0)*100)/100; }
 /* when Takealot pays a sale out (from the server: the day its payment was recorded and the Thursday that pays it) */
 const payOf=u=>{ const all=(appState.order_pay||{}).orders||{};
   if(u.match_method==="stock_loss"){ const k=Object.keys(all).filter(k=>k.startsWith("STOCKLOSS")).sort((a,b)=>all[b].rec.localeCompare(all[a].rec))[0]; return k?all[k]:null; }   // Takealot gives no order number for these
@@ -1735,7 +1780,7 @@ function renderSales(){
     if(q && ![u.product,u.order_id,u.po,u.sn,u.supplier,u.comment].join(" ").toLowerCase().includes(q)) return false;
     return true; }).sort((a,b)=>(talTime[b.order_id]||b.sold_date||"").localeCompare(talTime[a.order_id]||a.sold_date||""));
   document.querySelectorAll("#slQuick [data-r]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.r===SL.r)));
-  const sum=a=>a.reduce((t,u)=>({n:t.n+1,g:t.g+(u.gross||0),f:t.f+estFees(u),c:t.c+(u.cost||0),p:t.p+(estProfit(u)||0),w:t.w+(u.fees==null&&!isPrivate(u)?1:0)}),{n:0,g:0,f:0,c:0,p:0,w:0});
+  const sum=a=>a.reduce((t,u)=>({n:t.n+1,g:t.g+(u.gross||0),f:t.f+estFees(u),c:t.c+(u.cost||0),p:t.p+(estProfit(u)||0),d:t.d+inCost(u),w:t.w+(u.fees==null&&!isPrivate(u)?1:0)}),{n:0,g:0,f:0,c:0,p:0,d:0,w:0});
   const T=sum(rows);
   const lbl = !SL.from&&!SL.to ? "all time" : SL.from===SL.to ? fd(SL.from) : `${SL.from?fd(SL.from):"start"} – ${SL.to?fd(SL.to):"today"}`;
   $("#slSub").textContent=`${T.n} unit${T.n===1?"":"s"} sold · ${lbl}`;
@@ -1744,6 +1789,7 @@ function renderSales(){
     <div class="tile"><span class="lbl">Sales</span><span class="val">${R0(T.g)}</span><span class="sub">fees ${T.w?"≈ ":""}${R0(T.f)}</span></div>
     <div class="tile"><span class="lbl">Cost of units</span><span class="val">${R0(T.c)}</span><span class="sub">what you paid</span></div>
     <div class="tile hero"><span class="lbl">Profit</span><span class="val"${T.p<0?' style="color:var(--bad)"':""}>${R0(T.p)}</span><span class="sub">${T.w?`≈ ${T.w} with estimated fees`:"before delivery & salaries"}</span></div>
+    <div class="tile"><span class="lbl">After delivery in</span><span class="val"${T.p-T.d<0?' style="color:var(--bad)"':""}>${R0(T.p-T.d)}</span><span class="sub">courier & Adam ${R0(T.d)} · ${T.n?R0((T.p-T.d)/T.n)+" / unit":""}</span></div>
     <div class="tile"><span class="lbl">Avg profit / unit</span><span class="val">${T.n?R0(T.p/T.n):"–"}</span><span class="sub">${T.g?((T.p/T.g)*100).toFixed(1)+"% of sales":""}</span></div>`;
   // group by day
   const days=[]; let cur=null;
@@ -1757,7 +1803,7 @@ function renderSales(){
         <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
         <td class="mono">${esc(u.order_id)}</td><td>${esc(u.location)}</td><td>${esc(u.supplier)}</td>
         <td class="num">${R(u.gross)}</td><td class="num">${u.fees!=null?R(u.fees):isPrivate(u)?"":`<span class="muted" title="estimated from your settled sales">≈ ${R(estFees(u))}</span>`}</td><td class="num">${R(u.cost)}</td>
-        <td class="num ${p<0?"neg":""}">${p==null?"":(u.fees==null&&!isPrivate(u)?'<span class="muted">≈</span> ':"")+R(p)}</td><td class="nw">${payCell(u)}</td></tr>`; }).join(""); }).join("")}</tbody>
+        <td class="num ${p<0?"neg":""}"${inCost(u)?` title="After delivery in (${R(inCost(u))}): ${R(p-inCost(u))}"`:""}>${p==null?"":(u.fees==null&&!isPrivate(u)?'<span class="muted">≈</span> ':"")+R(p)}${p!=null&&inCost(u)?`<div class="tal-st">${R(p-inCost(u))} after delivery</div>`:""}</td><td class="nw">${payCell(u)}</td></tr>`; }).join(""); }).join("")}</tbody>
     <tfoot><tr><td colspan="6">${T.n} unit${T.n===1?"":"s"}</td><td class="num">${R(T.g)}</td><td class="num">${R(T.f)}</td><td class="num">${R(T.c)}</td><td class="num">${R(T.p)}</td><td></td></tr></tfoot>`
     : `<tbody><tr><td class="muted" style="padding:20px">No sales ${SL.from===SL.to&&SL.from?"on "+fd(SL.from):"in this period"}.</td></tr></tbody>`;
   $("#slCards").innerHTML = rows.length ? days.map(g=>{ const S=sum(g.us); return `<div class="sl-dayc"><b>${esc(dayName(g.d))}</b><span>${S.n} sold · ${R0(S.g)} · profit <b class="${S.p<0?"neg":"pos"}">${R0(S.p)}</b></span></div>`+
@@ -2225,7 +2271,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v121)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v122)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2272,7 +2318,7 @@ function renderDebtors(){
       <td class="num">${r.anchor||r.owe.length||r.paid.length?`<b class="${r.bal>0.005?"neg":r.bal<-0.005?"pos":""}">${R(r.bal)}</b>${r.bal<-0.005?`<div class="tal-st">paid upfront: ${R(-r.bal)} of stock still to come</div>`:""}`:'<span class="muted">not set</span>'}</td>
       <td class="nw">${r.anchor?`${fd(r.anchor.date)} · ${R(r.anchor.amount)}${r.bought.length?`<div class="tal-st">+ ${r.bought.length} unit${r.bought.length>1?"s":""} added since (${R(r.bought.reduce((a,u)=>a+u.cost,0))})</div>`:""}`:'<span class="muted">–</span>'}</td>
       <td class="nw">${r.lastPay?`${fd(r.lastPay.date)} · ${R(r.lastPay.amount)}${r.lastPay.invoice_no?`<div class="tal-st">invoice ${esc(r.lastPay.invoice_no)}</div>`:""}`:'<span class="muted">–</span>'}${(()=>{ const o=invoicesOf(r.n).filter(i=>i.open>0.005); return o.length?`<div class="tal-st">${o.length} open invoice${o.length>1?"s":""} · ${R(o.reduce((a,i)=>a+i.open,0))}</div>`:""; })()}</td>
-      <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button></td></tr>`).join("")}</tbody>
+      <td class="nw"><button class="btn primary small" type="button" data-dpay="${esc(r.n)}">Pay</button> <button class="btn small" type="button" data-dset="${esc(r.n)}">${r.anchor?"Set balance":"Set balance to start"}</button> <button class="btn small" type="button" data-dhist="${esc(r.n)}">History</button>${r.anchor||r.owe.length||r.paid.length?` <button class="btn small" type="button" data-dstmt="${esc(r.n)}">Statement</button>`:""}</td></tr>`).join("")}</tbody>
     <tfoot><tr><td>Total you owe</td><td class="num">${R(total)}</td><td colspan="3"></td></tr></tfoot>`;
   if(state.debtHist) showDebtHist(state.debtHist);
   renderInvoices(); dtInvHint(); renderSupPrices();
@@ -2347,6 +2393,7 @@ function showDebtHist(n){
       <td>${i.id?`<button class="btn small" type="button" data-ddel="${i.id}">Remove</button>`:""}</td></tr>`).join("")}</tbody>` : `<tbody><tr><td class="muted">Nothing recorded for ${esc(n)} yet.</td></tr></tbody>`;
 }
 $("#debtTable").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.dstmt){ openStatement(b.dataset.dstmt); return; }
   const n=b.dataset.dpay||b.dataset.dset||b.dataset.dhist;
   if(b.dataset.dhist){ showDebtHist(n); $("#debtHistPanel").scrollIntoView({behavior:"smooth"}); return; }
   $("#dt-sup").value=n; $("#dt-kind").value=b.dataset.dpay?"payment":"balance"; $("#dt-date").value=today();
@@ -2558,6 +2605,42 @@ $("#reconTable").addEventListener("click",async e=>{
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([data.csv],{type:"text/csv"})); a.download=data.file_name||`Takealot Stock Recon ${b.dataset.rdl}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},500); });
 
+/* ---------------- Takealot claims: short receipts, queries and the monthly recon in one list ---------------- */
+const CLAIMST={open:"To claim",claimed:"Claimed, waiting",paid:"Paid",skip:"Not claiming"};
+function claimRows(){
+  const saved=appState.claims||{}, out=[];
+  const rejectedPO=new Set(ships.filter(x=>x.direction==="to_takealot"&&["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)).map(x=>poOf(x)).filter(Boolean));
+  pos.filter(p=>p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && /receiv|closed/i.test(p.status||"") && (Date.now()-new Date(p.due_date))<120*864e5 && !rejectedPO.has(String(p.po)))
+    .forEach(p=>{ const miss=p.qty_sending-p.qty_received, us=units.filter(u=>u.po===String(p.po)), avg=us.length?us.reduce((a,u)=>a+(u.cost||0),0)/us.length:0;
+      out.push({key:"po:"+p.po, kind:"Short receipt", what:`PO ${p.po} (${p.warehouse||p.facility||""}): received ${p.qty_received} of ${p.qty_sending}`, detail:contents(p), units:miss, value:Math.round(miss*avg), date:p.due_date}); });
+  units.filter(u=>u.status==="missing_query").forEach(u=>out.push({key:"unit:"+u.id, kind:"Query", what:u.product, detail:[u.location, u.po?`PO ${u.po}`:"", u.query_ref?`ref ${u.query_ref}`:""].filter(Boolean).join(" · "), units:1, value:u.cost||0, date:u.query_date||"", unit:u.id, ref0:u.query_ref}));
+  recons.filter(r=>r.missing_units>0).forEach(r=>out.push({key:"recon:"+r.month, kind:"Monthly recon", what:`${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)} Stock Recon`, detail:(r.missing||[]).map(x=>x.title).join(", "), units:r.missing_units, value:Number(r.claim_value)||0, date:r.claim_date||"", recon:r.month,
+    status0:r.claim_status, ref0:r.claim_ref}));
+  return out.map(c=>({...c, status:(saved[c.key]||{}).status||c.status0||"open", ref:(saved[c.key]||{}).ref??c.ref0??""}));
+}
+function renderClaims(){
+  const t=$("#claimTable"); if(!t) return;
+  const all=claimRows(), L=all.filter(c=>$("#claimAll").checked || ["open","claimed"].includes(c.status));
+  const owed=all.filter(c=>["open","claimed"].includes(c.status)).reduce((a,c)=>a+c.value,0);
+  $("#claimSub").textContent=owed?`${R(owed)} still owed to you on ${all.filter(c=>["open","claimed"].includes(c.status)).length} claim(s)`:"Nothing open: Takealot owes you nothing right now";
+  t.innerHTML=L.length?`<thead><tr><th>Type</th><th>What</th><th class="num">Units</th><th class="num">Value</th><th>Status</th><th>Reference</th></tr></thead><tbody>${L.map(c=>`<tr>
+    <td class="nw">${esc(c.kind)}</td><td style="min-width:240px">${esc(c.what)}${c.detail?`<div class="tal-st">${esc(c.detail).slice(0,160)}</div>`:""}</td><td class="num">${c.units}</td><td class="num">${c.value?R(c.value):"–"}</td>
+    <td><select data-cst="${esc(c.key)}">${Object.entries(CLAIMST).map(([k,v])=>`<option value="${k}" ${c.status===k?"selected":""}>${v}</option>`).join("")}</select></td>
+    <td><input data-cref="${esc(c.key)}" value="${esc(c.ref||"")}" placeholder="ticket / case no." style="width:140px"></td></tr>`).join("")}</tbody>`
+    :`<tbody><tr><td class="muted">No open claims.</td></tr></tbody>`;
+}
+$("#claimAll").addEventListener("change",renderClaims);
+$("#claimTable").addEventListener("change",async e=>{
+  const k=e.target.dataset.cst||e.target.dataset.cref; if(!k) return;
+  const c=claimRows().find(x=>x.key===k); if(!c) return;
+  const cur={...((appState.claims||{})[k]||{})};
+  if(e.target.dataset.cst){ cur.status=e.target.value; if(e.target.value==="claimed") cur.claimed_on=today(); if(e.target.value==="paid") cur.paid_on=today(); } else cur.ref=e.target.value.trim();
+  const claims={...(appState.claims||{}), [k]:cur};
+  const {error}=await sb.from("app_state").upsert({key:"claims", value:claims, updated_at:new Date().toISOString()});
+  if(!error && c.recon) await sb.from("takealot_recons").update(e.target.dataset.cst?{claim_status:cur.status==="skip"?"open":cur.status, ...(cur.status==="claimed"?{claim_date:today()}:{})}:{claim_ref:cur.ref||null}).eq("month",c.recon);
+  if(!error && c.unit && e.target.dataset.cref) await sb.from("units").update({query_ref:cur.ref||null}).eq("id",c.unit);
+  if(error) toast("Couldn't save: "+errMsg(error)); else { appState.claims=claims; toast("Saved"); renderClaims(); } });
+
 /* ---------------- stock check ---------------- */
 function renderCheck(){
   const DCS=["JHB","CPT","DBN"];
@@ -2707,7 +2790,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); lazyRender("adjust",renderAdjust); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderRemovals(); renderDebtors(); renderPrice(); lazyRender("products",renderProducts);
+  renderLists(); renderSync(); renderOverview(); lazyRender("adjust",renderAdjust); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderClaims(); renderRemovals(); renderDebtors(); renderPrice(); lazyRender("products",renderProducts);
 }
 // pages without a menu counter are only drawn when they're open (and again when you go to them)
 var _lazyDirty={};
@@ -2984,6 +3067,34 @@ $("#addForm").addEventListener("submit", async e=>{
 });
 
 // a supplier's invoices: units bought on it + amounts owed on it, less payments made against it
+/* a statement for one supplier (from the last agreed balance): opens as its own page to print / save as PDF or copy into WhatsApp */
+function statementLines(sup){
+  const o=supplierOwed(sup), L=[];
+  const g={}; o.bought.forEach(u=>{ const d=u.received||String(u.created_at).slice(0,10), k=d+"|"+(u.invoice_no||"")+"|"+grpName(u.product);
+    const x=(g[k]=g[k]||{date:d, inv:u.invoice_no||"", what:grpName(u.product), n:0, amt:0, at:u.created_at}); x.n++; x.amt+=+u.cost||0; if(u.created_at<x.at) x.at=u.created_at; });
+  Object.values(g).forEach(x=>L.push({date:x.date, at:x.at, kind:"Stock", ref:x.inv, what:`${x.n} × ${x.what}${x.n>1?` @ ${R(x.amt/x.n)}`:""}`, debit:x.amt, credit:0}));
+  o.owe.forEach(r=>L.push({date:r.date, at:r.created_at, kind:"Owed", ref:r.invoice_no||"", what:r.note||"", debit:r.amount, credit:0}));
+  o.paid.forEach(r=>L.push({date:r.date, at:r.created_at, kind:"Payment", ref:r.invoice_no||"", what:r.note||"", debit:0, credit:r.amount}));
+  L.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.at).localeCompare(String(b.at)));
+  let bal=o.anchor?o.anchor.amount:0; L.forEach(x=>{ bal+=x.debit-x.credit; x.bal=bal; });
+  return {o, L, open:o.anchor?o.anchor.amount:0, from:o.anchor?o.anchor.date||String(o.anchor.created_at).slice(0,10):""};
+}
+function openStatement(sup){
+  const {o,L,open,from}=statementLines(sup);
+  const text=[`Statement: ${sup}`, from?`Balance agreed ${fd(from)}: ${R(open)}`:"", ...L.map(x=>`${fd(x.date)}  ${x.kind}${x.ref?" "+x.ref:""}  ${x.what}  ${x.debit?"+"+R(x.debit):"-"+R(x.credit)}  = ${R(x.bal)}`), `Balance now: ${R(o.bal)}${o.bal<-0.005?" (paid upfront)":""}`].filter(Boolean).join("\n");
+  const css="body{font:14px/1.45 system-ui,sans-serif;margin:24px;color:#111}h1{font-size:20px;margin:0 0 4px}p{margin:0 0 14px;color:#555}table{border-collapse:collapse;width:100%}th,td{padding:6px 8px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}td.n,th.n{text-align:right;white-space:nowrap}tfoot td{font-weight:700;border-top:2px solid #111}.b{display:flex;gap:8px;margin:0 0 16px}button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid #888;background:#fff}@media print{.b{display:none}body{margin:10mm}}";
+  const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Statement ${esc(sup)}</title><style>${css}</style></head><body>
+  <div class="b"><button onclick="print()">Print / Save PDF</button><button id="cp">Copy as text</button></div>
+  <h1>Statement: ${esc(sup)}</h1><p>Printed ${fd(today())}${from?` · from the balance agreed on ${fd(from)}`:""}</p>
+  <table><thead><tr><th>Date</th><th>Type</th><th>Invoice</th><th>Details</th><th class="n">Owed</th><th class="n">Paid</th><th class="n">Balance</th></tr></thead><tbody>
+  ${from?`<tr><td>${fd(from)}</td><td>Balance</td><td></td><td>Agreed balance</td><td class="n"></td><td class="n"></td><td class="n">${R(open)}</td></tr>`:""}
+  ${L.map(x=>`<tr><td>${fd(x.date)}</td><td>${x.kind}</td><td>${esc(x.ref)}</td><td>${esc(x.what)}</td><td class="n">${x.debit?R(x.debit):""}</td><td class="n">${x.credit?R(x.credit):""}</td><td class="n">${R(x.bal)}</td></tr>`).join("")}
+  </tbody><tfoot><tr><td colspan="6">${o.bal<-0.005?"Paid upfront (stock still to come)":"Balance owed"}</td><td class="n">${R(Math.abs(o.bal))}</td></tr></tfoot></table>
+  <script>document.getElementById("cp").onclick=()=>navigator.clipboard.writeText(${JSON.stringify(text).replace(/</g,"\\u003c")}).then(()=>{document.getElementById("cp").textContent="Copied"});<\/script></body></html>`;
+  const url=URL.createObjectURL(new Blob([html],{type:"text/html"})); const w=window.open(url,"_blank");
+  if(!w){ navigator.clipboard?.writeText(text).then(()=>toast("Pop-up blocked: statement copied as text instead"),()=>toast("Allow pop-ups to open the statement")); }
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
 function invoicesOf(sup){
   const S=(sup||"").toLowerCase(), m={};
   const get=no=>m[no]=m[no]||{no, sup, total:0, paid:0, units:0, date:"", items:{}};
