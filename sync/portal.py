@@ -1106,27 +1106,35 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     # time-based summary: how much of the last 15 minutes you held the Buy Box, sent when things are settled
     tm = _tload()
     st = tm.setdefault("held", {}).setdefault(sku, {"seen": 0, "win": 0, "tot": 0})
+    st.setdefault("best", 0)
     nowt = _time.time()
     if st["seen"]:
         dt = min(60, nowt - st["seen"])
         st["tot"] += dt
         st["win"] += dt if winning else 0
+        st["best"] += dt if (not winning and live.get("slot") == "lowest_priced") else 0
     st["seen"] = nowt
     last = (tm.get("last_routine") or {}).get(sku, 0)
     if not last:
         tm.setdefault("last_routine", {})[sku] = int(nowt)
     elif nowt - last >= 15 * 60 and target is None and not waiting_live and st["tot"] > 60:
         pct = round(100 * st["win"] / st["tot"])
+        bpct = round(100 * st["best"] / st["tot"])
         try:
             n = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised)&at=gt.{(datetime.utcnow() - timedelta(minutes=15)).isoformat()}Z"))
         except Exception:
             n = 0
-        if n or pct < 100:                                   # only when something happened: quiet listings stay quiet,
-            alerts.insert(0, ((f"✅ Buy Box: you held it {pct}% of the time" if pct >= 50 else f"❌ Buy Box: you held it only {pct}% of the time"),
-                              f"{title}: last 15 min · now {'yours' if winning else 'competitor'} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
+        # quiet when nothing happened: held the Buy Box the whole time, or sat in the Best Price box the whole time
+        # (cheapest, on lead time: the 🏷️ message already said so once)
+        if n or (pct < 100 and pct + bpct < 99):
+            now_s = "yours" if winning else "Best Price box yours (Fastest Delivery with warehouse stock)" if live.get("slot") == "lowest_priced" else "competitor"
+            head = (f"✅ Buy Box: you held it {pct}% of the time" if pct >= 50 else
+                    f"🏷️ Buy Box {pct}%, Best Price box {bpct}% of the time" if bpct else
+                    f"❌ Buy Box: you held it only {pct}% of the time")
+            alerts.insert(0, (head, f"{title}: last 15 min · now {now_s} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
             # (so the phone doesn't get 20 "100%" messages an hour and start muting the app)
         tm["last_routine"][sku] = int(nowt)
-        st["win"], st["tot"] = 0, 0
+        st["win"], st["tot"], st["best"] = 0, 0, 0
     _tsave(tm)
     for t, b in alerts:
         try:
