@@ -3208,10 +3208,11 @@ def handle_rejected(cfg, rows, log):
                 continue                                   # put on this PO after the rejection (a re-send): not rejected
             if u.get("courier_shipment_id") == link:
                 continue                                   # already handled
-            if u.get("courier_shipment_id") == x["id"]:    # handled before the return waybill existed
-                if u["status"] == "return_me" and link != x["id"]:
+            if u.get("courier_shipment_id") == x["id"] and u["status"] == "return_me":   # handled before the return waybill existed
+                if link != x["id"]:
                     db.patch("units", f"id=eq.{u['id']}", {"courier_shipment_id": link, "updated_at": now})
                 continue
+            # (a unit still In stock that was sent on this very shipment never got in either: handle it below)
             if u["status"] not in ("in_stock", "awaiting_fees", "settled"):
                 continue
             if f"rejected on {x['waybill']}; send it in" in (u.get("comment") or ""):
