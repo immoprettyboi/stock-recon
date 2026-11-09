@@ -1993,6 +1993,14 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Evening summary failed: " + repr(e)[:200])
             try:
+                morning_summary(cfg, log)
+            except Exception as e:
+                log("Morning summary failed: " + repr(e)[:200])
+            try:
+                coming_back_watch(cfg, log)
+            except Exception as e:
+                log("Coming-back watch failed: " + repr(e)[:200])
+            try:
                 return_alerts(cfg, log)
             except Exception as e:
                 log("Return notifications failed: " + repr(e)[:200])
@@ -2692,6 +2700,110 @@ def payout_forecast(ctx, cfg, auth, log):
         log("Balance history for the app failed: " + repr(e)[:150])
 
 
+def coming_back_watch(cfg, log):
+    """Units on their way back to you (Return: me). Remembers since when each one has waited (app_state coming_back,
+    shown on the Shipments page) and reminds the phone once at 5 and once at 10 days while no collection is booked."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        rows = db.select("units", "select=id,product,location,courier_shipment_id,updated_at&status=eq.return_me")
+    except Exception:
+        return
+    try:
+        got = db.select("app_state", "select=value&key=eq.coming_back")
+        st = (got[0].get("value") or {}) if got else {}
+    except Exception:
+        return                                         # before 18_database_update.sql
+    today_s = datetime.now().date().isoformat()
+    ships = {}
+    ids = [str(u["courier_shipment_id"]) for u in rows if u.get("courier_shipment_id")]
+    if ids:
+        try:
+            ships = {str(x["id"]): x for x in db.select("courier_shipments", f"select=id,waybill,status&id=in.({','.join(ids)})")}
+        except Exception:
+            pass
+    out, changed = {}, False
+    for u in rows:
+        k = u["id"]
+        x = dict(st.get(k) or {})
+        if not x:
+            x = {"since": str(u.get("updated_at") or today_s)[:10]}
+            changed = True
+        sh = ships.get(str(u.get("courier_shipment_id") or ""))
+        booked = bool(sh) and sh.get("status") not in ("cancelled",)
+        days = (datetime.now().date() - date.fromisoformat(x["since"])).days
+        for lim in (5, 10):
+            if not booked and days >= lim and not x.get(f"n{lim}"):
+                x[f"n{lim}"] = today_s
+                changed = True
+                try:
+                    notify(cfg, f"↩️ Still not on its way back ({days} days)",
+                           f"{u['product'][:60]} at Takealot {u.get('location') or ''}: no collection booked yet. "
+                           "Ask Takealot for the booking exception / removal, then book the Courier Guy collection.",
+                           url="./?view=ship", topic="price", log=log, tag=f"comingback-{k[:8]}")
+                except Exception as e:
+                    log("Coming-back reminder failed: " + repr(e)[:120])
+        out[k] = x
+    if changed or set(out) != set(st):
+        _app_state(cfg, "coming_back", out)
+
+
+def morning_summary(cfg, log):
+    """Once a day from 08:00: what needs doing today (lead-time orders due, units coming back, deliveries expected,
+    overnight sales, Buy Box)."""
+    now = datetime.now()
+    if now.hour < 8 or now.hour >= 11:               # a "good morning" at lunch time is no use: skip that day
+        return
+    flag = DEBUG_DIR / f"morning_{now.date().isoformat()}.txt"
+    if flag.exists():
+        return
+    DEBUG_DIR.mkdir(exist_ok=True)
+    flag.write_text(now.isoformat(), encoding="utf-8")
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    parts = []
+    try:
+        start = (datetime.combine(now.date() - timedelta(days=1), datetime.min.time()) + timedelta(hours=19)).isoformat() + "Z"  # 21:00 SA yesterday
+        n = sum(int(x.get("qty") or 1) for x in db.select("takealot_sales", f"select=qty&order_date=gte.{start}"))
+        if n:
+            parts.append(f"{n} sold overnight")
+    except Exception:
+        pass
+    try:
+        got = db.select("app_state", "select=value&key=eq.leadtime_due")
+        orders = ((got[0].get("value") or {}).get("orders") or []) if got else []
+        late = sum(1 for o in orders if int(o.get("left") or 0) < 0)
+        due = sum(1 for o in orders if 0 <= int(o.get("left") or 0) <= 1)
+        if late:
+            parts.append(f"⛔ {late} lead-time order{'s' if late > 1 else ''} late")
+        if due:
+            parts.append(f"⏰ {due} lead-time order{'s' if due > 1 else ''} due today/tomorrow")
+    except Exception:
+        pass
+    try:
+        back = db.select("units", "select=id&status=eq.return_me")
+        if back:
+            parts.append(f"↩️ {len(back)} unit{'s' if len(back) > 1 else ''} coming back")
+        exp = [x for x in db.select("courier_shipments", "select=waybill,status,expected_delivery_to,direction&direction=eq.from_takealot")
+               if x.get("status") not in ("delivered", "cancelled") and str(x.get("expected_delivery_to") or "9")[:10] <= now.date().isoformat()]
+        if exp:
+            parts.append("🚚 arriving today: " + ", ".join(x["waybill"] for x in exp[:3]))
+    except Exception:
+        pass
+    try:
+        rules = [r for r in db.select("price_rules", "select=enabled,winning,last_action") if r.get("enabled")]
+        if rules:
+            won = sum(1 for r in rules if r.get("winning"))
+            best = sum(1 for r in rules if not r.get("winning") and str(r.get("last_action") or "").startswith("Best Price"))
+            parts.append(f"Buy Box {won}/{len(rules)}" + (f" (+{best} Best Price)" if best else ""))
+    except Exception:
+        pass
+    body = " · ".join(parts) or "Nothing urgent today"
+    notify(cfg, "☀️ Good morning: today on Takealot", body.replace(",", " ") if "arriving" not in body else body,
+           url="./?view=overview", topic="price", log=log, tag="morning")
+    log("Morning summary sent: " + body)
+
+
 def evening_summary(cfg, log):
     """Once a day after 21:00: today's sales, profit and Buy Box on the phones."""
     now = datetime.now()
@@ -2903,7 +3015,7 @@ def save_offer_stock(cfg, offers, log):
         log("Stock check: couldn't read products: " + repr(e)[:150])
         return
     now = datetime.utcnow().isoformat() + "Z"
-    rows = []
+    rows, new_found = [], []
     for o in offers:
         sku = str(o.get("merchant_sku") or "")
         if not sku:
@@ -2928,6 +3040,27 @@ def save_offer_stock(cfg, offers, log):
         row = {"sku": sku, "tsin": str(o.get("tsin_id") or ""), "takealot_title": ((o.get("tsin") or {}).get("title") or ""),
                "takealot_status": status, "takealot_stock": stock, "stock_updated_at": now}
         rows.append(row)
+        if known and sku not in known and not status.lower().startswith("disabled"):
+            new_found.append(row)
+    if new_found:   # a listing you just created on Takealot: tell the phone once, and keep it on the app's Needs you for 2 weeks
+        try:
+            st = {}
+            try:
+                got = db.select("app_state", "select=value&key=eq.new_listings")
+                st = (got[0].get("value") or {}) if got else {}
+            except Exception:
+                pass
+            for r in new_found:
+                if r["sku"] in st:
+                    continue
+                st[r["sku"]] = {"first_seen": now[:10], "title": r["takealot_title"][:90]}
+                notify(cfg, "🆕 New Takealot listing", f"{r['takealot_title'][:80]} ({r['takealot_status'] or 'new'}). "
+                       "Link it to your stock and set lead time on the Takealot products page.",
+                       url="./?view=products", topic="price", log=log, tag=f"newlisting-{r['sku']}")
+            cut = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+            _app_state(cfg, "new_listings", {k: v for k, v in st.items() if v.get("first_seen", "") >= cut})
+        except Exception as e:
+            log("New listing alert failed: " + repr(e)[:150])
     try:  # what the offers feed returned, so the app can show listings that didn't come through
         seen = [{"sku": str(o.get("merchant_sku") or ""), "plid": ((o.get("tsin") or {}).get("productline_id")),
                  "title": ((o.get("tsin") or {}).get("title") or "")[:90],

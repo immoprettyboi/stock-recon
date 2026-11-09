@@ -750,6 +750,10 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
   <!-- SHIPMENTS -->
   <section id="view-ship" class="stack" hidden>
     <div class="filters"><input type="search" id="shipQ" placeholder="Search waybill, PO, product, serial, note…" aria-label="Search shipments"><button class="btn primary small" type="button" id="adamAdd2">Add Adam delivery</button><label class="note inline"><input type="checkbox" id="shipAll"> Show finished shipments too (delivered, cancelled, returned)</label></div>
+    <div class="panel" id="backPanel" hidden>
+      <div class="sec-head"><h2>↩️ Coming back to me</h2><p>Every unit on its way home from Takealot: rejected, kept or removal orders. Tap one to open it.</p></div>
+      <div class="tscroll"><table id="backTable"></table></div>
+    </div>
     <div class="panel">
       <div class="sec-head"><h2>Coming from Takealot</h2><p>Returns and removal orders the courier is bringing to you</p></div>
       <div class="tscroll"><table id="shipFrom"></table></div>
@@ -1470,6 +1474,13 @@ function renderOverview(){
   // ... or received fewer than were sent
   pos.filter(p=>/receiv/i.test(p.status||"") && p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && (Date.now()-new Date(p.due_date))<30*864e5)
     .forEach(p=>items.push({go:"ship", tag:"Check", t:`PO ${p.po}: Takealot received ${p.qty_received} of ${p.qty_sending}`, d:`${contents(p)} · find out what happened to the rest (rejected, kept or lost)`}));
+  // new listings on Takealot (found by the sync) that aren't linked to your stock yet
+  Object.entries(appState.new_listings||{}).forEach(([sku,x])=>{ const p=products.find(q=>q.sku===sku);
+    if(!p || p.product || (Date.now()-new Date(x.first_seen+"T12:00:00Z"))>14*864e5) return;
+    items.push({go:"products", tag:"New", t:`New listing: ${p.takealot_title||x.title}`, d:`Found on Takealot ${fd(x.first_seen)}. Link it to your stock on the Takealot products page, and set lead time if you sell it from HOME.`}); });
+  // lead time switched on, but the listing has no lead-time days on Takealot: Takealot refuses lead-time stock until it has them
+  products.filter(p=>p.leadtime_fixed!=null && p.product!==IGNORE && p.takealot_stock && !(+((p.takealot_stock.LEADTIME||{}).days)>0) && !/^disabled/i.test(p.takealot_status||""))
+    .forEach(p=>items.push({go:"products", tag:"Lead time", t:`${p.takealot_title||p.product}: no lead-time days on Takealot`, d:"Takealot won't take lead-time stock until the listing has lead-time days. The sync sets 4 days by itself when it can; if this stays, set them in Manage My Offers."}));
   // 2. lead time on Takealot higher than what's at HOME: it could sell what you don't have
   { const home={}; units.forEach(u=>{ if(u.location==="HOME" && u.status==="in_stock" && !u.order_id && !u.po && (u.condition||"new")==="new"){ const k=(products.find(p=>p.sku===u.sku)||{}).product||u.product; home[k]=(home[k]||0)+1; } });
     products.filter(p=>p.leadtime_fixed!=null && p.leadtime_fixed<0 && p.product!==IGNORE && ((p.takealot_stock||{}).LEADTIME||{}).qty > (home[p.product]||0)).forEach(p=>{
@@ -2086,8 +2097,22 @@ function renderShips(){
   $("#shipFrom").innerHTML=table(list,"from_takealot");
   $("#shipTo").innerHTML=table(list,"to_takealot");
   $("#cntShip").textContent=ships.concat(adamShips()).filter(x=>!SHIP_DONE.has(x.status)).length||"";
-  renderPOs(); renderPudo();
+  renderPOs(); renderPudo(); renderBack();
 }
+/* units on their way home (Return: me): where they are, which waybill, and how long they've waited */
+function renderBack(){
+  const L=units.filter(u=>u.status==="return_me"), cb=appState.coming_back||{};
+  $("#backPanel").hidden=!L.length; if(!L.length) return;
+  const rows=L.map(u=>{ const sh=ships.find(x=>String(x.id)===String(u.courier_shipment_id||"")), since=(cb[u.id]||{}).since||String(u.updated_at||"").slice(0,10);
+    const days=since?Math.max(0,Math.round((new Date(today())-new Date(since))/864e5)):null;
+    const c=String(u.comment||""), why=/kept it/i.test(c)?"Rejected: Takealot kept it":/rejected/i.test(c)?"Rejected by Takealot":/removal/i.test(c)||u.order_id?"Removal order":"Coming back";
+    return {u,sh,days,why}; }).sort((a,b)=>(b.days||0)-(a.days||0));
+  $("#backTable").innerHTML=`<thead><tr><th>Product</th><th>From</th><th>Why</th><th>Courier</th><th class="num">Waiting</th></tr></thead><tbody>${rows.map(({u,sh,days,why})=>`<tr class="click" data-id="${esc(u.id)}" style="cursor:pointer">
+    <td>${esc(u.product)}${u.sn?`<div class="tal-st mono-s">${esc(u.sn)}</div>`:""}</td><td>${esc(u.location||"")}</td><td>${esc(why)}</td>
+    <td>${sh?`<span class="mono">${esc(sh.waybill)}</span> <span class="pill ${shipPill(sh.status)}">${esc(shipLabel(sh.status))}</span>`:`<span class="neg">No collection booked yet</span>`}</td>
+    <td class="num ${!sh&&days>=5?"neg":""}">${days==null?"–":days+" day"+(days===1?"":"s")}</td></tr>`).join("")}</tbody>`;
+}
+$("#backTable").addEventListener("click",e=>{ const r=e.target.closest("tr[data-id]"); if(r) openEdit(r.dataset.id); });
 $("#shipAll").addEventListener("change",renderShips);
 $("#shipQ").addEventListener("input",()=>{ clearTimeout(renderShips._t); renderShips._t=setTimeout(renderShips,150); });
 for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ const dd=e.target.closest("[data-dropped]"); if(dd){ markDropped(dd); return; }
@@ -2200,7 +2225,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v120)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v121)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
