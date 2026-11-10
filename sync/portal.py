@@ -2805,7 +2805,7 @@ def morning_summary(cfg, log):
     except Exception:
         pass
     body = " · ".join(parts) or "Nothing urgent today"
-    notify(cfg, "☀️ Good morning: today on Takealot", body.replace(",", " ") if "arriving" not in body else body,
+    notify(cfg, "☀️ Good morning: today on Takealot", body.replace(",", " ") if "courier due" not in body else body,
            url="./?view=overview", topic="price", log=log, tag="morning")
     log("Morning summary sent: " + body)
 
