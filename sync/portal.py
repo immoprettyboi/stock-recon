@@ -895,7 +895,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         tm["pending"].pop(sku, None)
         _tsave(tm)
         try:
-            db.patch("price_log", f"sku=eq.{sku}&new_price=eq.{int(pend['price'])}&at=gt.{(datetime.utcnow() - timedelta(minutes=30)).isoformat()}Z",
+            db.patch("price_log", f"sku=eq.{sku}&new_price=eq.{int(pend['price'])}&action=neq.failed&at=gt.{(datetime.utcnow() - timedelta(minutes=30)).isoformat()}Z",
                      {"note": f"live on Takealot after {delay // 60}m{delay % 60:02d}s via {pend.get('via', 'portal')}" +
                               (" · ✅ you got the Buy Box" if bb_seller == mine else " · competitor still ahead")})
         except Exception:
@@ -1061,19 +1061,28 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 log(f"Price fighter: {title}: R{my_price:,.0f} → R{target:,.0f} (Buy Box R{bb_price:,.0f}, {'you' if winning else bb_seller}){' · ' + snipe_note if snipe_note else ''}.")
                 tm = _tload()
                 tm.setdefault("pending", {})[sku] = {"price": int(target), "sent": int(sent_at), "via": via}
+                (tm.get("fails") or {}).pop(sku, None)          # went through: the hiccup counter starts again
                 _tsave(tm)
                 alerts.append((("🔺 Price raised" if action == "raised" else "🔻 Price lowered" if action == "lowered" else "↩️ Back up to your ceiling" if action == "reset" else "➡️ Staying just above the competitor" if action == "follow" else "🔻 Down to your floor"),
                                f"{title}: R{my_price:,.0f} → R{target:,.0f} · Buy Box was R{bb_price:,.0f}"))
             else:
                 msg = (errs[0].get("message") if errs and isinstance(errs[0], dict) else errs) or r.text()[:150]
-                db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
-                                         "new_price": target, "action": "failed", "note": str(msg)[:300]}])
-                upd["last_action"] = f"Takealot refused the change: {str(msg)[:120]}"
+                # a hiccup on Takealot's side (busy / server error / too many requests) isn't a real refusal:
+                # try again in a minute, and only tell the phone if it keeps happening (3 in a row within 20 minutes)
+                hiccup = not errs and (r.status >= 500 or r.status in (408, 429))
                 tmr = _tload()
-                tmr.setdefault("refused", {})[sku] = {"price": int(target), "at": _time.time()}
+                fl = (tmr.setdefault("fails", {}).get(sku) or {})
+                fl = {"n": (fl.get("n", 0) + 1) if _time.time() - fl.get("at", 0) < 1200 else 1, "at": _time.time()}
+                tmr["fails"][sku] = fl
+                tmr.setdefault("refused", {})[sku] = {"price": int(target), "at": _time.time() - (540 if hiccup else 0)}   # hiccup: retry after ~1 min
                 _tsave(tmr)
-                if rule.get("last_action") != upd["last_action"]:
-                    alerts.append(("⚠️ Price change refused", f"{title}: Takealot said {str(msg)[:100]}"))
+                why = f"Takealot didn't answer properly ({r.status}): trying again in a minute" if hiccup else f"Takealot said {str(msg)[:120]}"
+                db.insert("price_log", [{"sku": sku, "my_price": my_price, "bb_price": bb_price, "bb_seller": bb_seller,
+                                         "new_price": target, "action": "failed", "note": (f"{r.status}: " + str(msg))[:300]}])
+                upd["last_action"] = ("Price change didn't go through: " if hiccup else "Takealot refused the change: ") + str(msg)[:120]
+                if (not hiccup and rule.get("last_action") != upd["last_action"]) or (hiccup and fl["n"] == 3):
+                    alerts.append(("⚠️ Price change refused" if not hiccup else "⚠️ Price changes not going through",
+                                   f"{title}: {why}" + (f" ({fl['n']} times in a row)" if hiccup else "")))
     else:
         upd["last_action"] = note or ("You have the Buy Box" if winning else
                                       "Best Price slot: you're the cheapest; Takealot shows the seller with warehouse stock first (Fastest Delivery)"
