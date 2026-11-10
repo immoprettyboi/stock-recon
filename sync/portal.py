@@ -850,6 +850,9 @@ def _read_live(page, plid, offer_id, mine):
             slot = (i.get("offer_detail") or {}).get("preference") or "other"
             if mine_live is None and i.get("price"):
                 mine_live = float(i["price"])
+        elif not i.get("is_selected") and i.get("price"):
+            # another seller in the second slot (usually "Best Price"): a real competitor even though it isn't selected
+            others.append(("bb:" + str(i.get("sponsored_ads_seller_id") or "?"), float(i["price"])))
     other_min = min([p for pid, p in others if pid != str(offer_id)] + ([price] if seller != mine else []), default=None)
     sig = f"{seller}:{price}|" + ",".join(f"{pid}:{p}" for pid, p in sorted(others))
     return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot}
@@ -931,7 +934,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     target, action, note = None, None, ""
     new_phase = {"p": "fight", "since": 0}                  # default: normal fighting (reset unless the floor logic says otherwise)
     if not winning:
-        want = math.floor(bb_price - step)
+        # the price to beat: the cheapest other seller, also one sitting in the Best Price slot while a seller with
+        # warehouse stock holds the main box (being cheapest is what earns the Best Price box when you're on lead time)
+        beat = min([bb_price] + ([float(live["other_min"])] if live.get("other_min") else []))
+        want = math.floor(beat - step)
         if floor is None:
             note = "No cost found for this product, so no floor: not changing the price"
         elif want >= floor:
@@ -940,7 +946,7 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             elif want > my_price and not waiting_live:
                 # the seller ahead of us is well above our price (e.g. they're shown first for warehouse stock):
                 # come up to just under them instead of leaving money on the table
-                target, action, note = want, "raised", f"The Buy Box is R{bb_price:,.0f}: up to R{step:,.0f} under it"
+                target, action, note = want, "raised", f"The cheapest other seller is R{beat:,.0f}: up to R{step:,.0f} under them"
         elif (rule.get("floor_action") or "ceiling") == "ceiling" and ceiling:
             # can't win without going under the floor:
             #  1. go back up to the ceiling and let the other bot follow us up;
@@ -948,31 +954,31 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             #     ready to fight again as soon as it moves up past the floor.
             ph = (_tload().get("phase") or {}).get(sku) or {}
             phase = ph.get("p") or "fight"
-            shadow = max(math.ceil(floor), math.floor(bb_price + step))
+            shadow = max(math.ceil(floor), math.floor(beat + step))
             if phase == "fight":
                 if my_price < ceiling:
-                    target, action, note = math.floor(ceiling), "reset", f"Competitor at R{bb_price:,.0f} is below your floor R{floor:,.0f}: back up to your ceiling"
+                    target, action, note = math.floor(ceiling), "reset", f"Competitor at R{beat:,.0f} is below your floor R{floor:,.0f}: back up to your ceiling"
                 else:
-                    note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up"
+                    note = f"Waiting at your ceiling for the competitor (R{beat:,.0f}) to come back up"
                 new_phase = {"p": "wait", "since": _time.time()}
             elif phase == "wait":
                 waited = (_time.time() - float(ph.get("since") or _time.time())) / 60
                 if waited >= 30:
-                    target, action, note = shadow, "follow", f"Competitor stayed at R{bb_price:,.0f} for 30 min: staying R{step:,.0f} above them"
+                    target, action, note = shadow, "follow", f"Competitor stayed at R{beat:,.0f} for 30 min: staying R{step:,.0f} above them"
                     new_phase = {"p": "follow", "since": _time.time()}
                 else:
                     new_phase = ph
-                    note = f"Waiting at your ceiling for the competitor (R{bb_price:,.0f}) to come back up ({int(waited)} of 30 min)"
+                    note = f"Waiting at your ceiling for the competitor (R{beat:,.0f}) to come back up ({int(waited)} of 30 min)"
             else:
                 new_phase = ph
                 if shadow != int(my_price):
-                    target, action, note = shadow, "follow", f"Following: R{step:,.0f} above the competitor at R{bb_price:,.0f}"
+                    target, action, note = shadow, "follow", f"Following: R{step:,.0f} above the competitor at R{beat:,.0f}"
                 else:
-                    note = f"Staying R{step:,.0f} above the competitor (R{bb_price:,.0f}), ready to fight when they go back up"
+                    note = f"Staying R{step:,.0f} above the competitor (R{beat:,.0f}), ready to fight when they go back up"
         elif my_price > floor:
-            target, action, note = math.ceil(floor), "at_floor", f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}"
+            target, action, note = math.ceil(floor), "at_floor", f"Buy Box R{beat:,.0f} is below your floor R{floor:,.0f}"
         else:
-            note = f"Buy Box R{bb_price:,.0f} is below your floor R{floor:,.0f}: holding at the floor"
+            note = f"Buy Box R{beat:,.0f} is below your floor R{floor:,.0f}: holding at the floor"
         if target is not None and ceiling and target > ceiling:
             target = math.floor(ceiling)
     elif rule.get("raise_when_winning") and ceiling and my_price < ceiling and not waiting_live:
@@ -1018,7 +1024,9 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
                 alerts.append(("🏷️ You have the Best Price box", f"{title} · you're the cheapest at R{my_price:,.0f}. "
                                f"The Fastest Delivery box is with a seller who has warehouse stock (R{bb_price:,.0f})."))
             else:
-                alerts.append(("❌ You lost the Buy Box", f"{title} · Buy Box R{bb_price:,.0f} (you R{my_price:,.0f})"))
+                om = live.get("other_min")
+                alerts.append(("❌ You lost the Buy Box", f"{title} · Buy Box R{bb_price:,.0f} (you R{my_price:,.0f})" +
+                               (f" · another seller is cheaper at R{om:,.0f} and has the Best Price box" if om and om < my_price and om < bb_price else "")))
     if target is not None and int(target) != int(my_price):
         if not fight:
             action = "would_" + ("lower" if action in ("lowered", "at_floor") else "reset" if action == "reset" else "follow" if action == "follow" else "raise")
