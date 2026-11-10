@@ -1905,6 +1905,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
                     "saved": datetime.now().isoformat()}, indent=1, default=str), encoding="utf-8")
                 log(f"Read {len(offers)} offer(s) from Takealot.")
                 save_offer_stock(cfg, offers, log)
+                try:
+                    soldout_check(cfg, offers, log)
+                except Exception as e:
+                    log("Sold-out check failed: " + repr(e)[:150])
             except Exception as e:
                 log("Offers couldn't be read: " + repr(e)[:200])
             # ---- one-off: what the public Takealot product page says about prices / other sellers (debug/price_discover.txt)
@@ -2194,6 +2198,55 @@ def sale_watch(ctx, cfg, log):
             log("Sale watch failed: " + repr(e)[:150])
 
 
+def soldout_check(cfg, offers, log):
+    """The last unit in Takealot's warehouses sold: tell the phone once, and say whether the listing carries on
+    on lead time from HOME or has stopped selling. Runs after every offers read (sync, and straight after a sale)."""
+    import stockrecon_sync as S
+    seen = _seen_load() or {}
+    state = seen.get("soldout") or {}
+    first = "soldout" not in seen                       # first run: just remember where things stand
+    names = {}
+    try:
+        db = S.DB(cfg["url"], cfg["key"])
+        names = {str(p["sku"]): p for p in db.select("products", "select=sku,product,leadtime_fixed")}
+    except Exception:
+        pass
+    alerts = []
+    for o in offers or []:
+        sku = str(o.get("merchant_sku") or "")
+        status = ((o.get("status") or {}).get("description") or "")
+        if not sku or status.lower().startswith("disabled") or (names.get(sku) or {}).get("product") == "__ignore__":
+            continue
+        wh = (o.get("stock") or {}).get("takealot_warehouse") or []
+        qty = sum(int(w.get("quantity") or 0) for w in wh)
+        coming = sum(int(w.get("stock_on_way") or 0) + int(w.get("stock_in_receiving") or 0) for w in wh)
+        now = "in" if qty > 0 else "out"
+        before = state.get(sku)
+        state[sku] = now
+        if first or before != "in" or now != "out":
+            continue
+        title = ((o.get("tsin") or {}).get("title") or sku)[:70]
+        lt = int(o.get("total_merchant_stock") or 0)
+        if lt > 0:
+            body = f"{title}: your last warehouse unit just sold. Still selling on lead time ({lt} at HOME), " \
+                   "but slower delivery usually loses the Buy Box: send stock in to win it back."
+        else:
+            body = f"{title}: your last warehouse unit just sold and there's no lead-time stock, so it can't be bought now. " \
+                   "Send stock in, or switch on lead time if you have units at HOME."
+        if coming:
+            body += f" ({coming} already on the way to Takealot.)"
+        alerts.append(("📦 Sold out at Takealot" + (": now on lead time" if lt > 0 else ""), body, sku))
+    seen["soldout"] = state
+    if not _seen_save(seen):
+        return                                          # couldn't note it: don't risk repeating it
+    for t, b, sku in alerts:
+        try:
+            notify(cfg, t, b, url="./?view=stock", topic="price", log=log, tag=f"soldout-{sku}")
+            log(f"Sold out at Takealot: {sku}.")
+        except Exception as e:
+            log("Sold-out notification failed: " + repr(e)[:120])
+
+
 def leadtime_on_sale(ctx, cfg, rows, auth, log):
     """A new order on a listing that follows HOME stock (lead time = auto): set lead time on every listing of that
     product straight away (within ~2 minutes), so two listings sharing the same units can't both sell the last one."""
@@ -2210,10 +2263,7 @@ def leadtime_on_sale(ctx, cfg, rows, auth, log):
     prods = db.select("products", "select=sku,product,leadtime_fixed")
     auto = {str(p["sku"]) for p in prods if p.get("leadtime_fixed") is not None and int(p["leadtime_fixed"]) < 0}
     hit = [x for x in new if str(x.get("sku")) in auto]
-    if not hit:
-        S._LT_SALE_SEEN = seen | ids
-        return
-    offers, n = [], 1
+    offers, n = [], 1                                  # any new sale: read the listings (lead time + "sold out at Takealot")
     while n <= 20:
         rr = ctx.request.get(f"https://{API_HOST}/v2/offers/detailed?page_number={n}&page_size=100&sort_key=date_added&sort_dir=asc",
                              headers=auth, timeout=60_000)
@@ -2225,8 +2275,13 @@ def leadtime_on_sale(ctx, cfg, rows, auth, log):
         if len(got) < 100:
             break
         n += 1
-    log(f"Lead time after a sale: {len(hit)} new order(s) on an auto lead-time listing: checking every listing of that product.")
-    apply_leadtime_requests(ctx, cfg, auth, offers, log, rows)
+    try:
+        soldout_check(cfg, offers, log)
+    except Exception as e:
+        log("Sold-out check failed: " + repr(e)[:150])
+    if hit:
+        log(f"Lead time after a sale: {len(hit)} new order(s) on an auto lead-time listing: checking every listing of that product.")
+        apply_leadtime_requests(ctx, cfg, auth, offers, log, rows)
     S._LT_SALE_SEEN = seen | ids
 
 
