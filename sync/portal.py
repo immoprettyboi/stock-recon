@@ -2781,13 +2781,19 @@ def morning_summary(cfg, log):
     except Exception:
         pass
     try:
-        back = db.select("units", "select=id&status=eq.return_me")
-        if back:
-            parts.append(f"↩️ {len(back)} unit{'s' if len(back) > 1 else ''} coming back")
+        back = db.select("units", "select=id,courier_shipment_id&status=eq.return_me")
+        live = {str(x["id"]) for x in db.select("courier_shipments", "select=id,status&direction=eq.from_takealot")
+                if x.get("status") not in ("delivered", "cancelled")}
+        moving = sum(1 for u in back if str(u.get("courier_shipment_id") or "") in live)
+        waiting = len(back) - moving
+        if moving:
+            parts.append(f"↩️ {moving} unit{'s' if moving > 1 else ''} on the way back to you")
+        if waiting:
+            parts.append(f"⏳ {waiting} still at Takealot (no collection booked)")
         exp = [x for x in db.select("courier_shipments", "select=waybill,status,expected_delivery_to,direction&direction=eq.from_takealot")
                if x.get("status") not in ("delivered", "cancelled") and str(x.get("expected_delivery_to") or "9")[:10] <= now.date().isoformat()]
         if exp:
-            parts.append("🚚 arriving today: " + ", ".join(x["waybill"] for x in exp[:3]))
+            parts.append("🚚 courier due today: " + ", ".join(x["waybill"] for x in exp[:3]))
     except Exception:
         pass
     try:
