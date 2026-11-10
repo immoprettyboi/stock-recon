@@ -897,6 +897,17 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
       <div id="pfChart"></div>
       <div class="tscroll"><table id="pfHist"></table></div>
     </div>
+    <div class="panel">
+      <div class="sec-head"><h2>👀 Price watcher</h2><p id="pwSub">Any product on Takealot: get a notification when its price drops a lot</p></div>
+      <form class="inline" id="pwForm" autocomplete="off" style="flex-wrap:wrap">
+        <input id="pwLink" placeholder="Paste a Takealot link or PLID" style="flex:1 1 260px" required>
+        <label class="note inline">Drop of <input id="pwPct" type="number" min="3" max="80" step="1" value="10" style="width:64px">%</label>
+        <label class="note inline">or under R <input id="pwTarget" type="number" min="0" step="1" placeholder="optional" style="width:110px"></label>
+        <button class="btn primary small" type="submit">Watch</button>
+      </form>
+      <p class="note" style="margin:6px 0 0">Checked about every 15 minutes. A "drop" is measured from the highest price in the last 7 days, so slow drops count too.</p>
+      <div class="tscroll"><table id="pwTable"></table></div>
+    </div>
   </section>
 
   <!-- REMOVAL ORDERS -->
@@ -2169,6 +2180,31 @@ for(const id of ["#shipFrom","#shipTo"]) $(id).addEventListener("click",e=>{ con
   if(x.direction==="from_takealot"){ state.status="return_me"; state.loc=x.takealot_dc; $("#fLoc").value=x.takealot_dc; }
   setView("stock"); renderLedger(); window.scrollTo({top:0}); });
 
+/* ---------------- price watcher (any Takealot product; the server checks and notifies) ---------------- */
+function renderPriceWatch(){
+  const t=$("#pwTable"); if(!t) return;
+  const L=(appState.watchlist||{}).items||[], P=appState.watch_prices||{};
+  $("#pwSub").textContent=L.length?`Watching ${L.length} product${L.length===1?"":"s"} · you get a notification on a big drop`:"Any product on Takealot: get a notification when its price drops a lot";
+  t.innerHTML=L.length?`<thead><tr><th>Product</th><th class="num">Now</th><th class="num">7-day high</th><th class="num">14-day low</th><th>Alert on</th><th>Checked</th><th></th></tr></thead><tbody>${L.map(i=>{ const x=P[i.plid]||{};
+    const drop=x.price&&x.high7?Math.round(100*(1-x.price/x.high7)):0;
+    return `<tr><td><a href="https://www.takealot.com/x/PLID${esc(i.plid)}" target="_blank" rel="noopener">${esc(x.title||i.title||"PLID"+i.plid)}</a>${x.ok===false?`<div class="tal-st neg">${esc(x.note||"")}</div>`:""}</td>
+      <td class="num"><b>${x.price?R0(x.price):"–"}</b>${drop>0?` <span class="pos">▼${drop}%</span>`:""}</td><td class="num">${x.high7?R0(x.high7):"–"}</td><td class="num">${x.low14?R0(x.low14):"–"}</td>
+      <td>${i.drop_pct||10}% drop${i.target?` or under ${R0(i.target)}`:""}</td><td class="nw">${x.at?ago(new Date(x.at*1000).toISOString()):'<span class="muted">waiting</span>'}</td>
+      <td><button class="btn small" type="button" data-pwdel="${esc(i.plid)}">Remove</button></td></tr>`; }).join("")}</tbody>`:"";
+}
+async function saveWatch(items){
+  const {error}=await sb.from("app_state").upsert({key:"watchlist", value:{items}, updated_at:new Date().toISOString()});
+  if(error){ toast("Couldn't save: "+errMsg(error)); return false; } appState.watchlist={items}; renderPriceWatch(); return true; }
+$("#pwForm").addEventListener("submit",async e=>{ e.preventDefault();
+  const raw=$("#pwLink").value.trim(), m=raw.match(/PLID(\d+)/i)||raw.match(/^(\d{5,})$/);
+  if(!m){ toast("Paste a Takealot product link (it has PLID… in it) or the PLID number"); return; }
+  const plid=m[1], L=[...((appState.watchlist||{}).items||[])].filter(i=>i.plid!==plid);
+  const slug=(raw.match(/takealot\.com\/([^\/?#]+)\/PLID/i)||[])[1];
+  L.push({plid, title:slug?decodeURIComponent(slug).replace(/-/g," "):"", drop_pct:Math.min(80,Math.max(3,+$("#pwPct").value||10)), target:+$("#pwTarget").value||null, added:today(), by:me?.email||""});
+  if(await saveWatch(L)){ $("#pwLink").value=""; $("#pwTarget").value=""; toast("Watching it: first price in about 15 minutes"); } });
+$("#pwTable").addEventListener("click",e=>{ const b=e.target.closest("[data-pwdel]"); if(!b) return;
+  saveWatch(((appState.watchlist||{}).items||[]).filter(i=>i.plid!==b.dataset.pwdel)).then(ok=>ok&&toast("Removed")); });
+
 /* ---------------- price fighter ---------------- */
 function renderPrice(){
   const t=$("#pfTable"); if(!t) return;
@@ -2271,7 +2307,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v123)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v124)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2796,7 +2832,7 @@ function renderLists(){
 }
 function render(){
   if(!loaded){ $("#tiles").innerHTML=`<div class="tile"><span class="lbl">Loading</span><span class="val">…</span><span class="sub">Fetching your stock</span></div>`; return; }
-  renderLists(); renderSync(); renderOverview(); lazyRender("adjust",renderAdjust); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderClaims(); renderRemovals(); renderDebtors(); renderPrice(); lazyRender("products",renderProducts);
+  renderLists(); renderSync(); renderOverview(); lazyRender("adjust",renderAdjust); renderLedger(); renderMatch(); renderShips(); renderCheck(); renderRecons(); renderClaims(); renderRemovals(); renderDebtors(); renderPrice(); renderPriceWatch(); lazyRender("products",renderProducts);
 }
 // pages without a menu counter are only drawn when they're open (and again when you go to them)
 var _lazyDirty={};

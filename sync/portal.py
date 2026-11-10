@@ -666,6 +666,10 @@ def price_tick(cfg, log, force=False):
                     sale_watch(ctx, cfg, log)                 # new sales -> phone, every 2 minutes
                 except Exception:
                     pass
+                try:
+                    price_watch(tk, cfg, log)                 # 👀 price watcher: big drops on products you watch
+                except Exception as e:
+                    log("Price watcher: " + repr(e)[:150])
                 if _time.time() > t_end - 3:
                     break
                 # in a live fight (Buy Box changed in the last 10 min) check every 2 s; when it's quiet every 5 s,
@@ -2160,6 +2164,88 @@ def return_alerts(cfg, log):
         except Exception as e:
             log("Return notification failed: " + repr(e)[:120])
         log("Return notification: " + body)
+
+
+def price_watch(page, cfg, log):
+    """Price watcher (app: Price fighter page → 👀 Price watcher). Every ~15 minutes per product, read the price on
+    takealot.com and tell the phones when it drops a lot: by the product's drop % from its highest price in the last
+    7 days, or to/below its target price. Watchlist: app_state watchlist; prices: app_state watch_prices."""
+    import time as _t, stockrecon_sync as S
+    if _t.time() - getattr(S, "_PW_AT", 0) < 60:
+        return
+    S._PW_AT = _t.time()
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        got = db.select("app_state", "select=key,value&key=in.(watchlist,watch_prices)")
+    except Exception:
+        return
+    kv = {r["key"]: (r.get("value") or {}) for r in got}
+    items = (kv.get("watchlist") or {}).get("items") or []
+    if not items:
+        return
+    prices = kv.get("watch_prices") or {}
+    nowt = int(_t.time())
+    due = [i for i in items if str(i.get("plid") or "").isdigit() and nowt - int((prices.get(str(i["plid"])) or {}).get("at") or 0) >= 15 * 60][:3]
+    if not due:
+        return
+    changed = False
+    for it in due:
+        plid = str(it["plid"])
+        x = dict(prices.get(plid) or {})
+        try:
+            j = page.evaluate("""async (plid) => { try { const r = await fetch(`https://api.takealot.com/rest/v-1-19-0/product-details/PLID${plid}?platform=desktop&_=${Date.now()}`,
+                                  {credentials: "include", cache: "no-store"}); return r.ok ? await r.json() : {_status: r.status}; } catch (e) { return {_status: 0}; } }""", plid) or {}
+        except Exception:
+            j = {}
+        bb = (j.get("buybox") or {})
+        bi = bb.get("items") or []
+        sel = next((i for i in bi if i.get("is_selected")), bi[0] if bi else None)
+        price = float(sel["price"]) if sel and sel.get("price") else None
+        x["at"] = nowt
+        changed = True
+        if price is None:
+            x["ok"] = False
+            x["note"] = "Not for sale right now" if j and not j.get("_status") else f"Couldn't read it ({j.get('_status', '?')})"
+            prices[plid] = x
+            continue
+        title = (j.get("title") or (j.get("core") or {}).get("title") or it.get("title") or f"PLID{plid}")[:90]
+        hist = [h for h in (x.get("hist") or []) if nowt - int(h[0]) <= 14 * 86400]
+        if not hist or hist[-1][1] != price:
+            hist.append([nowt, price])
+        hist = hist[-200:]
+        high7 = max([h[1] for h in hist if nowt - int(h[0]) <= 7 * 86400] + [price])
+        low14 = min(h[1] for h in hist)
+        pct = float(it.get("drop_pct") or 10) / 100
+        target = float(it.get("target") or 0)
+        prev = x.get("price")
+        x.update(ok=True, note="", price=price, title=title, high7=high7, low14=low14, hist=hist)
+        if prev is None:
+            prices[plid] = x                        # first look: just remember the price
+            continue
+        alerted = x.get("alerted")
+        if alerted and price > alerted * (1 + pct / 2):
+            alerted = None                          # back up: a new big drop can alert again
+        base = min(high7, alerted) if alerted else high7
+        msg = None
+        if price <= base * (1 - pct):
+            msg = f"R{prev:,.0f} → R{price:,.0f} ({round(100 * (1 - price / high7))}% under its 7-day high R{high7:,.0f})"
+        elif target and price <= target and not x.get("hit_target"):
+            msg = f"R{price:,.0f}: at or under your target R{target:,.0f}"
+        if target:
+            x["hit_target"] = price <= target
+        if msg:
+            alerted = price
+            try:
+                notify(cfg, "📉 Big price drop on Takealot", f"{title}: {msg}" + (f" · {sel.get('seller_name') or ''}".rstrip(" ·") if sel else ""),
+                       url=f"https://www.takealot.com/x/PLID{plid}", topic="price", log=log, tag=f"watch-{plid}")
+                log(f"Price watcher: {title}: {msg}")
+            except Exception as e:
+                log("Price watcher notification failed: " + repr(e)[:120])
+        x["alerted"] = alerted
+        prices[plid] = x
+    if changed:
+        keep = {str(i.get("plid")) for i in items}
+        _app_state(cfg, "watch_prices", {k: v for k, v in prices.items() if k in keep})
 
 
 def sale_watch(ctx, cfg, log):
