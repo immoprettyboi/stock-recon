@@ -879,6 +879,35 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     sellable = sum(int((tsk.get(d) or {}).get("qty") or 0) for d in ("JHB", "CPT", "DBN")) + int((tsk.get("LEADTIME") or {}).get("qty") or 0)
     if tsk and sellable <= 0:
         msg = "No stock to sell on Takealot: not fighting until stock is back"
+        # while there's nothing to sell, park the price at your ceiling, so new stock doesn't go live at an old
+        # price-war price (the fighter brings it down again if it has to, once there is stock)
+        import time as _tp
+        ceil_p, cur_p, key = float(rule.get("ceiling_price") or 0), float(offer.get("price") or 0), _creds_key()
+        pk = _FCACHE.setdefault("park:" + sku, {})
+        if rule.get("mode") == "fight" and ceil_p and cur_p and cur_p < math.floor(ceil_p) and key and offer_id \
+                and _tp.time() - pk.get("at", 0) > 1800:
+            pk["at"] = _tp.time()
+            try:
+                r = ctx.request.patch(f"https://seller-api.takealot.com/v2/offers/offer/ID{offer_id}",
+                                      headers={"Authorization": f"Key {key}", "Content-Type": "application/json"},
+                                      data=json.dumps({"selling_price": int(math.floor(ceil_p))}), timeout=30_000)
+                errs = None
+                try:
+                    errs = (r.json() or {}).get("validation_errors")
+                except Exception:
+                    pass
+                if r.ok and not errs:
+                    st = dict(tsk)
+                    st["OFFER"] = {**offer, "price": int(math.floor(ceil_p))}
+                    db.patch("products", f"sku=eq.{sku}", {"takealot_stock": st})
+                    db.insert("price_log", [{"sku": sku, "my_price": cur_p, "bb_price": None, "bb_seller": None, "new_price": int(math.floor(ceil_p)),
+                                             "action": "reset", "note": "No stock: price parked at your ceiling"}])
+                    db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "my_price": int(math.floor(ceil_p)), "last_change_at": nowiso})
+                    log(f"Price fighter: {title}: no stock, price R{cur_p:,.0f} → R{ceil_p:,.0f} (parked at the ceiling).")
+                else:
+                    log(f"Price fighter: {title}: couldn't park the price at the ceiling ({r.status}): {str(errs or r.text()[:120])[:160]}")
+            except Exception as e:
+                log(f"Price fighter: {title}: couldn't park the price: {repr(e)[:120]}")
         if rule.get("last_action") != msg:
             db.patch("price_rules", f"sku=eq.{sku}", {"last_checked": nowiso, "last_action": msg, "winning": False})
         return
