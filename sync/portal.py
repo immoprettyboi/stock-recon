@@ -2470,6 +2470,12 @@ def leadtime_deadlines(cfg, log):
     units = db.select("units", "select=id,product,order_id,po,location,status,match_method&match_method=eq.leadtime-home&status=in.(awaiting_fees,in_stock)")
     units = [u for u in units if u.get("order_id") and u.get("location") == "HOME"]
     if not units:
+        try:                                             # nothing waiting any more: clear the old list in the app
+            got = db.select("app_state", "select=value&key=eq.leadtime_due")
+            if got and ((got[0].get("value") or {}).get("orders")):
+                _app_state(cfg, "leadtime_due", {"at": datetime.now().isoformat(timespec="seconds"), "orders": []})
+        except Exception:
+            pass
         return
     ships = db.select("courier_shipments", "select=reference,status,direction&direction=eq.to_takealot")
     booked_pos = {m for c in ships if c.get("status") != "cancelled" for m in __import__("re").findall(r"\d{9}", str(c.get("reference") or ""))}

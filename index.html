@@ -1493,7 +1493,10 @@ function renderOverview(){
     items.push({...(u?{u}:{go:"ship"}), tag:"Check", t:`PO ${p.po}: delivered ${days} days ago, Takealot hasn't received it`,
       d:`${contents(p)} on ${x.waybill} · Takealot says "${p.status}". If they rejected it and kept it, open the unit and tap "Rejected, Takealot kept it…".`}); });
   // ... or received fewer than were sent
-  pos.filter(p=>/receiv/i.test(p.status||"") && p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && (Date.now()-new Date(p.due_date))<30*864e5)
+  pos.filter(p=>/receiv/i.test(p.status||"") && p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && (Date.now()-new Date(p.due_date))<30*864e5
+      // not when the courier shipment for that PO was turned away and everything on it is accounted for (back home / coming back / sold)
+      && !(ships.some(x=>x.direction==="to_takealot" && poOf(x)===String(p.po) && ["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)) && !units.some(u=>u.po===String(p.po) && u.status==="in_stock"))
+      && ((appState.claims||{})["po:"+p.po]||{}).status!=="skip" && ((appState.claims||{})["po:"+p.po]||{}).status!=="paid")
     .forEach(p=>items.push({go:"ship", tag:"Check", t:`PO ${p.po}: Takealot received ${p.qty_received} of ${p.qty_sending}`, d:`${contents(p)} · find out what happened to the rest (rejected, kept or lost)`}));
   // new listings on Takealot (found by the sync) that aren't linked to your stock yet
   Object.entries(appState.new_listings||{}).forEach(([sku,x])=>{ const p=products.find(q=>q.sku===sku);
@@ -2307,7 +2310,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v124)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v125)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
