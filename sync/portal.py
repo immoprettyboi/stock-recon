@@ -1185,6 +1185,27 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             # (so the phone doesn't get 20 "100%" messages an hour and start muting the app)
         tm["last_routine"][sku] = int(nowt)
         st["win"], st["tot"], st["best"] = 0, 0, 0
+    # regular "still fine" update for listings you asked it for (app_state pf_updates: {sku: hours}): sent when the
+    # listing has been quiet that long, between 07:00 and 21:00
+    try:
+        hbc = _FCACHE.setdefault("hb_cfg", {})
+        if nowt - hbc.get("at", 0) > 600:
+            got = db.select("app_state", "select=value&key=eq.pf_updates")
+            hbc["v"], hbc["at"] = ((got[0].get("value") or {}) if got else {}), nowt
+        hours = float((hbc.get("v") or {}).get(sku) or 0)
+        if hours > 0:
+            hb = tm.setdefault("hb", {})
+            if alerts or not hb.get(sku):
+                hb[sku] = int(nowt)                      # something else was just said about it: start counting again
+            elif nowt - hb[sku] >= hours * 3600 and 7 <= datetime.now().hour < 21:
+                hb[sku] = int(nowt)
+                state_s = (f"✅ Still holding the Buy Box at R{my_price:,.0f}" if winning else
+                           f"🏷️ Still in the Best Price box at R{my_price:,.0f}" if live.get("slot") == "lowest_priced" else
+                           f"❌ Still not in the Buy Box: you R{my_price:,.0f}, Buy Box R{bb_price:,.0f}")
+                om = live.get("other_min")
+                alerts.append((state_s, f"{title}: no changes in the last {hours:g} hours" + (f" · next seller R{om:,.0f}" if winning and om else "")))
+    except Exception as e:
+        log("Price fighter update: " + repr(e)[:120])
     _tsave(tm)
     for t, b in alerts:
         try:
