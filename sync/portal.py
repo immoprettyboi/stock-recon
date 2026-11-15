@@ -2324,9 +2324,25 @@ def barcode_lookup(page, cfg, log):
         pg = None
         try:
             pg = page.context.new_page()
-            pg.goto(f"https://html.duckduckgo.com/html/?q=%22{code}%22", wait_until="domcontentloaded", timeout=20_000)
-            rows = pg.evaluate("""() => [...document.querySelectorAll('.result')].slice(0, 8).map(x => [
-                                    (x.querySelector('.result__a') || {}).innerText || '', (x.querySelector('.result__snippet') || {}).innerText || ''])""") or []
+            rows, dbg = [], []
+            engines = [("ddg", f"https://html.duckduckgo.com/html/?q=%22{code}%22", ".result", ".result__a", ".result__snippet"),
+                       ("bing", f"https://www.bing.com/search?q=%22{code}%22", "li.b_algo", "h2", ".b_caption p, p"),
+                       ("ddg-lite", f"https://lite.duckduckgo.com/lite/?q=%22{code}%22", "a.result-link", "", ""),
+                       ("brave", f"https://search.brave.com/search?q=%22{code}%22", "[data-type='web'], .snippet", ".title, a", ".snippet-description, .snippet-content")]
+            for name, url, sel, tsel, ssel in engines:      # the first search engine that answers a server wins
+                try:
+                    pg.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                    pg.wait_for_timeout(1200)
+                    rows = pg.evaluate("""([sel, tsel, ssel]) => [...document.querySelectorAll(sel)].slice(0, 8).map(x => [
+                                            ((tsel ? x.querySelector(tsel) : x) || {}).innerText || '', ((ssel ? x.querySelector(ssel) : null) || {}).innerText || ''])""",
+                                       [sel, tsel, ssel]) or []
+                    rows = [r for r in rows if len(str(r[0]).strip()) >= 8]
+                    dbg.append(f"{name}:{len(rows)}:{(pg.title() or '')[:30]}")
+                    if rows:
+                        break
+                except Exception as e:
+                    dbg.append(f"{name}:err {repr(e)[:40]}")
+            out["dbg"] = " | ".join(dbg)[:300]
             import re as _re
             seen_t = set()
             for t, snip in rows:
