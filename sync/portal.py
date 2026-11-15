@@ -667,6 +667,10 @@ def price_tick(cfg, log, force=False):
                 except Exception:
                     pass
                 try:
+                    barcode_lookup(tk, cfg, log)              # the app scanned an unknown box barcode: what product is it?
+                except Exception as e:
+                    log("Barcode lookup: " + repr(e)[:150])
+                try:
                     price_watch(tk, cfg, log)                 # 👀 price watcher: big drops on products you watch
                 except Exception as e:
                     log("Price watcher: " + repr(e)[:150])
@@ -2231,6 +2235,82 @@ def return_alerts(cfg, log):
         except Exception as e:
             log("Return notification failed: " + repr(e)[:120])
         log("Return notification: " + body)
+
+
+def barcode_lookup(page, cfg, log):
+    """The app scanned a box barcode it doesn't know (app_state bc_lookup {code, at}): find what product it is and
+    answer in app_state bc_result within a few seconds. Looks at your own Takealot listings first, then searches takealot.com."""
+    import time as _t, stockrecon_sync as S
+    if _t.time() - getattr(S, "_BC_AT", 0) < 4:
+        return
+    S._BC_AT = _t.time()
+    db = S.DB(cfg["url"], cfg["key"])
+    try:
+        got = db.select("app_state", "select=value&key=eq.bc_lookup")
+    except Exception:
+        return
+    req = (got[0].get("value") or {}) if got else {}
+    code = "".join(ch for ch in str(req.get("code") or "") if ch.isalnum())[:20]
+    if not code or req.get("at") == getattr(S, "_BC_DONE", None):
+        return
+    S._BC_DONE = req.get("at")
+    out = {"code": code, "at": req.get("at"), "results": [], "src": "", "note": ""}
+    variants = {code, code.lstrip("0"), code.zfill(13), code.zfill(14)}
+    # 1. your own listings (the offers feed carries each listing's barcode)
+    try:
+        offers = globals().get("LAST_OFFERS") or json.loads((DEBUG_DIR / "offers.json").read_text(encoding="utf-8")).get("offers") or []
+    except Exception:
+        offers = []
+    for o in offers:
+        codes = {str(o.get(k) or "") for k in ("barcode", "gtin", "ean")} | {str((o.get("tsin") or {}).get(k) or "") for k in ("barcode", "gtin", "ean")}
+        if codes & variants:
+            out["results"].append({"title": ((o.get("tsin") or {}).get("title") or ""), "plid": (o.get("tsin") or {}).get("productline_id"), "mine": True})
+    if out["results"]:
+        out["src"] = "your listings"
+    else:
+        # 2. search takealot.com for the barcode
+        url = f"https://api.takealot.com/rest/v-1-11-0/searches/products?qsearch={code}"
+        j = {}
+        try:
+            j = page.evaluate("""async (u) => { try { const r = await fetch(u, {credentials: "include", cache: "no-store"});
+                                  return r.ok ? await r.json() : {_status: r.status}; } catch (e) { return {_status: 0, _text: String(e).slice(0, 120)}; } }""", url) or {}
+        except Exception as e:
+            j = {"_status": 0, "_text": repr(e)[:120]}
+        if not isinstance(j, dict) or j.get("_status") is not None:
+            try:
+                rr = page.context.request.get(url, headers={"Referer": "https://www.takealot.com/", "Origin": "https://www.takealot.com",
+                                                            "Accept": "application/json"}, timeout=20_000)
+                j = (rr.json() or {}) if rr.ok else {"_status": rr.status}
+            except Exception as e:
+                j = {"_status": 0, "_text": repr(e)[:120]}
+        found = []
+
+        def walk(x, depth=0):                           # the search answer nests its products: collect every {title, ...} that looks like one
+            if depth > 9 or len(found) >= 8:
+                return
+            if isinstance(x, dict):
+                t = x.get("title")
+                if isinstance(t, str) and len(t) > 8 and (x.get("slug") or x.get("brand") or x.get("brand_url") or x.get("star_rating") is not None):
+                    found.append({"title": t[:140], "brand": x.get("brand") if isinstance(x.get("brand"), str) else "", "slug": x.get("slug") or ""})
+                    return
+                for v in x.values():
+                    walk(v, depth + 1)
+            elif isinstance(x, list):
+                for v in x[:40]:
+                    walk(v, depth + 1)
+        walk(j)
+        seen_t = set()
+        for f in found:
+            if f["title"] not in seen_t:
+                seen_t.add(f["title"])
+                out["results"].append(f)
+        out["results"] = out["results"][:5]
+        out["src"] = "takealot.com"
+        if not out["results"]:
+            out["note"] = f"Takealot answered {j.get('_status')}" if j.get("_status") is not None else "Not found on Takealot"
+            out["keys"] = list(j.keys())[:12] if isinstance(j, dict) else []
+    _app_state(cfg, "bc_result", out)
+    log(f"Barcode lookup {code}: {len(out['results'])} result(s) from {out['src'] or 'nowhere'}" + (f" ({out['note']})" if out["note"] else "") + ".")
 
 
 def price_watch(page, cfg, log):

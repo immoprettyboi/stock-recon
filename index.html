@@ -1013,6 +1013,7 @@ html[data-tone="dark"][data-look="aero"] #pushLast{background:rgba(251,191,36,.1
   <form class="dlg-body" id="bcForm" autocomplete="off">
     <p class="note" style="margin:0">You scanned <b class="mono" id="bcCode"></b>. Is it the barcode on the box, or this unit's IMEI / serial number?</p>
     <div class="field wide"><label for="bc-product">If it's the box barcode: which product?</label><input id="bc-product" list="dl-products" placeholder="Pick the product"></div>
+    <div id="bcFind" class="note" style="margin:0" aria-live="polite"></div>
     <div class="form-actions"><button class="btn primary" type="submit">Box barcode: remember it</button><div class="spacer"></div><button class="btn" type="button" id="bcSerial">It's a serial / IMEI</button></div>
   </form>
 </dialog>
@@ -2310,7 +2311,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v125)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v126)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2964,10 +2965,33 @@ function onScan(raw){
   if(!cur || looksLikeBox(c)){                      // unknown box barcode, or no product picked yet: ask once, remember it
     if(barcodes===null && !cur){ return scanSay("Pick the product first (run 16_database_update.sql in Supabase so the app can learn box barcodes).",false); }
     bcPending=c; $("#bcCode").textContent=c; $("#bc-product").value=cur; $("#bcSerial").hidden=!cur;
-    camPause(true); $("#bcDlg").showModal(); setTimeout(()=>$("#bc-product").focus(),50); return;
+    camPause(true); $("#bcDlg").showModal(); setTimeout(()=>$("#bc-product").focus(),50);
+    if(looksLikeBox(c)) bcLookup(c); else $("#bcFind").innerHTML="";
+    return;
   }
   addSerial(c);
 }
+/* an unknown box barcode: ask the server what product it is (your own Takealot listings first, then a search on takealot.com) */
+let bcLookTok=0;
+async function bcLookup(code){
+  const tok=++bcLookTok, box=$("#bcFind"), at=new Date().toISOString();
+  box.innerHTML=`🔎 Looking up ${esc(code)} on Takealot…`;
+  const {error}=await sb.from("app_state").upsert({key:"bc_lookup", value:{code, at, by:me?.email||""}, updated_at:at});
+  if(error){ box.textContent="Couldn't look it up: type the product name."; return; }
+  for(let i=0;i<20;i++){
+    await new Promise(r=>setTimeout(r,1500));
+    if(tok!==bcLookTok || bcPending!==code || !$("#bcDlg").open) return;
+    const {data}=await sb.from("app_state").select("value").eq("key","bc_result").maybeSingle();
+    const v=data&&data.value; if(!v || v.at!==at) continue;
+    if(!v.results||!v.results.length){ box.textContent=`Not found on Takealot (${v.note||"no match"}): type the product name.`; return; }
+    box.innerHTML=`<b>Found on ${esc(v.src||"Takealot")}:</b> tap the right one<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">${v.results.map((r,k)=>`<button class="btn small" type="button" data-bcpick="${k}" style="text-align:left;white-space:normal">${r.mine?"⭐ ":""}${esc(r.title)}</button>`).join("")}</div>`;
+    box._res=v.results;
+    if(!$("#bc-product").value.trim()) $("#bc-product").value=v.results[0].title;     // best match filled in: change it if it's wrong
+    beep(true); return;
+  }
+  if(tok===bcLookTok) box.textContent="No answer from the server in 30 seconds: type the product name.";
+}
+$("#bcFind").addEventListener("click",e=>{ const b=e.target.closest("[data-bcpick]"); if(!b) return; const r=($("#bcFind")._res||[])[+b.dataset.bcpick]; if(r){ $("#bc-product").value=r.title; $("#bc-product").focus(); } });
 $("#a-scan").addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key==="Tab"){ e.preventDefault(); onScan(e.target.value); e.target.value=""; } });
 $("#bcForm").addEventListener("submit",async e=>{ e.preventDefault();
   const name=$("#bc-product").value.trim(), c=bcPending; if(!name){ $("#bc-product").focus(); return; }
