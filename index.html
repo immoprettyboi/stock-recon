@@ -2311,7 +2311,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v127)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v128)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2512,8 +2512,8 @@ $("#opexRepeat").addEventListener("click",async()=>{
   const have=new Set(expenses.filter(e=>OPEX_CATS.has(e.category) && String(e.date).slice(0,7)===m).map(e=>(e.raw||{}).type+"|"+e.description));
   const days=new Date(y,mo,0).getDate();
   const rows=src.filter(e=>!have.has((e.raw||{}).type+"|"+e.description)).map(e=>({ id:`opex-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-    date:`${m}-${String(Math.min(+String(e.date).slice(8,10),days)).padStart(2,"0")}`, category:e.category, amount:e.amount, description:e.description, source:"app",
-    raw:{...(e.raw||{}), copied_from:e.id} }));
+    date:`${m}-${String(Math.min(+String(e.date).slice(8,10),days)).padStart(2,"0")}`, category:e.category, amount:Number((e.raw||{}).usual_amount)||e.amount, description:e.description, source:"app",   // a one-off different amount last month doesn't carry over
+    raw:(({usual_amount,this_month_note,...r})=>({...r, copied_from:e.id}))(e.raw||{}) }));
   if(!rows.length){ toast("Already copied for this month"); return; }
   const {error}=await sb.from("expenses").insert(rows);
   if(error) toast("Couldn't copy: "+errMsg(error)); else { toast(`${rows.length} monthly cost${rows.length>1?"s":""} copied to ${MONL[mo-1]}`); loadAll(); } });
