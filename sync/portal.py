@@ -2308,7 +2308,49 @@ def barcode_lookup(page, cfg, log):
         out["src"] = "takealot.com"
         if not out["results"]:
             out["note"] = f"Takealot answered {j.get('_status')}" if j.get("_status") is not None else "Not found on Takealot"
-            out["keys"] = list(j.keys())[:12] if isinstance(j, dict) else []
+    # 3. not on Takealot: a barcode database, then a web search for the barcode number
+    if not out["results"]:
+        try:
+            rr = page.context.request.get(f"https://api.upcitemdb.com/prod/trial/lookup?upc={code}", headers={"Accept": "application/json"}, timeout=12_000)
+            if rr.ok:
+                for it in ((rr.json() or {}).get("items") or [])[:3]:
+                    if it.get("title"):
+                        out["results"].append({"title": str(it["title"])[:140], "brand": it.get("brand") or ""})
+                if out["results"]:
+                    out["src"] = "a barcode database"
+        except Exception:
+            pass
+    if not out["results"]:
+        pg = None
+        try:
+            pg = page.context.new_page()
+            pg.goto(f"https://html.duckduckgo.com/html/?q=%22{code}%22", wait_until="domcontentloaded", timeout=20_000)
+            rows = pg.evaluate("""() => [...document.querySelectorAll('.result')].slice(0, 8).map(x => [
+                                    (x.querySelector('.result__a') || {}).innerText || '', (x.querySelector('.result__snippet') || {}).innerText || ''])""") or []
+            import re as _re
+            seen_t = set()
+            for t, snip in rows:
+                t = _re.sub(r"\s+", " ", str(t)).strip()
+                t = _re.split(r"\s+[|\u2013\u2014-]\s+(?=[^|\u2013\u2014-]*$)", t)[0].strip() if len(t) > 30 else t     # drop a trailing " - Shop name"
+                if len(t) < 8 or t.lower() in seen_t or _re.fullmatch(r"[\d\s]+", t):
+                    continue
+                seen_t.add(t.lower())
+                out["results"].append({"title": t[:140], "web": True})
+            out["results"] = out["results"][:5]
+            if out["results"]:
+                out["src"] = "a web search"
+        except Exception as e:
+            out["note"] = (out["note"] + " · web search failed: " + repr(e)[:80]).strip(" ·")
+        finally:
+            try:
+                if pg:
+                    pg.close()
+            except Exception:
+                pass
+    if out["results"]:
+        out["note"] = ""
+    elif "web search failed" not in out["note"]:
+        out["note"] = "Not found on Takealot or online"
     _app_state(cfg, "bc_result", out)
     log(f"Barcode lookup {code}: {len(out['results'])} result(s) from {out['src'] or 'nowhere'}" + (f" ({out['note']})" if out["note"] else "") + ".")
 

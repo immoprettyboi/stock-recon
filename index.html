@@ -2311,7 +2311,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v126)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v127)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2975,21 +2975,21 @@ function onScan(raw){
 let bcLookTok=0;
 async function bcLookup(code){
   const tok=++bcLookTok, box=$("#bcFind"), at=new Date().toISOString();
-  box.innerHTML=`🔎 Looking up ${esc(code)} on Takealot…`;
+  box.innerHTML=`🔎 Looking up ${esc(code)} on Takealot and online…`;
   const {error}=await sb.from("app_state").upsert({key:"bc_lookup", value:{code, at, by:me?.email||""}, updated_at:at});
   if(error){ box.textContent="Couldn't look it up: type the product name."; return; }
-  for(let i=0;i<20;i++){
+  for(let i=0;i<40;i++){
     await new Promise(r=>setTimeout(r,1500));
     if(tok!==bcLookTok || bcPending!==code || !$("#bcDlg").open) return;
     const {data}=await sb.from("app_state").select("value").eq("key","bc_result").maybeSingle();
     const v=data&&data.value; if(!v || v.at!==at) continue;
-    if(!v.results||!v.results.length){ box.textContent=`Not found on Takealot (${v.note||"no match"}): type the product name.`; return; }
-    box.innerHTML=`<b>Found on ${esc(v.src||"Takealot")}:</b> tap the right one<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">${v.results.map((r,k)=>`<button class="btn small" type="button" data-bcpick="${k}" style="text-align:left;white-space:normal">${r.mine?"⭐ ":""}${esc(r.title)}</button>`).join("")}</div>`;
+    if(!v.results||!v.results.length){ box.textContent=`${v.note||"Not found"}: type the product name.`; return; }
+    box.innerHTML=`<b>Found ${/takealot|listings/.test(v.src||"")?"on":"with"} ${esc(v.src||"Takealot")}:</b> tap the right one${v.results[0].web?", then tidy the name if needed":""}<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">${v.results.map((r,k)=>`<button class="btn small" type="button" data-bcpick="${k}" style="text-align:left;white-space:normal">${r.mine?"⭐ ":""}${esc(r.title)}</button>`).join("")}</div>`;
     box._res=v.results;
     if(!$("#bc-product").value.trim()) $("#bc-product").value=v.results[0].title;     // best match filled in: change it if it's wrong
     beep(true); return;
   }
-  if(tok===bcLookTok) box.textContent="No answer from the server in 30 seconds: type the product name.";
+  if(tok===bcLookTok) box.textContent="No answer from the server in a minute: type the product name.";
 }
 $("#bcFind").addEventListener("click",e=>{ const b=e.target.closest("[data-bcpick]"); if(!b) return; const r=($("#bcFind")._res||[])[+b.dataset.bcpick]; if(r){ $("#bc-product").value=r.title; $("#bc-product").focus(); } });
 $("#a-scan").addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key==="Tab"){ e.preventDefault(); onScan(e.target.value); e.target.value=""; } });
