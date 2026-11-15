@@ -2331,7 +2331,6 @@ def barcode_lookup(page, cfg, log):
             seen_t = set()
             for t, snip in rows:
                 t = _re.sub(r"\s+", " ", str(t)).strip()
-                t = _re.split(r"\s+[|\u2013\u2014-]\s+(?=[^|\u2013\u2014-]*$)", t)[0].strip() if len(t) > 30 else t     # drop a trailing " - Shop name"
                 if len(t) < 8 or t.lower() in seen_t or _re.fullmatch(r"[\d\s]+", t):
                     continue
                 seen_t.add(t.lower())
