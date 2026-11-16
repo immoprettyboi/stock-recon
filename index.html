@@ -1497,6 +1497,7 @@ function renderOverview(){
   pos.filter(p=>/receiv/i.test(p.status||"") && p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && (Date.now()-new Date(p.due_date))<30*864e5
       // not when the courier shipment for that PO was turned away and everything on it is accounted for (back home / coming back / sold)
       && !(ships.some(x=>x.direction==="to_takealot" && poOf(x)===String(p.po) && ["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)) && !units.some(u=>u.po===String(p.po) && u.status==="in_stock"))
+      && !shortExplained(p)
       && ((appState.claims||{})["po:"+p.po]||{}).status!=="skip" && ((appState.claims||{})["po:"+p.po]||{}).status!=="paid")
     .forEach(p=>items.push({go:"ship", tag:"Check", t:`PO ${p.po}: Takealot received ${p.qty_received} of ${p.qty_sending}`, d:`${contents(p)} · find out what happened to the rest (rejected, kept or lost)`}));
   // new listings on Takealot (found by the sync) that aren't linked to your stock yet
@@ -2311,7 +2312,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v129)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v130)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2647,11 +2648,15 @@ $("#reconTable").addEventListener("click",async e=>{
 
 /* ---------------- Takealot claims: short receipts, queries and the monthly recon in one list ---------------- */
 const CLAIMST={open:"To claim",claimed:"Claimed, waiting",paid:"Paid",skip:"Not claiming"};
+// a short receipt is explained when the units Takealot didn't take are accounted for: taken off that PO again
+// (refused / rejected: coming back to you, or already back) with a note naming the PO
+const shortExplained=p=>{ const miss=(p.qty_sending||0)-(p.qty_received||0); if(miss<=0) return true;
+  return units.filter(u=>u.po!==String(p.po) && String(u.comment||"").includes(String(p.po)) && /refus|reject|coming back|arrived back|kept/i.test(u.comment||"")).length>=miss; };
 function claimRows(){
   const saved=appState.claims||{}, out=[];
   const rejectedPO=new Set(ships.filter(x=>x.direction==="to_takealot"&&["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)).map(x=>poOf(x)).filter(Boolean));
   pos.filter(p=>p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && /receiv|closed/i.test(p.status||"") && (Date.now()-new Date(p.due_date))<120*864e5 && !rejectedPO.has(String(p.po)))
-    .forEach(p=>{ const us=units.filter(u=>u.po===String(p.po)); if(!us.length) return;      // only POs the app tracks (from the start date on)
+    .forEach(p=>{ const us=units.filter(u=>u.po===String(p.po)); if(!us.length || shortExplained(p)) return;      // only POs the app tracks, and not when the missing units are coming back
       const miss=p.qty_sending-p.qty_received;
       // which lines came up short, valued at what those units cost you
       const lines=(Array.isArray(p.items)?p.items:[]).filter(i=>i.received!=null && +i.received<+i.qty).map(i=>{ const n=+i.qty-+i.received;
