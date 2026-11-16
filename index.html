@@ -2311,7 +2311,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v128)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v129)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -3132,7 +3132,12 @@ $("#addForm").addEventListener("submit", async e=>{
   }
   $("#addBtn").disabled=false; $("#addMsg").textContent="";
   if(error){ $("#addMsg").textContent=/invoice_no/.test(errMsg(error))?"Run 19_database_update.sql in Supabase first (adds invoice numbers)":"Couldn't save: "+errMsg(error); return; }
-  $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(how==="owe"?` · ${R(total)} added to what you owe ${base.supplier}`:how==="upfront"?" · paid upfront":" · paid"):""}`); $("#a-qty").value=1; $("#a-sn").value=""; snHint(); loadAll();
+  $("#a-cond").value="new"; $("#condHint").textContent=""; toast(`Added ${qty} × ${base.condition!=="new"?base.condition.toUpperCase()+" ":""}${base.product}${total>0?(how==="owe"?` · ${R(total)} added to what you owe ${base.supplier}`:how==="upfront"?" · paid upfront":" · paid"):""}`); 
+  // start fresh for the next lot of stock: every box cleared, date back to today, ready to scan
+  $("#addForm").reset(); $("#a-received").value=today(); $("#a-qty").value=1; $("#a-sn").value=""; $("#scanMsg").textContent="";
+  try{ snHint(); invAddHint(); addHints(); }catch(e){}
+  window.scrollTo({top:0}); if(matchMedia("(pointer:fine)").matches) $("#a-scan").focus();
+  loadAll();
 });
 
 // a supplier's invoices: units bought on it + amounts owed on it, less payments made against it
