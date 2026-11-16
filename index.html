@@ -1498,7 +1498,8 @@ function renderOverview(){
       // not when the courier shipment for that PO was turned away and everything on it is accounted for (back home / coming back / sold)
       && !(ships.some(x=>x.direction==="to_takealot" && poOf(x)===String(p.po) && ["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)) && !units.some(u=>u.po===String(p.po) && u.status==="in_stock"))
       && !shortExplained(p)
-      && ((appState.claims||{})["po:"+p.po]||{}).status!=="skip" && ((appState.claims||{})["po:"+p.po]||{}).status!=="paid")
+      && ((appState.claims||{})["po:"+p.po]||{}).status!=="skip" && ((appState.claims||{})["po:"+p.po]||{}).status!=="paid"
+      && poExplained(p.po) < p.qty_sending-p.qty_received)          // the missing ones are known: Takealot refused them and they're coming back
     .forEach(p=>items.push({go:"ship", tag:"Check", t:`PO ${p.po}: Takealot received ${p.qty_received} of ${p.qty_sending}`, d:`${contents(p)} · find out what happened to the rest (rejected, kept or lost)`}));
   // new listings on Takealot (found by the sync) that aren't linked to your stock yet
   Object.entries(appState.new_listings||{}).forEach(([sku,x])=>{ const p=products.find(q=>q.sku===sku);
@@ -2312,7 +2313,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v130)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v131)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2646,6 +2647,8 @@ $("#reconTable").addEventListener("click",async e=>{
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([data.csv],{type:"text/csv"})); a.download=data.file_name||`Takealot Stock Recon ${b.dataset.rdl}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},500); });
 
+/* units a PO came up short by that are already explained: refused / rejected / kept by Takealot and coming (or come) back */
+function poExplained(po){ const re=new RegExp("PO "+po+"\\b"); return units.filter(u=>re.test(u.comment||"") && /refused|rejected|kept it|damaged/i.test(u.comment||"") && u.po!==String(po)).length; }
 /* ---------------- Takealot claims: short receipts, queries and the monthly recon in one list ---------------- */
 const CLAIMST={open:"To claim",claimed:"Claimed, waiting",paid:"Paid",skip:"Not claiming"};
 // a short receipt is explained when the units Takealot didn't take are accounted for: taken off that PO again
@@ -2657,7 +2660,7 @@ function claimRows(){
   const rejectedPO=new Set(ships.filter(x=>x.direction==="to_takealot"&&["returned-to-sender","returned-to-hub","delivery-rejected"].includes(x.status)).map(x=>poOf(x)).filter(Boolean));
   pos.filter(p=>p.qty_received!=null && p.qty_sending!=null && p.qty_received<p.qty_sending && /receiv|closed/i.test(p.status||"") && (Date.now()-new Date(p.due_date))<120*864e5 && !rejectedPO.has(String(p.po)))
     .forEach(p=>{ const us=units.filter(u=>u.po===String(p.po)); if(!us.length || shortExplained(p)) return;      // only POs the app tracks, and not when the missing units are coming back
-      const miss=p.qty_sending-p.qty_received;
+      const miss=p.qty_sending-p.qty_received-poExplained(p.po); if(miss<=0) return;      // refused units coming back aren't a claim
       // which lines came up short, valued at what those units cost you
       const lines=(Array.isArray(p.items)?p.items:[]).filter(i=>i.received!=null && +i.received<+i.qty).map(i=>{ const n=+i.qty-+i.received;
         const same=units.filter(u=>(u.sku&&u.sku===i.sku)||grpName(u.product)===grpName(i.title)).filter(u=>+u.cost>0), c=same.length?same.reduce((a,u)=>a+u.cost,0)/same.length:0;
