@@ -1592,6 +1592,39 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Portal code search failed: " + repr(e)[:200])
 
+            # ---- asked for from the app (app_state portal_scan {at, keys:[...]}): list the Seller Portal's own API paths and
+            #      show the code around some keywords -> app_state portal_scan_result. Read-only: only downloads the portal's code.
+            try:
+                import stockrecon_sync as _S
+                _db = _S.DB(cfg["url"], cfg["key"])
+                got = _db.select("app_state", "select=key,value&key=in.(portal_scan,portal_scan_result)")
+                kv = {r["key"]: (r.get("value") or {}) for r in got}
+                req = kv.get("portal_scan") or {}
+                if req.get("at") and (kv.get("portal_scan_result") or {}).get("at") != req.get("at"):
+                    import re as _rb
+                    home = ctx.request.get("https://sellers.takealot.com/", timeout=60_000).text()
+                    mains = _rb.findall(r'/assets/(main-[A-Za-z0-9_-]+\.js)', home)
+                    js = ""
+                    for mn in mains[:3]:
+                        js += ctx.request.get(f"https://sellers.takealot.com/assets/{mn}", timeout=60_000).text()
+                    chunks = sorted(set(_rb.findall(r'assets/([A-Za-z0-9_.-]+\.js)', js)))
+                    for c in chunks[:600]:
+                        try:
+                            js += "\n/*" + c + "*/\n" + ctx.request.get(f"https://sellers.takealot.com/assets/{c}", timeout=30_000).text()
+                        except Exception:
+                            pass
+                    paths = sorted(set(m for m in _rb.findall(r'[`"\'](/?v[12i]/[^`"\'\s]{2,160})[`"\']', js)))
+                    want = [k.lower() for k in (req.get("path_words") or ["shipment", "slot", "booking", "label", "facility", "warehouse", "delivery", "po"])]
+                    out = {"at": req["at"], "size": len(js), "chunks": len(chunks), "all_paths": len(paths),
+                           "paths": [x for x in paths if any(w in x.lower() for w in want)][:400], "segs": []}
+                    for key in (req.get("keys") or [])[:25]:
+                        for m in list(_rb.finditer(_rb.escape(key), js))[:int(req.get("per_key") or 3)]:
+                            out["segs"].append({"key": key, "text": js[max(0, m.start() - int(req.get("before") or 500)): m.start() + int(req.get("after") or 700)]})
+                    _app_state(cfg, "portal_scan_result", out)
+                    log(f"Portal scan: {len(out['paths'])} paths, {len(out['segs'])} code pieces saved.")
+            except Exception as e:
+                log("Portal scan failed: " + repr(e)[:200])
+
             # ---- one-off: read how the portal asks for a report (debug/recon_discover3.txt)
             try:
                 if (DEBUG_DIR / "recon_discover3.txt").exists():
