@@ -2313,7 +2313,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v132)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v133)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -2733,6 +2733,8 @@ function renderCheck(){
     const cells=DCS.map(dc=>{ const a=g.app[dc]||0, t=g.tal[dc]||0, w=g.way[dc]||0, L=(g.lead||{})[dc]||0;
       let d=a-(t+w); const leadNote = d<0 && L>0 ? Math.min(L,-d) : 0; d+=leadNote;
       const RJ=(g.rej||{})[dc]||0, rejNote = d<0 && RJ>0 && w>0 ? Math.min(RJ,w,-d) : 0; d+=rejNote;
+      const RT=units.filter(u=>u.status==="return_takealot" && u.location===dc && ((products.find(p=>p.sku===u.sku)||{}).product||grpName(u.product))===n).length, retNote = d<0 && RT>0 ? Math.min(RT,-d) : 0; d+=retNote;
+      if(!d && retNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">${retNote} customer return${retNote>1?"s":""} already back in Takealot's stock; the app puts ${retNote>1?"them":"it"} back In stock when Takealot finalises the return</div></td>`;
       if(!d && rejNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${rejNote} rejected by Takealot and sent back to you (Takealot still shows ${rejNote>1?"them":"it"} on the way)</div></td>`;
       if(!d && leadNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${leadNote} sold on a lead-time order, on its way</div></td>`;
       const Q=(g.q||{})[dc]||0, qNote=Q?`<div class="muted" style="font-size:12px">${Q} under query with Takealot</div>`:"";
