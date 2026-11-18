@@ -1455,7 +1455,7 @@ function renderOverview(){
     <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery, salaries & expenses`:`no sales in ${esc(mLabel)}`}</span></div>
     <div class="tile" data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
     <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l).length}`).join(" · ")}</span></div>
+    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l && !onWay(u)).length}`).join(" · ")}${stock.some(onWay)?` · 🚚 on the way to Takealot ${stock.filter(onWay).length}`:""}</span></div>
     <div class="tile"><span class="lbl">Stock on hand at cost</span><span class="val">${R0(stockV)}</span><span class="sub">${stock.length?`what you paid for the ${stock.length} units · avg ${R0(stockV/stock.length)} a unit`:"no unsold stock"}</span></div>
     <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
 
@@ -1585,7 +1585,7 @@ function filtered(){
   return units.filter(u=>{
     if(SOLD.has(u.status)) return false;                 // sold units live on the Sales page
     if(state.only && !state.only.has(u.product)) return false;
-    if(state.where && !(u.status==="in_stock" && (state.where==="home" ? u.location==="HOME" : ["JHB","CPT","DBN"].includes(u.location)))) return false;
+    if(state.where && !(u.status==="in_stock" && (state.where==="home" ? u.location==="HOME" : state.where==="way" ? onWay(u) : (["JHB","CPT","DBN"].includes(u.location) && !onWay(u))))) return false;
     if(state.status && u.status!==state.status) return false;
     if(state.loc && u.location!==state.loc) return false;
     if(state.sup && u.supplier!==state.sup) return false;
@@ -1612,24 +1612,31 @@ function filtered(){
     return (a.received||"").localeCompare(b.received||"") || a.product.localeCompare(b.product);
   });
 }
+/* on a send-in PO that Takealot hasn't received yet (with Adam / the courier, or still to be collected): on the way, not at Takealot */
+function onWay(u){ if(!u || u.status!=="in_stock" || !u.po || u.order_id || !["JHB","CPT","DBN"].includes(u.location)) return false;
+  const k=pos.length+":"+ships.length;
+  if(onWay.k!==k){ onWay.m=Object.fromEntries(pos.map(p=>[String(p.po), !/receiv/i.test(p.status||"") && !(p.qty_received>0) && !/cancel/i.test(p.status||"")])); onWay.k=k; }
+  return onWay.m[String(u.po)]===true; }
 function renderWhere(){
   const inS=units.filter(u=>u.status==="in_stock");
-  const home=inS.filter(u=>u.location==="HOME"), tal=inS.filter(u=>["JHB","CPT","DBN"].includes(u.location));
+  const home=inS.filter(u=>u.location==="HOME"), way=inS.filter(onWay), tal=inS.filter(u=>["JHB","CPT","DBN"].includes(u.location) && !onWay(u));
   const val=a=>R0(a.reduce((t,u)=>t+(Number(u.cost)||0),0));
   const dcs=["JHB","CPT","DBN"].map(d=>[d,tal.filter(u=>u.location===d).length]).filter(x=>x[1]);
   const btn=(k,l,n,sub)=>`<button type="button" role="tab" data-w="${k}" aria-selected="${state.where===k}"><div class="w-l">${l}</div><div class="w-n">${n}</div><div class="w-s">${sub}</div></button>`;
   $("#where").innerHTML=btn("","All stock & sales",units.length,`${inS.length} in stock`)+
     btn("home","🏠 At home",home.length,`${val(home)} at cost`)+
-    btn("tal","📦 At Takealot",tal.length,`${dcs.map(([d,n])=>`${d} ${n}`).join(" · ")||"none"} · ${val(tal)}`);
+    btn("tal","📦 At Takealot",tal.length,`${dcs.map(([d,n])=>`${d} ${n}`).join(" · ")||"none"} · ${val(tal)}`)+
+    (way.length?btn("way","🚚 On the way to Takealot",way.length,`${["JHB","CPT","DBN"].map(d=>[d,way.filter(u=>u.location===d).length]).filter(x=>x[1]).map(([d,n])=>`${d} ${n}`).join(" · ")} · ${val(way)}`):"");
+  if(state.where==="way" && !way.length) state.where="";
   const box=$("#whereSum");
   if(!state.where){ box.hidden=true; return; }
-  const list=state.where==="home"?home:tal, by={};
+  const list=state.where==="home"?home:state.where==="way"?way:tal, by={};
   list.forEach(u=>{const b=by[u.product]||(by[u.product]={n:0,c:0,JHB:0,CPT:0,DBN:0,used:0}); b.n++; b.c+=Number(u.cost)||0; if(b[u.location]!=null) b[u.location]++; if(u.condition&&u.condition!=="new") b.used++;});
   const rows=Object.entries(by).sort((a,b)=>b[1].n-a[1].n||a[0].localeCompare(b[0]));
-  const t=state.where==="tal";
+  const t=state.where==="tal"||state.where==="way";
   $("#whereTbl").innerHTML=`<thead><tr><th>Product</th>${t?'<th class="num">JHB</th><th class="num">CPT</th><th class="num">DBN</th>':""}<th class="num">Units</th><th class="num">Cost value</th></tr></thead>
-    <tbody>${rows.map(([p,b])=>`<tr><td class="prod">${esc(p)}${b.used?`<span class="cond">${b.used} USED/FAULTY</span>`:""}</td>${t?`<td class="num">${b.JHB||""}</td><td class="num">${b.CPT||""}</td><td class="num">${b.DBN||""}</td>`:""}<td class="num"><b>${b.n}</b></td><td class="num">${R0(b.c)}</td></tr>`).join("")||`<tr><td class="muted">Nothing ${t?"at Takealot":"at home"} right now.</td></tr>`}</tbody>
-    ${rows.length?`<tfoot><tr><td>${rows.length} product${rows.length>1?"s":""}</td>${t?`<td class="num">${tal.filter(u=>u.location==="JHB").length||""}</td><td class="num">${tal.filter(u=>u.location==="CPT").length||""}</td><td class="num">${tal.filter(u=>u.location==="DBN").length||""}</td>`:""}<td class="num"><b>${list.length}</b></td><td class="num">${val(list)}</td></tr></tfoot>`:""}`;
+    <tbody>${rows.map(([p,b])=>`<tr><td class="prod">${esc(p)}${b.used?`<span class="cond">${b.used} USED/FAULTY</span>`:""}</td>${t?`<td class="num">${b.JHB||""}</td><td class="num">${b.CPT||""}</td><td class="num">${b.DBN||""}</td>`:""}<td class="num"><b>${b.n}</b></td><td class="num">${R0(b.c)}</td></tr>`).join("")||`<tr><td class="muted">Nothing ${state.where==="way"?"on the way":t?"at Takealot":"at home"} right now.</td></tr>`}</tbody>
+    ${rows.length?`<tfoot><tr><td>${rows.length} product${rows.length>1?"s":""}</td>${t?`<td class="num">${list.filter(u=>u.location==="JHB").length||""}</td><td class="num">${list.filter(u=>u.location==="CPT").length||""}</td><td class="num">${list.filter(u=>u.location==="DBN").length||""}</td>`:""}<td class="num"><b>${list.length}</b></td><td class="num">${val(list)}</td></tr></tfoot>`:""}`;
   box.hidden=false;
 }
 $("#where").addEventListener("click",e=>{const b=e.target.closest("[data-w]"); if(!b) return; state.only=null; state.where=b.dataset.w; state.status=""; state.loc=""; $("#fLoc").value=""; renderLedger();});
@@ -1681,7 +1688,7 @@ function ledgerCols(){ return [
   {k:"product", l:"Product", v:u=>u.product},
   {k:"status", l:"Status", v:u=>stLabel(u), sel:true},
   {k:"supplier", l:"Supplier", v:u=>u.supplier||"", sel:true},
-  {k:"location", l:"Location", v:u=>u.location==="INBOUND"?"On the way":(u.location||""), sel:true},
+  {k:"location", l:"Location", v:u=>u.location==="INBOUND"?"On the way":onWay(u)?`On the way to ${u.location}`:(u.location||""), sel:true},
   {k:"received", l:"Received", v:u=>fd(u.received), sv:u=>u.received||""},
   {k:"po", l:"PO", v:u=>u.po||""},
   {k:"order_id", l:"Order ID", v:u=>u.order_id||""},
@@ -1713,7 +1720,7 @@ function renderLedger(){
   $("#ledger tbody").innerHTML=L2.map(u=>`<tr tabindex="0" data-id="${esc(u.id)}" class="row-s-${u.status}">
     <td class="prod">${esc(u.product)}${u.condition&&u.condition!=="new"?`<span class="cond">${u.condition==="used"?"USED":"FAULTY"}</span>`:""}${u.flag?`<span class="flag" title="${esc(u.comment)}">CHECK</span>`:""}</td>
     <td><span class="pill s-${u.status}">${esc(stLabel(u))}</span>${talLine(u)?`<div class="tal-st">${esc(talLine(u))}</div>`:""}</td>
-    <td>${esc(u.supplier||"")}</td><td>${esc(u.location==="INBOUND"?"On the way":u.location)}</td>
+    <td>${esc(u.supplier||"")}</td><td>${esc(u.location==="INBOUND"?"On the way":u.location)}${onWay(u)?`<div class="tal-st">🚚 on the way, not received yet</div>`:""}</td>
     <td class="nw">${fd(u.received)}${u.arrived_at?`<div class="tal-st">back home ${fd(u.arrived_at)}</div>`:""}</td>
     <td class="mono">${esc(u.po||"")}</td><td class="mono">${esc(u.order_id||"")}</td><td>${esc(u.invoice_no||"")}</td><td class="mono-s">${esc(u.sn||"")}</td>
     <td class="num">${R(u.cost)}</td></tr>`).join("") || `<tr><td colspan="${LCOLS.length}" class="muted">No units match these filters.</td></tr>`;
@@ -1888,7 +1895,7 @@ function renderAdjust(){
   const kl=$("#adjLoc").value; $("#adjLoc").innerHTML=`<option value="">Any location</option>`+LOCS.map(l=>`<option value="${l}">${l==="INBOUND"?"On the way to me":l}</option>`).join(""); $("#adjLoc").value=kl;
   const L=adjPool(), sel=new Set([...document.querySelectorAll(".adj-cb:checked")].map(c=>c.value));
   t.innerHTML = !$("#adjProd").value ? `<tbody><tr><td class="muted">Pick a product to see its units in stock.</td></tr></tbody>` : L.length ? `<thead><tr><th><input type="checkbox" id="adjAll" aria-label="Select all"></th><th>Added</th><th>Supplier</th><th>Location</th><th>Received</th><th>Serial</th><th>Invoice</th><th class="num">Cost</th><th>Note</th></tr></thead><tbody>${L.map(u=>`<tr>
-      <td><input type="checkbox" class="adj-cb" value="${esc(u.id)}" ${sel.has(u.id)?"checked":""}></td><td class="nw">${soldWhen({sold_date:u.created_at})}</td><td>${esc(u.supplier||"")}</td><td>${esc(u.location==="INBOUND"?"On the way":u.location)}</td>
+      <td><input type="checkbox" class="adj-cb" value="${esc(u.id)}" ${sel.has(u.id)?"checked":""}></td><td class="nw">${soldWhen({sold_date:u.created_at})}</td><td>${esc(u.supplier||"")}</td><td>${esc(u.location==="INBOUND"?"On the way":u.location)}${onWay(u)?`<div class="tal-st">🚚 on the way, not received yet</div>`:""}</td>
       <td class="nw">${fd(u.received)}</td><td class="mono">${esc(u.sn||"–")}</td><td>${esc(u.invoice_no||"–")}</td><td class="num">${R(u.cost)}</td><td style="min-width:180px">${esc(String(u.comment||"").slice(0,80))}</td></tr>`).join("")}</tbody>`
     : `<tbody><tr><td class="muted">No unsold units of this product in stock.</td></tr></tbody>`;
   adjCount();
@@ -2313,7 +2320,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v133)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v134)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
