@@ -248,6 +248,17 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
             if not cand:
                 cand = [u for u in pool if u.get("location") == s["fulfilment_dc"]]
                 method = "fifo"
+            if not cand and "inter dc" in s["sale_status"].lower():
+                # Takealot is moving one of your units from another of its warehouses to the customer's warehouse:
+                # take the oldest unit at the other warehouse that holds the most of this product
+                others = [u for u in pool if u.get("location") in ("JHB", "CPT", "DBN") and u.get("location") != s["fulfilment_dc"]]
+                if others:
+                    count = {}
+                    for u in others:
+                        count[u["location"]] = count.get(u["location"], 0) + 1
+                    src = max(count, key=count.get)
+                    cand = [u for u in others if u["location"] == src]
+                    method = "inter-dc"
             if not cand:
                 break
             cand.sort(key=lambda u: (u.get("received") or "9999", u.get("id")))
@@ -266,6 +277,10 @@ def match(sales: list[dict], units: list[dict], sku_map: dict[str, str], since: 
                           sku=s["sku"], match_method=method)
             if method == "po-home":
                 fields["po"] = s["po"]
+                fields["location"] = s["fulfilment_dc"]
+            if method == "inter-dc":
+                fields["comment"] = (f"Inter DC transfer: Takealot moved it from {u.get('location')} to {s['fulfilment_dc']} for order {s['order_id']}. "
+                                     + (u.get("comment") or "")).strip()
                 fields["location"] = s["fulfilment_dc"]
             if method == "leadtime-home":
                 if u.get("po"):                          # an old PO (e.g. a shipment Takealot sent back) no longer applies
