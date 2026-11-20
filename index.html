@@ -676,6 +676,12 @@ html[data-skin="pro"][data-look][data-tone] .sync{padding:10px 16px;align-items:
 html[data-skin="pro"][data-look][data-tone] .sync h2{font:600 14px var(--body)}
 html[data-skin="pro"][data-look][data-tone] .sync p{font-size:12.5px;margin:0}
 html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin-top:2px}
+
+/* Needs you: prominent when there is something to do, one quiet line when there isn't */
+#needsPanel:has(.attn>.empty){display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding-block:12px}
+#needsPanel:has(.attn>.empty) .empty{border:0!important;background:none!important;padding:0;text-align:left;color:var(--muted);font-size:13.5px}
+#needsPanel:not(:has(.attn>.empty)){border-color:var(--warn)}
+@media (min-width:900px){ #needsPanel .attn{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px} #wait{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px;align-items:start} }
 </style>
 </head>
 <body>
@@ -741,18 +747,16 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
       </div>
       <button class="btn" type="button" id="syncNow">Sync now</button>
     </div>
-    <div class="cols">
-      <div class="panel">
-        <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
-        <div class="attn" id="attn"></div>
-      </div>
-      <div class="panel">
-        <div class="sec-head"><h2>Waiting on Takealot</h2><p id="waitSub">Nothing for you to do; it updates on its own</p></div>
-        <div class="attn" id="wait"></div>
-      </div>
+    <div class="panel" id="needsPanel">
+      <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
+      <div class="attn" id="attn"></div>
     </div>
     <div class="ov" id="tiles"></div>
     <div class="panel" id="payoutCard" hidden></div>
+    <div class="panel">
+      <div class="sec-head"><h2>Waiting on Takealot</h2><p id="waitSub">Nothing for you to do; it updates on its own</p></div>
+      <div class="attn" id="wait"></div>
+    </div>
     <div class="panel chart-card">
       <div class="sec-head"><h2 id="chTitle">Profit by day</h2>
         <div class="seg" role="group" aria-label="Measure">
@@ -1616,7 +1620,7 @@ function renderOverview(){
           <tr><td>Cost of the units sold</td>${nMoney(C,1)}</tr>
           <tr class="sum"><td>Profit from sales <span class="muted">${margin}%</span></td>${nMoney(P)}</tr>
           <tr><td>Delivery</td>${nMoney(XD,1)}</tr>
-          <tr data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><td>Salaries and expenses <span class="muted">${monthOpex.length?`${monthOpex.length} entr${monthOpex.length===1?"y":"ies"}`:"none added"} ›</span></td>${nMoney(XO,1)}</tr>
+          <tr data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><td>Salaries and expenses <span class="muted" style="white-space:nowrap">${monthOpex.length?`${monthOpex.length} entr${monthOpex.length===1?"y":"ies"}`:"none added"} ›</span></td>${nMoney(XO,1)}</tr>
           <tr class="total"><td>Profit</td><td class="num ${P-X<0?"neg":"pos"}">${R0(P-X)}</td></tr>
         </tbody></table>
       </div>
@@ -2500,7 +2504,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v138)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v139)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
