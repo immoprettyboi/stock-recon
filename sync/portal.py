@@ -912,7 +912,15 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
     if not (hc.get("v") or {}).get(sku):
         return
     st["at"] = _t.time()
-    guest = tm.get("guest") or -random.randint(1_000_000_000, 2_000_000_000)
+    guest = tm.get("guest")
+    if not guest:                                       # the id Takealot's own site uses for this browser's guest cart, if it has one
+        try:
+            found = page.evaluate("""() => { const pile = [document.cookie]; try { for (let i = 0; i < localStorage.length; i++) pile.push(localStorage.getItem(localStorage.key(i))); } catch (e) {}
+                                      const m = pile.join(' ').match(/(?:customer|cust|uuid|guest)[^-\\d]{0,24}(-\\d{6,12})/i) || pile.join(' ').match(/(-\\d{8,12})/); return m ? m[1] : null; }""")
+            guest = int(found) if found else None
+        except Exception:
+            guest = None
+    guest = guest or -random.randint(1_000_000_000, 2_000_000_000)
     tm["guest"] = guest
     _tsave(tm)
     url = f"https://api.takealot.com/rest/v-1-19-0/customers/{guest}/cart/items"
@@ -959,6 +967,11 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         wh = seen["wh"] if (n and seen["wh"] is not None) else n
     except Exception as e:
         log(f"Competitor count ({title}): {repr(e)[:140]}")
+        _app_state(cfgn, "comp_stock_err", {"at": datetime.utcnow().isoformat() + "Z", "sku": sku, "err": repr(e)[:300], "guest_len": len(str(guest)), "url": (page.url or "")[:60]})
+        tmx = _tload()
+        if "cart answered" in repr(e):
+            tmx.pop("guest", None)                      # try a fresh guest id next time
+            _tsave(tmx)
         try:
             ask(0)
         except Exception:
@@ -1256,6 +1269,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             _comp_count(page, cfgn, sku, title, live, my_price, log)
     except Exception as e:
         log("Competitor count: " + repr(e)[:150])
+        try:
+            _app_state(cfgn, "comp_stock_err", {"at": datetime.utcnow().isoformat() + "Z", "sku": sku, "err": "outer: " + repr(e)[:300]})
+        except Exception:
+            pass
     alerts = []
     # three states: the Buy Box (Fastest Delivery), the Best Price box (cheapest, but on lead time), or neither
     state = "win" if winning else "best" if live.get("slot") == "lowest_priced" else "lost"
