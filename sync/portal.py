@@ -929,7 +929,16 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         al = ((j.get("cart_items") or [{}])[0].get("allocations") or [{}])[0]
         if q and al.get("unit_price") and abs(float(al["unit_price"]) - float(live["price"])) > 0.5:
             raise RuntimeError("the cart picked a different seller's offer")      # the box moved while we were asking
-        return not (j.get("quantity_warnings") or {})
+        ok = not (j.get("quantity_warnings") or {})
+        if ok:                                           # "more than currently available at our warehouse (current stock = 8)": the rest is his lead-time stock
+            seen["wh"] = q
+            for nt in ((j.get("cart_items") or [{}])[0].get("notifications") or []):
+                if nt.get("code") == "EXCEED_AVAILABLE_WAREHOUSE_STOCK":
+                    m = __import__("re").search(r"current stock\s*=\s*(\d+)", str(nt.get("description") or ""))
+                    vals = [v for v in (nt.get("values") or []) if str(v).isdigit()]
+                    seen["wh"] = int(m.group(1)) if m else int(vals[0]) if vals else None
+        return ok
+    seen = {"wh": None}
     try:
         known = st.get("n")
         if known and ask(known) and not ask(known + 1):
@@ -945,6 +954,9 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
                 else:
                     hi = m
             n = lo
+        if n:
+            ask(n)                                       # the highest accepted quantity: its answer says how much of it is in the warehouse
+        wh = seen["wh"] if (n and seen["wh"] is not None) else n
     except Exception as e:
         log(f"Competitor count ({title}): {repr(e)[:140]}")
         try:
@@ -956,10 +968,10 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         ask(0)                                           # leave the guest cart empty
     except Exception:
         pass
-    prev = st.get("n")
+    prev, prev_wh = st.get("n"), st.get("wh")
     tm = _tload()
     st = tm.setdefault("cnt", {}).setdefault(sku, {})
-    st.update(n=n, at=_t.time(), seller=sid)
+    st.update(n=n, wh=wh, at=_t.time(), seller=sid)
     _tsave(tm)
     name = who.get("name") or f"seller {sid}"
     try:
@@ -968,20 +980,25 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         got = db.select("app_state", "select=value&key=eq.comp_stock")
         allv = (got[0].get("value") or {}) if got else {}
         hist = ((allv.get(sku) or {}).get("hist") or [])
-        if prev != n:
-            hist = (hist + [[datetime.utcnow().isoformat(timespec="seconds") + "Z", n]])[-60:]
-        allv[sku] = {"at": datetime.utcnow().isoformat() + "Z", "n": n, "seller": sid, "name": name, "price": live["price"], "hist": hist}
+        if prev != n or prev_wh != wh:
+            hist = (hist + [[datetime.utcnow().isoformat(timespec="seconds") + "Z", wh, n - wh]])[-60:]
+        allv[sku] = {"at": datetime.utcnow().isoformat() + "Z", "n": n, "wh": wh, "lt": n - wh, "seller": sid, "name": name, "price": live["price"], "hist": hist}
         _app_state(cfgn, "comp_stock", allv)
     except Exception:
         pass
-    if prev == n and st.get("seller_prev", sid) == sid:
+    if prev == n and prev_wh == wh:
         return
-    if prev is None or prev == n:
-        t, b = f"👀 {name} has {n} in stock", f"{title} at Takealot · R{live['price']:,.0f} (you R{my_price:,.0f}). You'll get a message each time this changes."
-    elif n < prev:
-        t, b = f"📉 {name} sold {prev - n}: {n} left", f"{title} · was {prev} · R{live['price']:,.0f} (you R{my_price:,.0f})"
+    lt = n - wh
+    tail = (f" + {lt} on lead time" if lt else "") + f" · R{live['price']:,.0f} (you R{my_price:,.0f})"
+    if prev is None or prev_wh is None:
+        t, b = f"👀 {name}: {wh} at Takealot", f"{title}{tail}. You'll get a message each time this changes."
+    elif wh < prev_wh:
+        t = f"🏁 {name} sold out at Takealot" if wh == 0 else f"📉 {name} sold {prev_wh - wh}: {wh} left at Takealot"
+        b = f"{title} · was {prev_wh}{tail}"
+    elif wh > prev_wh:
+        t, b = f"📦 {name} restocked: {wh} at Takealot", f"{title} · was {prev_wh}{tail}"
     else:
-        t, b = f"📦 {name} restocked: {n} in stock", f"{title} · was {prev} · R{live['price']:,.0f} (you R{my_price:,.0f})"
+        t, b = f"↕️ {name}: lead-time stock now {lt}", f"{title} · {wh} at Takealot{tail}"
     try:
         notify(cfgn, t, b, url="./?view=price", topic="price", log=log, tag=f"compcount-{sku}")
         log(f"Competitor count: {t} ({title})")

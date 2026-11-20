@@ -2530,7 +2530,7 @@ function renderPrice(){
   $("#cntPf").textContent = losing||"";
   t.innerHTML=`<thead><tr><th>Listing</th><th class="num">Your price</th><th>Buy Box</th><th class="num">Floor</th><th>On</th><th>Mode</th><th>Floor rule</th><th class="num">Ceiling</th><th>At the floor</th><th class="num">Step</th><th class="num">Check every</th><th>Raise when winning</th><th class="num">Max / day</th><th></th></tr></thead><tbody>${list.map(p=>{
     const r=pfRules.find(x=>x.sku===p.sku)||{}, o=p.takealot_stock.OFFER||{}, k=esc(p.sku);
-    const bb = r.last_checked ? (r.winning?`<span class="pill s-settled">You</span> R ${Math.round(r.bb_price).toLocaleString("en-ZA")}`:`<span class="pill s-return_me">Competitor</span> R ${Math.round(r.bb_price||0).toLocaleString("en-ZA")}`)+`<div class="tal-st">${esc(r.last_action||"")} · ${ago(r.last_checked)}</div>`+(()=>{ const c=(appState.comp_stock||{})[r.sku]; return c && !r.winning && (Date.now()-new Date(c.at))<36e5 ? `<div class="tal-st"><b>${esc(c.name||"Competitor")}: ${c.n} in stock</b> · counted ${ago(c.at)}</div>` : ""; })() : '<span class="muted">not checked yet</span>';
+    const bb = r.last_checked ? (r.winning?`<span class="pill s-settled">You</span> R ${Math.round(r.bb_price).toLocaleString("en-ZA")}`:`<span class="pill s-return_me">Competitor</span> R ${Math.round(r.bb_price||0).toLocaleString("en-ZA")}`)+`<div class="tal-st">${esc(r.last_action||"")} · ${ago(r.last_checked)}</div>`+(()=>{ const c=(appState.comp_stock||{})[r.sku]; return c && !r.winning && (Date.now()-new Date(c.at))<36e5 ? `<div class="tal-st"><b>${esc(c.name||"Competitor")}: ${c.wh??c.n} at Takealot${c.lt?` + ${c.lt} on lead time`:""}</b> · counted ${ago(c.at)}</div>` : ""; })() : '<span class="muted">not checked yet</span>';
     return `<tr data-pf="${k}">
       <td class="prod">${esc(p.takealot_title)}<div class="tal-st mono">${k}</div></td>
       <td class="num">${R0(r.my_price||o.price||0)}</td><td style="min-width:200px">${bb}</td>
@@ -2621,7 +2621,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v148)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v149)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
