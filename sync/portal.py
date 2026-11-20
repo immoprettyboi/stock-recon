@@ -885,7 +885,7 @@ def _read_live(page, plid, offer_id, mine):
     except Exception:
         comp = None
     return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot, "comp": comp,
-            "tsin": (j.get("buybox") or {}).get("tsin")}
+            "tsin": it.get("sku")}                 # the Buy Box offer's own id: what a cart is asked for (not the product's TSIN)
 
 
 def _comp_count(page, cfgn, sku, title, live, my_price, log):
