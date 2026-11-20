@@ -884,7 +884,109 @@ def _read_live(page, plid, offer_id, mine):
                 comp[sid] = {**_sa(o), "price": float(o.get("price") or 0), "name": str(sl.get("display_name") or "")[:40]}
     except Exception:
         comp = None
-    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot, "comp": comp}
+    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot, "comp": comp,
+            "tsin": (j.get("buybox") or {}).get("tsin")}
+
+
+def _comp_count(page, cfgn, sku, title, live, my_price, log):
+    """How many units the Buy Box seller has in Takealot's warehouses, for listings switched on in app_state comp_count
+    ({sku: true}). Takealot doesn't publish it, but a cart refuses a quantity it doesn't have ("We currently do not have N in stock"),
+    so a guest cart is asked for quantities until the highest accepted one is found, then emptied again. Nothing is bought.
+    Every 3 minutes: normally 2 requests (still N? not N+1?) plus the emptying."""
+    import time as _t, random
+    tsin = live.get("tsin")
+    comp = live.get("comp") or {}
+    sid = "".join(ch for ch in str(live.get("seller") or "") if ch.isdigit())
+    who = comp.get(sid) or {}
+    if not tsin or not sid or who.get("lt"):
+        return                                          # only when the box is held by a seller with warehouse stock
+    tm = _tload()
+    st = tm.setdefault("cnt", {}).setdefault(sku, {})
+    if _t.time() - st.get("at", 0) < 180:
+        return
+    hc = _FCACHE.setdefault("cc_cfg", {})
+    if _t.time() - hc.get("at", 0) > 300:
+        import stockrecon_sync as S
+        got = S.DB(cfgn["url"], cfgn["key"]).select("app_state", "select=value&key=eq.comp_count")
+        hc["v"], hc["at"] = ((got[0].get("value") or {}) if got else {}), _t.time()
+    if not (hc.get("v") or {}).get(sku):
+        return
+    st["at"] = _t.time()
+    guest = tm.get("guest") or -random.randint(1_000_000_000, 2_000_000_000)
+    tm["guest"] = guest
+    _tsave(tm)
+    url = f"https://api.takealot.com/rest/v-1-19-0/customers/{guest}/cart/items"
+
+    def ask(q):
+        j = page.evaluate("""async ([u, id, q]) => { try { const r = await fetch(u, {method: "PUT", credentials: "include", headers: {"Content-Type": "application/json"},
+                               body: JSON.stringify({products: [{id: id, quantity: q}]})}); return r.ok ? await r.json() : {_status: r.status}; }
+                               catch (e) { return {_status: 0, _text: String(e).slice(0, 100)}; } }""", [url, int(tsin), int(q)]) or {}
+        if j.get("_status") is not None:
+            raise RuntimeError(f"cart answered {j.get('_status')} {j.get('_text', '')}")
+        page.wait_for_timeout(700)
+        if q == 0:
+            return True
+        al = ((j.get("cart_items") or [{}])[0].get("allocations") or [{}])[0]
+        if q and al.get("unit_price") and abs(float(al["unit_price"]) - float(live["price"])) > 0.5:
+            raise RuntimeError("the cart picked a different seller's offer")      # the box moved while we were asking
+        return not (j.get("quantity_warnings") or {})
+    try:
+        known = st.get("n")
+        if known and ask(known) and not ask(known + 1):
+            n = known
+        else:
+            lo, hi = 0, 1                                # highest accepted, lowest refused
+            while hi <= 512 and ask(hi):
+                lo, hi = hi, hi * 2
+            while hi - lo > 1:
+                m = (lo + hi) // 2
+                if ask(m):
+                    lo = m
+                else:
+                    hi = m
+            n = lo
+    except Exception as e:
+        log(f"Competitor count ({title}): {repr(e)[:140]}")
+        try:
+            ask(0)
+        except Exception:
+            pass
+        return
+    try:
+        ask(0)                                           # leave the guest cart empty
+    except Exception:
+        pass
+    prev = st.get("n")
+    tm = _tload()
+    st = tm.setdefault("cnt", {}).setdefault(sku, {})
+    st.update(n=n, at=_t.time(), seller=sid)
+    _tsave(tm)
+    name = who.get("name") or f"seller {sid}"
+    try:
+        import stockrecon_sync as S
+        db = S.DB(cfgn["url"], cfgn["key"])
+        got = db.select("app_state", "select=value&key=eq.comp_stock")
+        allv = (got[0].get("value") or {}) if got else {}
+        hist = ((allv.get(sku) or {}).get("hist") or [])
+        if prev != n:
+            hist = (hist + [[datetime.utcnow().isoformat(timespec="seconds") + "Z", n]])[-60:]
+        allv[sku] = {"at": datetime.utcnow().isoformat() + "Z", "n": n, "seller": sid, "name": name, "price": live["price"], "hist": hist}
+        _app_state(cfgn, "comp_stock", allv)
+    except Exception:
+        pass
+    if prev == n and st.get("seller_prev", sid) == sid:
+        return
+    if prev is None or prev == n:
+        t, b = f"👀 {name} has {n} in stock", f"{title} at Takealot · R{live['price']:,.0f} (you R{my_price:,.0f}). You'll get a message each time this changes."
+    elif n < prev:
+        t, b = f"📉 {name} sold {prev - n}: {n} left", f"{title} · was {prev} · R{live['price']:,.0f} (you R{my_price:,.0f})"
+    else:
+        t, b = f"📦 {name} restocked: {n} in stock", f"{title} · was {prev} · R{live['price']:,.0f} (you R{my_price:,.0f})"
+    try:
+        notify(cfgn, t, b, url="./?view=price", topic="price", log=log, tag=f"compcount-{sku}")
+        log(f"Competitor count: {t} ({title})")
+    except Exception as e:
+        log("Competitor count notification failed: " + repr(e)[:120])
 
 
 def _comp_watch(cfgn, sku, title, live, my_price, log):
@@ -1132,6 +1234,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
         _comp_watch(cfgn, sku, title, live, my_price, log)
     except Exception as e:
         log("Competitor watch: " + repr(e)[:150])
+    try:
+        if not winning:
+            _comp_count(page, cfgn, sku, title, live, my_price, log)
+    except Exception as e:
+        log("Competitor count: " + repr(e)[:150])
     alerts = []
     # three states: the Buy Box (Fastest Delivery), the Best Price box (cheapest, but on lead time), or neither
     state = "win" if winning else "best" if live.get("slot") == "lowest_priced" else "lost"
