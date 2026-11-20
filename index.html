@@ -86,8 +86,6 @@ h2{font-family:var(--display);font-size:16px;font-weight:700;margin:0;text-wrap:
 .private-box{display:grid;gap:10px;padding:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--sunk)}
 .tal-st{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
 /* tiles */
-@media (min-width:700px){ #tiles{grid-template-columns:repeat(2,1fr)!important} }
-@media (min-width:1100px){ #tiles{grid-template-columns:repeat(5,1fr)!important} }
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .tile{background:var(--surface);padding:14px 16px;display:grid;gap:4px;align-content:start}
 .tile .lbl{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600}
@@ -645,6 +643,39 @@ html[data-skin="pro"][data-look][data-tone] #menuBtn{background:var(--surface);b
   html[data-skin="pro"][data-look][data-tone] .tiles .tile:hover{box-shadow:1px 0 0 var(--line),0 1px 0 var(--line)}
   html[data-skin="pro"][data-look][data-tone] .btn{transition:background .15s,border-color .15s}
 }
+
+/* ---- Overview: grouped by what belongs together ---- */
+.ov{display:grid;gap:20px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:1100px){ .ov{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)} }
+@media (min-width:700px) and (max-width:1099px){ .ov{grid-template-columns:1fr 1fr} .ov-result{grid-column:1/-1} }
+.ov .panel{align-content:start}
+.ov-result-body{display:grid;gap:20px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:700px){ .ov-result-body{grid-template-columns:minmax(200px,5fr) minmax(0,7fr);align-items:start} }
+.ov-hero{display:grid;gap:4px;align-content:start;padding:16px 18px;border-radius:10px;background:var(--ok-soft)}
+.ov-hero .lbl{font-size:13px;color:var(--muted)}
+.ov-hero .val{font:700 44px/1.05 var(--display);font-variant-numeric:tabular-nums}
+.ov-hero .sub{font-size:12.5px;color:var(--muted);line-height:1.45}
+.ov-ledger td{padding:7px 0;border-bottom:1px solid var(--line);font-size:14px}
+.ov-ledger td.num{font-variant-numeric:tabular-nums;padding-left:16px}
+.ov-ledger .neg-soft{color:var(--muted)}
+.ov-ledger tr.sum td{font-weight:600}
+.ov-ledger tr.total td{font:700 17px var(--display);border-bottom:0;border-top:1px solid var(--muted);padding-top:9px}
+.ov-ledger tr[data-go]:hover td{background:var(--sunk)}
+.ov-stats{display:grid;gap:14px}
+.ov-stats.two{grid-template-columns:auto 1fr;gap:14px 24px}
+.stat{display:grid;gap:1px}
+.stat .val{font:600 24px/1.15 var(--display);font-variant-numeric:tabular-nums}
+.stat .lbl{font-size:12.5px;color:var(--muted);line-height:1.4}
+.ov-places{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px}
+.ov-places .pl{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:13px}
+.ov-places .pl b{font-variant-numeric:tabular-nums;font-weight:600}
+.ov-places .pl i{grid-column:1/-1;height:4px;border-radius:2px;background:var(--sunk);position:relative;overflow:hidden}
+.ov-places .pl i::after{content:"";position:absolute;inset:0 auto 0 0;width:var(--w);background:var(--accent);border-radius:2px}
+/* the sync status is background information: one slim line */
+html[data-skin="pro"][data-look][data-tone] .sync{padding:10px 16px;align-items:center}
+html[data-skin="pro"][data-look][data-tone] .sync h2{font:600 14px var(--body)}
+html[data-skin="pro"][data-look][data-tone] .sync p{font-size:12.5px;margin:0}
+html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin-top:2px}
 </style>
 </head>
 <body>
@@ -710,16 +741,6 @@ html[data-skin="pro"][data-look][data-tone] #menuBtn{background:var(--surface);b
       </div>
       <button class="btn" type="button" id="syncNow">Sync now</button>
     </div>
-    <div class="tiles" id="tiles"></div>
-    <div class="panel" id="payoutCard" hidden></div>
-    <div class="panel chart-card">
-      <div class="sec-head"><h2 id="chTitle">Profit by day</h2>
-        <div class="seg" role="group" aria-label="Measure">
-          <button type="button" class="btn small on" data-ch="P">Profit</button><button type="button" class="btn small" data-ch="G">Sales</button><button type="button" class="btn small" data-ch="n">Units sold</button>
-        </div></div>
-      <p class="note" id="chSub"></p>
-      <div class="chart-wrap" id="chart"></div>
-    </div>
     <div class="cols">
       <div class="panel">
         <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
@@ -729,6 +750,16 @@ html[data-skin="pro"][data-look][data-tone] #menuBtn{background:var(--surface);b
         <div class="sec-head"><h2>Waiting on Takealot</h2><p id="waitSub">Nothing for you to do; it updates on its own</p></div>
         <div class="attn" id="wait"></div>
       </div>
+    </div>
+    <div class="ov" id="tiles"></div>
+    <div class="panel" id="payoutCard" hidden></div>
+    <div class="panel chart-card">
+      <div class="sec-head"><h2 id="chTitle">Profit by day</h2>
+        <div class="seg" role="group" aria-label="Measure">
+          <button type="button" class="btn small on" data-ch="P">Profit</button><button type="button" class="btn small" data-ch="G">Sales</button><button type="button" class="btn small" data-ch="n">Units sold</button>
+        </div></div>
+      <p class="note" id="chSub"></p>
+      <div class="chart-wrap" id="chart"></div>
     </div>
     <div class="panel">
       <div class="sec-head"><h2>Delivery costs</h2><p id="expSub">Courier Guy top-ups (read from your account) and Adam's deliveries; taken off the month's profit</p></div>
@@ -1566,17 +1597,47 @@ function renderOverview(){
   const monthExp = expenses.filter(e=>DELIV_CATS.has(e.category) && inM(e));
   const monthOpex = expenses.filter(e=>OPEX_CATS.has(e.category) && inM(e));
   const XD = monthExp.reduce((a,e)=>a+e.amount,0), XO = monthOpex.reduce((a,e)=>a+e.amount,0), X = XD+XO;
+  const nMoney=(v,neg)=>`<td class="num${neg&&v?" neg-soft":""}">${neg&&v?"− ":""}${R0(Math.abs(v))}</td>`;
+  const est=awaiting?P-X-sold.filter(u=>u.fees==null).reduce((t,u)=>t+estFees(u),0):null;
+  const nRet=monthRets.reduce((n,r)=>n+(r.qty||1),0), nQ=units.filter(u=>u.status==="missing_query").length;
+  const way=stock.filter(onWay), places=[["At home","HOME"],["Takealot JHB","JHB"],["Takealot CPT","CPT"],["Takealot DBN","DBN"]].map(([l,k])=>[l,stock.filter(u=>u.location===k && !onWay(u)).length])
+    .concat([["On the way to Takealot",way.length],["On the way to you",stock.filter(u=>u.location==="INBOUND").length]]).filter(x=>x[1]);
+  const maxP=Math.max(1,...places.map(x=>x[1]));
+  // grouped by what belongs together: the month's result (how the profit is made up), sales, then stock
   $("#tiles").innerHTML = `
-    <div class="tile"><span class="lbl">Units sold</span><span class="val">${sold.length}</span><span class="sub">${esc(mLabel)}</span></div>
-    <div class="tile"><span class="lbl">Gross sales</span><span class="val">${R0(G)}</span><span class="sub">Fees ${R0(F)}</span></div>
-    <div class="tile"><span class="lbl">Cost of units sold</span><span class="val">${R0(C)}</span><span class="sub">Net sales ${R0(G-F)}</span></div>
-    <div class="tile hero"><span class="lbl">Profit</span><span class="val"${P-X<0?' style="color:var(--bad)"':""}>${R0(P-X)}</span><span class="sub">${R0(P)} from sales${XD?` − ${R0(XD)} delivery`:""}${XO?` − ${R0(XO)} salaries & expenses`:""}${awaiting?` · ${awaiting} still awaiting fees: ≈ ${R0(P-X-sold.filter(u=>u.fees==null).reduce((t,u)=>t+estFees(u),0))} once Takealot charges them`:""}</span></div>
-    <div class="tile"><span class="lbl">Profit margin</span><span class="val">${G?((P-X)/G*100).toFixed(1):"0.0"}%</span><span class="sub">${G?`after all costs · ${margin}% before delivery, salaries & expenses`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile" data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><span class="lbl">Salaries & expenses</span><span class="val">${R0(XO)}</span><span class="sub">${monthOpex.length?`${monthOpex.filter(e=>e.category==="salary").length} salar${monthOpex.filter(e=>e.category==="salary").length===1?"y":"ies"} · ${monthOpex.filter(e=>e.category!=="salary").length} other · delivery ${R0(XD)}`:`none added for ${esc(mLabel)} · delivery ${R0(XD)}`}</span></div>
-    <div class="tile"><span class="lbl">Average sale price</span><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="sub">${sold.length?`Avg cost ${R0(C/sold.length)} · avg profit ${R0(P/sold.length)}`:`no sales in ${esc(mLabel)}`}</span></div>
-    <div class="tile"><span class="lbl">Stock on hand</span><span class="val">${stock.length}</span><span class="sub">units not sold yet · ${["JHB","CPT","DBN","HOME"].map(l=>`${l} ${stock.filter(u=>u.location===l && !onWay(u)).length}`).join(" · ")}${stock.some(onWay)?` · 🚚 on the way to Takealot ${stock.filter(onWay).length}`:""}</span></div>
-    <div class="tile"><span class="lbl">Stock on hand at cost</span><span class="val">${R0(stockV)}</span><span class="sub">${stock.length?`what you paid for the ${stock.length} units · avg ${R0(stockV/stock.length)} a unit`:"no unsold stock"}</span></div>
-    <div class="tile"><span class="lbl">Returns</span><span class="val">${monthRets.reduce((n,r)=>n+(r.qty||1),0)}</span><span class="sub">${monthRets.length?`${rk.sellable} back in stock · ${rk.pending} pending · ${rk.removal} to you`:`none in ${esc(mLabel)}`}${units.filter(u=>u.status==="missing_query").length?` · ${units.filter(u=>u.status==="missing_query").length} query open`:""}</span></div>`;
+    <section class="panel ov-result">
+      <div class="sec-head"><h2>Result for ${esc(mLabel)}</h2><p>after all costs</p></div>
+      <div class="ov-result-body">
+        <div class="ov-hero"><span class="lbl">Profit</span><span class="val ${P-X<0?"neg":"pos"}">${R0(P-X)}</span>
+          <span class="sub">${G?`${((P-X)/G*100).toFixed(1)}% of sales`:`no sales in ${esc(mLabel)}`}${est!=null?` · about ${R0(est)} once Takealot charges fees on ${awaiting} sale${awaiting>1?"s":""}`:""}</span></div>
+        <table class="ov-ledger"><tbody>
+          <tr><td>Sales</td>${nMoney(G)}</tr>
+          <tr><td>Takealot fees</td>${nMoney(F,1)}</tr>
+          <tr><td>Cost of the units sold</td>${nMoney(C,1)}</tr>
+          <tr class="sum"><td>Profit from sales <span class="muted">${margin}%</span></td>${nMoney(P)}</tr>
+          <tr><td>Delivery</td>${nMoney(XD,1)}</tr>
+          <tr data-go="expenses" style="cursor:pointer" title="Open Salaries & expenses"><td>Salaries and expenses <span class="muted">${monthOpex.length?`${monthOpex.length} entr${monthOpex.length===1?"y":"ies"}`:"none added"} ›</span></td>${nMoney(XO,1)}</tr>
+          <tr class="total"><td>Profit</td><td class="num ${P-X<0?"neg":"pos"}">${R0(P-X)}</td></tr>
+        </tbody></table>
+      </div>
+    </section>
+    <section class="panel ov-side">
+      <div class="sec-head"><h2>Sales</h2><p>${esc(mLabel)}</p></div>
+      <div class="ov-stats">
+        <div class="stat"><span class="val">${sold.length}</span><span class="lbl">units sold</span></div>
+        <div class="stat"><span class="val">${sold.length?R0(G/sold.length):"–"}</span><span class="lbl">average sale price</span></div>
+        <div class="stat"><span class="val">${sold.length?R0(P/sold.length):"–"}</span><span class="lbl">average profit a unit, before running costs</span></div>
+        <div class="stat"><span class="val">${nRet}</span><span class="lbl">${nRet?`returns: ${rk.sellable} back in stock, ${rk.pending} pending, ${rk.removal} to you`:"returns"}${nQ?` · ${nQ} query open`:""}</span></div>
+      </div>
+    </section>
+    <section class="panel ov-side">
+      <div class="sec-head"><h2>Stock</h2><p>not sold yet</p></div>
+      <div class="ov-stats two">
+        <div class="stat"><span class="val">${stock.length}</span><span class="lbl">units</span></div>
+        <div class="stat"><span class="val">${R0(stockV)}</span><span class="lbl">at cost${stock.length?`, ${R0(stockV/stock.length)} a unit`:""}</span></div>
+      </div>
+      <div class="ov-places">${places.map(([l,n])=>`<div class="pl"><span>${l}</span><b>${n}</b><i style="--w:${Math.round(n/maxP*100)}%"></i></div>`).join("")||'<p class="muted" style="margin:0">No unsold stock.</p>'}</div>
+    </section>`;
 
   // ---- Needs you: only things that need an action from you
   const items=[];
@@ -2439,7 +2500,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v137)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v138)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
