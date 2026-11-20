@@ -682,6 +682,44 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 #needsPanel:has(.attn>.empty) .empty{border:0!important;background:none!important;padding:0;text-align:left;color:var(--muted);font-size:13.5px}
 #needsPanel:not(:has(.attn>.empty)){border-color:var(--warn)}
 @media (min-width:900px){ #needsPanel .attn{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px} #wait{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px;align-items:start} }
+
+/* ---- frosted glass on the Ledger skin: soft colour fields behind, panels let a little of them through ---- */
+html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{ --gbg:rgba(24,28,37,.56); --gbg2:rgba(255,255,255,.035); --gline:rgba(255,255,255,.09); --gtop:rgba(255,255,255,.07); --gsolid:rgba(22,26,34,.94) }
+html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{ --gbg:rgba(255,255,255,.60); --gbg2:rgba(255,255,255,.55); --gline:rgba(30,45,80,.10); --gtop:rgba(255,255,255,.9); --gsolid:rgba(250,251,253,.96) }
+html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(22px) saturate(150%) }
+html[data-skin="pro"][data-look][data-tone]::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none}
+html[data-skin="pro"][data-look][data-tone="dark"]::before{background:
+  radial-gradient(60vw 55vh at 8% -5%, rgba(64,120,255,.30), transparent 65%),
+  radial-gradient(50vw 50vh at 100% 8%, rgba(38,190,160,.20), transparent 65%),
+  radial-gradient(55vw 60vh at 85% 105%, rgba(110,90,235,.22), transparent 65%),
+  radial-gradient(45vw 45vh at 0% 100%, rgba(240,150,70,.12), transparent 65%)}
+html[data-skin="pro"][data-look][data-tone="light"]::before{background:
+  radial-gradient(60vw 55vh at 8% -5%, rgba(120,165,255,.45), transparent 65%),
+  radial-gradient(50vw 50vh at 100% 8%, rgba(120,225,200,.38), transparent 65%),
+  radial-gradient(55vw 60vh at 85% 105%, rgba(180,165,255,.40), transparent 65%),
+  radial-gradient(45vw 45vh at 0% 100%, rgba(255,200,150,.35), transparent 65%)}
+html[data-skin="pro"][data-look][data-tone] body,html[data-skin="pro"][data-look][data-tone] body::before{background:transparent}
+html[data-skin="pro"][data-look][data-tone] :is(.panel,.sync,.tiles,.login-card,.where button,.card,.match-item){
+  background:var(--gbg);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline);box-shadow:inset 0 1px 0 var(--gtop),0 10px 30px rgba(0,0,0,.14)}
+html[data-skin="pro"][data-look][data-tone] .panel :is(.tiles,.card,.where button,.match-item){-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--gbg2);box-shadow:none}
+html[data-skin="pro"][data-look][data-tone] :is(.attn-item,.empty,.adam-bar,.private-box){background:var(--gbg2);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .tiles .tile{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .tiles .tile:hover{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .where button[aria-selected="true"]{background:var(--accent-soft)}
+html[data-skin="pro"][data-look][data-tone] :is(select,input,textarea){background:var(--gbg2);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .btn{background:var(--gbg2);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] :is(.btn.primary,.seg .btn.on){background:var(--accent);border-color:var(--accent)}
+html[data-skin="pro"][data-look][data-tone] :is(td,.ov-ledger td){border-bottom-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .ov-places{border-top-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .tscroll thead th{background:var(--gsolid)}
+html[data-skin="pro"][data-look][data-tone] :is(header.top,#side,#dock){background:var(--gbg);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] header.top{border-bottom:1px solid var(--gline)}
+html[data-skin="pro"][data-look][data-tone] #side{border-right:1px solid var(--gline)}
+html[data-skin="pro"][data-look][data-tone] dialog{background:var(--gsolid);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] dialog::backdrop{background:rgba(6,8,12,.45);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html[data-skin="pro"][data-look][data-tone] .dlg-head{background:transparent}
+html[data-skin="pro"][data-look][data-tone] :is(.hbar,.chart-tip){background:var(--gsolid)}
+@media (prefers-reduced-transparency:reduce){ html[data-skin="pro"][data-look][data-tone] :is(.panel,.sync,.tiles,.login-card,.where button,.card,.match-item,header.top,#side,#dock){background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none} }
 </style>
 </head>
 <body>
@@ -2504,7 +2542,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v139)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v140)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
