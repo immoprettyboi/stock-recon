@@ -686,8 +686,8 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 /* ---- frosted glass over a desert wallpaper: the app is one smoked-glass window; the wallpaper shows sharp around it and soft through it ---- */
 html:root[data-skin="pro"][data-look="aero"][data-tone]{ background:#2a1712 url(wallpaper.svg) center/cover fixed no-repeat }
 html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{
-  --win:rgba(24,20,20,.70); --card:rgba(255,255,255,.06); --card2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.12); --gtop:rgba(255,255,255,.16); --gsolid:rgba(40,33,31,.96);
-  --surface:#2a2321; --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.12); --fg:#f6f1ec; --muted:rgba(240,228,218,.64);
+  --win:rgba(24,20,20,.70); --card:rgba(255,255,255,.06); --card2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.12); --gtop:rgba(255,255,255,.16); --gsolid:rgba(72,60,56,.93);
+  --surface:rgba(255,255,255,.07); --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.12); --fg:#f6f1ec; --muted:rgba(240,228,218,.64);
   --accent:#ff9a5c; --accent-ink:#1c120d; --accent-soft:rgba(255,154,92,.16);
   --ok:#5fdc9e; --ok-soft:rgba(95,220,158,.13); --warn:#f6c15a; --bad:#ff8a8a; }
 html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{
@@ -707,7 +707,8 @@ html[data-skin="pro"][data-look][data-tone] :is(.attn-item,.empty,.adam-bar,.pri
 html[data-skin="pro"][data-look][data-tone] .tiles .tile,html[data-skin="pro"][data-look][data-tone] .tiles .tile:hover{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
 html[data-skin="pro"][data-look][data-tone] .where button[aria-selected="true"]{background:var(--accent-soft)}
 html[data-skin="pro"][data-look][data-tone] :is(select,input,textarea){background:var(--card2);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] select option{background:var(--surface);color:var(--fg)}
+html[data-skin="pro"][data-look][data-tone="dark"] select option{background:#40352f;color:var(--fg)}
+html[data-skin="pro"][data-look][data-tone="light"] select option{background:#fff;color:var(--fg)}
 html[data-skin="pro"][data-look][data-tone] .btn{background:var(--card);border-color:var(--gline)}
 html[data-skin="pro"][data-look][data-tone] .btn:hover{background:var(--sunk);border-color:var(--muted)}
 /* the main action is a solid light pill: the one thing on the glass that isn't see-through */
@@ -776,6 +777,19 @@ html[data-skin="pro"][data-look][data-tone] .btn.primary{position:relative;overf
   html[data-skin="pro"][data-look][data-tone] .btn.primary:hover:not(:disabled)::after{transform:translateX(120%);transition:transform .7s var(--ease)}
   html[data-skin="pro"][data-look][data-tone] .btn.primary:active:not(:disabled){transform:translateY(0) scale(.97);box-shadow:none}
 }
+
+/* nothing on the glass is a solid dark block: chips, the sideways scroll bar and small buttons are panes too */
+html[data-skin="pro"][data-look][data-tone] .chip{background:var(--card);border-color:var(--gline);color:var(--fg);font-weight:500}
+html[data-skin="pro"][data-look][data-tone="dark"] .chip[aria-pressed="true"]{background:#f6f1ec;color:#1c1512;border-color:#f6f1ec}
+html[data-skin="pro"][data-look][data-tone="light"] .chip[aria-pressed="true"]{background:#1d1613;color:#fff;border-color:#1d1613}
+html[data-skin="pro"][data-look][data-tone] .hbar{background:rgba(255,255,255,.10);-webkit-backdrop-filter:blur(18px) saturate(140%);backdrop-filter:blur(18px) saturate(140%);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .hbar button{background:rgba(255,255,255,.10);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .hbar .track::-webkit-scrollbar-track{background:rgba(255,255,255,.08)}
+html[data-skin="pro"][data-look][data-tone] .hbar .track::-webkit-scrollbar-thumb{background:rgba(255,255,255,.45)}
+html[data-skin="pro"][data-look][data-tone="light"] .hbar .track::-webkit-scrollbar-thumb{background:rgba(60,40,30,.4)}
+html[data-skin="pro"][data-look][data-tone] .toast{background:#f6f1ec;color:#1c1512}
+html[data-skin="pro"][data-look][data-tone] .calc{background:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .calc div{background:rgba(255,255,255,.06)}
 </style>
 </head>
 <body>
@@ -2607,7 +2621,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v146)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v147)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
