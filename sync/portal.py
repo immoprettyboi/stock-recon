@@ -1230,6 +1230,12 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             #     ready to fight again as soon as it moves up past the floor.
             ph = (_tload().get("phase") or {}).get(sku) or {}
             phase = ph.get("p") or "fight"
+            try:                                         # the rule was changed in the app after this wait / follow began: start the cycle again (up to the ceiling first)
+                ru = datetime.fromisoformat(str(rule.get("updated_at") or "").replace("Z", "+00:00")).timestamp()
+                if phase != "fight" and ru > float(ph.get("since") or 0) + 5:
+                    phase = "fight"
+            except Exception:
+                pass
             shadow = max(math.ceil(floor), math.floor(beat + step))
             if phase == "fight":
                 if my_price < ceiling:
