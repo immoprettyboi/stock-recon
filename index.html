@@ -684,15 +684,16 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 @media (min-width:900px){ #needsPanel .attn{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px} #wait{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px;align-items:start} }
 
 /* ---- frosted glass on the Ledger skin: soft colour fields behind, panels let a little of them through ---- */
-html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{ --gbg:rgba(24,28,37,.56); --gbg2:rgba(255,255,255,.035); --gline:rgba(255,255,255,.09); --gtop:rgba(255,255,255,.07); --gsolid:rgba(22,26,34,.94) }
-html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{ --gbg:rgba(255,255,255,.60); --gbg2:rgba(255,255,255,.55); --gline:rgba(30,45,80,.10); --gtop:rgba(255,255,255,.9); --gsolid:rgba(250,251,253,.96) }
-html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(22px) saturate(150%) }
+html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{ --gbg:rgba(30,36,50,.38); --gbg2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.13); --gtop:rgba(255,255,255,.14); --gsolid:rgba(22,26,34,.94) }
+html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{ --gbg:rgba(255,255,255,.46); --gbg2:rgba(255,255,255,.5); --gline:rgba(30,45,80,.10); --gtop:rgba(255,255,255,.9); --gsolid:rgba(250,251,253,.96) }
+html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(26px) saturate(170%) }
 html[data-skin="pro"][data-look][data-tone]::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none}
 html[data-skin="pro"][data-look][data-tone="dark"]::before{background:
-  radial-gradient(60vw 55vh at 8% -5%, rgba(64,120,255,.30), transparent 65%),
-  radial-gradient(50vw 50vh at 100% 8%, rgba(38,190,160,.20), transparent 65%),
-  radial-gradient(55vw 60vh at 85% 105%, rgba(110,90,235,.22), transparent 65%),
-  radial-gradient(45vw 45vh at 0% 100%, rgba(240,150,70,.12), transparent 65%)}
+  radial-gradient(70vw 60vh at 8% -5%, rgba(64,120,255,.62), transparent 68%),
+  radial-gradient(60vw 55vh at 100% 8%, rgba(30,200,165,.45), transparent 68%),
+  radial-gradient(65vw 65vh at 85% 105%, rgba(125,95,245,.52), transparent 68%),
+  radial-gradient(55vw 50vh at 0% 100%, rgba(245,140,70,.32), transparent 68%),
+  radial-gradient(45vw 40vh at 50% 50%, rgba(70,150,255,.22), transparent 70%)}
 html[data-skin="pro"][data-look][data-tone="light"]::before{background:
   radial-gradient(60vw 55vh at 8% -5%, rgba(120,165,255,.45), transparent 65%),
   radial-gradient(50vw 50vh at 100% 8%, rgba(120,225,200,.38), transparent 65%),
@@ -2542,7 +2543,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v140)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v141)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
