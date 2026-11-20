@@ -953,42 +953,57 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
                     seen["wh"] = int(m.group(1)) if m else int(vals[0]) if vals else None
         return ok
     seen = {"wh": None}
+    # Takealot drops cart requests that come in bursts, so each visit asks at most 3 quantities and remembers where it got to
+    # (lo = highest quantity accepted, hi = lowest refused). The first count takes a few visits; after that a visit is 1-2 requests.
+    lo, hi, done = int(st.get("lo") or 0), st.get("hi"), bool(st.get("done"))
+    wh_lo = st.get("wh_lo")
+    budget = 3
+
+    def step(q):
+        nonlocal lo, hi, wh_lo, budget
+        budget -= 1
+        if ask(q):
+            lo, wh_lo = q, (seen["wh"] if seen["wh"] is not None else q)
+            if hi is not None and hi <= lo:
+                hi = None
+            return True
+        hi = q
+        if lo >= hi:
+            lo, wh_lo = 0, None
+        return False
     try:
-        known = st.get("n")
-        if known and ask(known) and not ask(known + 1):
-            n = known
-        else:
-            lo, hi = 0, 1                                # highest accepted, lowest refused
-            while hi <= 512 and ask(hi):
-                lo, hi = hi, hi * 2
-            while hi - lo > 1:
-                m = (lo + hi) // 2
-                if ask(m):
-                    lo = m
-                else:
-                    hi = m
-            n = lo
-        if n:
-            ask(n)                                       # the highest accepted quantity: its answer says how much of it is in the warehouse
-        wh = seen["wh"] if (n and seen["wh"] is not None) else n
+        if done:                                         # still the same? (a sale usually takes exactly one off)
+            if step(lo):
+                done = not step(lo + 1)
+            else:
+                done = hi > 1 and step(hi - 1)
+        while not done and budget > 0:
+            if hi is not None and hi - lo <= 1:
+                done = True
+                break
+            step(max(8, lo * 2) if hi is None else (lo + hi) // 2)
+        if hi is not None and hi - lo <= 1:
+            done = True
     except Exception as e:
         log(f"Competitor count ({title}): {repr(e)[:140]}")
-        _app_state(cfgn, "comp_stock_err", {"at": datetime.utcnow().isoformat() + "Z", "sku": sku, "err": repr(e)[:300], "guest_len": len(str(guest)), "url": (page.url or "")[:60]})
+        _app_state(cfgn, "comp_stock_err", {"at": datetime.utcnow().isoformat() + "Z", "sku": sku, "err": repr(e)[:300], "lo": lo, "hi": hi})
         tmx = _tload()
+        sx = tmx.setdefault("cnt", {}).setdefault(sku, {})
+        sx.update(lo=lo, hi=hi, wh_lo=wh_lo, done=False)
         if "cart answered" in repr(e) and "cart answered 0" not in repr(e):
             tmx.pop("guest", None)                      # refused outright: try a fresh guest id next time
-        if "cart answered 0" in repr(e):                 # being throttled: leave it alone for 15 minutes
-            tmx.setdefault("cnt", {}).setdefault(sku, {})["at"] = _t.time() + 720
+        if "cart answered 0" in repr(e):                 # being throttled: leave it alone for 10 minutes
+            sx["at"] = _t.time() + 420
         _tsave(tmx)
-        try:
-            ask(0)
-        except Exception:
-            pass
         return
-    try:
-        ask(0)                                           # leave the guest cart empty
-    except Exception:
-        pass
+    tm = _tload()
+    st = tm.setdefault("cnt", {}).setdefault(sku, {})
+    st.update(lo=lo, hi=hi, wh_lo=wh_lo, done=done, at=_t.time())
+    _tsave(tm)
+    if not done:
+        return                                           # still narrowing it down: nothing to report yet
+    n = lo
+    wh = wh_lo if (n and wh_lo is not None) else n
     prev, prev_wh = st.get("n"), st.get("wh")
     tm = _tload()
     st = tm.setdefault("cnt", {}).setdefault(sku, {})
