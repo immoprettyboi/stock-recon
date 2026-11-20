@@ -680,7 +680,7 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 /* Needs you: prominent when there is something to do, one quiet line when there isn't */
 #needsPanel:has(.attn>.empty){display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding-block:12px}
 #needsPanel:has(.attn>.empty) .empty{border:0!important;background:none!important;padding:0;text-align:left;color:var(--muted);font-size:13.5px}
-#needsPanel:not(:has(.attn>.empty)){border-color:var(--warn)}
+#needsPanel:has(.attn>:not(.empty)){border-color:var(--warn)!important}
 @media (min-width:900px){ #needsPanel .attn{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px} #wait{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px;align-items:start} }
 
 /* ---- frosted glass on the Ledger skin: soft colour fields behind, panels let a little of them through ---- */
@@ -690,11 +690,11 @@ html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(30px) saturate(170%) }
 /* shapes with a real edge behind the glass: without something to blur, glass just looks like a flat tint */
 html[data-skin="pro"][data-look][data-tone]::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none}
 html[data-skin="pro"][data-look][data-tone="dark"]::before{background:
-  radial-gradient(circle 300px at 26% 30%, rgba(72,132,255,.85) 0 34%, transparent 72%),
-  radial-gradient(circle 240px at 78% 16%, rgba(32,205,170,.70) 0 32%, transparent 72%),
-  radial-gradient(circle 320px at 66% 78%, rgba(138,100,250,.80) 0 34%, transparent 72%),
-  radial-gradient(circle 220px at 10% 88%, rgba(250,146,72,.60) 0 30%, transparent 72%),
-  radial-gradient(circle 200px at 94% 56%, rgba(236,84,150,.50) 0 30%, transparent 72%)}
+  radial-gradient(circle 340px at 26% 30%, rgba(72,132,255,.42) 0 30%, transparent 75%),
+  radial-gradient(circle 280px at 78% 16%, rgba(32,205,170,.30) 0 28%, transparent 75%),
+  radial-gradient(circle 360px at 66% 78%, rgba(138,100,250,.38) 0 30%, transparent 75%),
+  radial-gradient(circle 260px at 10% 88%, rgba(250,146,72,.26) 0 26%, transparent 75%),
+  radial-gradient(circle 240px at 94% 56%, rgba(236,84,150,.22) 0 26%, transparent 75%)}
 html[data-skin="pro"][data-look][data-tone="light"]::before{background:
   radial-gradient(circle 300px at 26% 30%, rgba(90,145,255,.75) 0 34%, transparent 72%),
   radial-gradient(circle 240px at 78% 16%, rgba(70,215,185,.65) 0 32%, transparent 72%),
@@ -2545,7 +2545,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v142)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v143)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
