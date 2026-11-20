@@ -929,9 +929,14 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         j = page.evaluate("""async ([u, id, q]) => { try { const r = await fetch(u, {method: "PUT", credentials: "include", headers: {"Content-Type": "application/json"},
                                body: JSON.stringify({products: [{id: id, quantity: q}]})}); return r.ok ? await r.json() : {_status: r.status}; }
                                catch (e) { return {_status: 0, _text: String(e).slice(0, 100)}; } }""", [url, int(tsin), int(q)]) or {}
+        if j.get("_status") == 0 and not seen.get("retried"):      # Takealot dropped the request (asked too quickly): wait, then once more
+            seen["retried"] = True
+            page.wait_for_timeout(8000)
+            return ask(q)
         if j.get("_status") is not None:
-            raise RuntimeError(f"cart answered {j.get('_status')} {j.get('_text', '')}")
-        page.wait_for_timeout(700)
+            raise RuntimeError(f"cart answered {j.get('_status')} {j.get('_text', '')} (q={q}, after {seen.get('calls', 0)} calls)")
+        seen["calls"] = seen.get("calls", 0) + 1
+        page.wait_for_timeout(2500)                      # unhurried: a shopper changing a quantity, not a burst
         if q == 0:
             return True
         al = ((j.get("cart_items") or [{}])[0].get("allocations") or [{}])[0]
@@ -970,9 +975,11 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         log(f"Competitor count ({title}): {repr(e)[:140]}")
         _app_state(cfgn, "comp_stock_err", {"at": datetime.utcnow().isoformat() + "Z", "sku": sku, "err": repr(e)[:300], "guest_len": len(str(guest)), "url": (page.url or "")[:60]})
         tmx = _tload()
-        if "cart answered" in repr(e):
-            tmx.pop("guest", None)                      # try a fresh guest id next time
-            _tsave(tmx)
+        if "cart answered" in repr(e) and "cart answered 0" not in repr(e):
+            tmx.pop("guest", None)                      # refused outright: try a fresh guest id next time
+        if "cart answered 0" in repr(e):                 # being throttled: leave it alone for 15 minutes
+            tmx.setdefault("cnt", {}).setdefault(sku, {})["at"] = _t.time() + 720
+        _tsave(tmx)
         try:
             ask(0)
         except Exception:
