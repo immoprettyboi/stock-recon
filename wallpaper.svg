@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f4a63"/><stop offset=".28" stop-color="#4f8597"/><stop offset=".5" stop-color="#b9c3b4"/>
+      <stop offset=".62" stop-color="#f3c796"/><stop offset=".72" stop-color="#f49a58"/><stop offset="1" stop-color="#e2733c"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="1130" cy="590" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff3d6" stop-opacity=".95"/><stop offset=".18" stop-color="#ffd59a" stop-opacity=".7"/><stop offset="1" stop-color="#f6a45f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="d1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9a868"/><stop offset="1" stop-color="#c9773f"/></linearGradient>
+    <linearGradient id="d2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e08b48"/><stop offset="1" stop-color="#a9542a"/></linearGradient>
+    <linearGradient id="d3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c96a33"/><stop offset="1" stop-color="#7a371f"/></linearGradient>
+    <linearGradient id="d4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8f4426"/><stop offset="1" stop-color="#3a1c16"/></linearGradient>
+    <linearGradient id="d5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a2319"/><stop offset="1" stop-color="#1c0f0e"/></linearGradient>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+  <rect width="1600" height="1000" fill="url(#sun)"/>
+  <g fill="#fff" opacity=".28"><ellipse cx="330" cy="210" rx="260" ry="16"/><ellipse cx="520" cy="250" rx="180" ry="10"/><ellipse cx="1180" cy="170" rx="300" ry="14"/><ellipse cx="980" cy="300" rx="220" ry="9"/></g>
+  <path d="M0 560 L140 520 L230 536 L330 478 L470 478 L540 530 L700 548 L820 500 L930 500 L1010 545 L1600 560 L1600 640 L0 640Z" fill="#8c5a57" opacity=".75"/>
+  <path d="M0 610 C220 560 420 590 640 620 S1100 560 1600 600 L1600 1000 L0 1000Z" fill="url(#d1)"/>
+  <path d="M0 690 C260 610 520 640 760 700 S1260 640 1600 680 L1600 1000 L0 1000Z" fill="url(#d2)"/>
+  <path d="M0 780 C180 720 420 700 700 770 S1220 800 1600 730 L1600 1000 L0 1000Z" fill="url(#d3)"/>
+  <path d="M0 860 C300 780 560 820 860 870 S1320 860 1600 820 L1600 1000 L0 1000Z" fill="url(#d4)"/>
+  <path d="M0 940 C320 890 640 920 960 950 S1400 930 1600 910 L1600 1000 L0 1000Z" fill="url(#d5)"/>
+</svg>

@@ -1,7 +1,7 @@
 // Stock Recon service worker: lets the app install on Windows/Android, always loads the newest
 // version when online, and falls back to the last saved copy when offline.
-const CACHE = "stockrecon-v143";
-const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
+const CACHE = "stockrecon-v144";
+const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "wallpaper.svg"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));

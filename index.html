@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Stock Recon</title>
-<meta name="theme-color" content="#0e1116">
+<meta name="theme-color" content="#1f4a63">
 <script>try{const l=localStorage.getItem("sr-look4");if(l){const d=document.documentElement;d.dataset.look="aero";d.dataset.tone=l.endsWith("-dark")?"dark":"light";if(l.startsWith("pro"))d.dataset.skin="pro";else delete d.dataset.skin;}}catch(e){}</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -683,46 +683,62 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 #needsPanel:has(.attn>:not(.empty)){border-color:var(--warn)!important}
 @media (min-width:900px){ #needsPanel .attn{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px} #wait{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px;align-items:start} }
 
-/* ---- frosted glass on the Ledger skin: soft colour fields behind, panels let a little of them through ---- */
-html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{ --gbg:rgba(255,255,255,.075); --gbg2:rgba(255,255,255,.05); --gline:rgba(255,255,255,.16); --gtop:rgba(255,255,255,.22); --gsolid:rgba(30,35,48,.92); background-color:#0b0e14 }
-html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{ --gbg:rgba(255,255,255,.52); --gbg2:rgba(255,255,255,.5); --gline:rgba(255,255,255,.85); --gtop:rgba(255,255,255,1); --gsolid:rgba(250,251,253,.95); background-color:#e9edf5 }
-html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(30px) saturate(170%) }
-/* shapes with a real edge behind the glass: without something to blur, glass just looks like a flat tint */
-html[data-skin="pro"][data-look][data-tone]::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none}
-html[data-skin="pro"][data-look][data-tone="dark"]::before{background:
-  radial-gradient(circle 340px at 26% 30%, rgba(72,132,255,.42) 0 30%, transparent 75%),
-  radial-gradient(circle 280px at 78% 16%, rgba(32,205,170,.30) 0 28%, transparent 75%),
-  radial-gradient(circle 360px at 66% 78%, rgba(138,100,250,.38) 0 30%, transparent 75%),
-  radial-gradient(circle 260px at 10% 88%, rgba(250,146,72,.26) 0 26%, transparent 75%),
-  radial-gradient(circle 240px at 94% 56%, rgba(236,84,150,.22) 0 26%, transparent 75%)}
-html[data-skin="pro"][data-look][data-tone="light"]::before{background:
-  radial-gradient(circle 300px at 26% 30%, rgba(90,145,255,.75) 0 34%, transparent 72%),
-  radial-gradient(circle 240px at 78% 16%, rgba(70,215,185,.65) 0 32%, transparent 72%),
-  radial-gradient(circle 320px at 66% 78%, rgba(160,130,255,.70) 0 34%, transparent 72%),
-  radial-gradient(circle 220px at 10% 88%, rgba(255,170,100,.60) 0 30%, transparent 72%),
-  radial-gradient(circle 200px at 94% 56%, rgba(245,120,170,.50) 0 30%, transparent 72%)}
+/* ---- frosted glass over a desert wallpaper: the app is one smoked-glass window; the wallpaper shows sharp around it and soft through it ---- */
+html:root[data-skin="pro"][data-look="aero"][data-tone]{ background:#2a1712 url(wallpaper.svg) center/cover fixed no-repeat }
+html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{
+  --win:rgba(26,22,22,.56); --card:rgba(255,255,255,.06); --card2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.12); --gtop:rgba(255,255,255,.16); --gsolid:rgba(40,33,31,.96);
+  --surface:#2a2321; --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.12); --fg:#f6f1ec; --muted:rgba(240,228,218,.64);
+  --accent:#ff9a5c; --accent-ink:#1c120d; --accent-soft:rgba(255,154,92,.16);
+  --ok:#5fdc9e; --ok-soft:rgba(95,220,158,.13); --warn:#f6c15a; --bad:#ff8a8a; }
+html:root[data-skin="pro"][data-look="aero"][data-tone="light"]{
+  --win:rgba(255,252,248,.66); --card:rgba(255,255,255,.55); --card2:rgba(255,255,255,.45); --gline:rgba(60,40,30,.12); --gtop:rgba(255,255,255,.9); --gsolid:rgba(255,252,249,.97);
+  --surface:#fffdfb; --sunk:rgba(60,40,30,.05); --line:rgba(60,40,30,.13); --fg:#1d1613; --muted:#6a5a52;
+  --accent:#c2551a; --accent-ink:#fff; --accent-soft:rgba(194,85,26,.12); }
+html[data-skin="pro"][data-look][data-tone]{ --gblur:blur(38px) saturate(150%) }
 html[data-skin="pro"][data-look][data-tone] body,html[data-skin="pro"][data-look][data-tone] body::before{background:transparent}
+/* the only blurred layers: the window (side column + main area) and things that float above it */
+html[data-skin="pro"][data-look][data-tone] :is(#side,#dock,dialog){background:var(--win);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] header.top{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;border-bottom:1px solid var(--gline)}
+/* cards inside the window: a lighter pane of the same glass, no second blur */
 html[data-skin="pro"][data-look][data-tone] :is(.panel,.sync,.tiles,.login-card,.where button,.card,.match-item){
-  background:var(--gbg);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline);box-shadow:inset 0 1px 0 var(--gtop),inset 0 0 0 1px rgba(255,255,255,.03),0 12px 34px rgba(0,0,0,.22)}
-html[data-skin="pro"][data-look][data-tone] .panel :is(.tiles,.card,.where button,.match-item){-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--gbg2);box-shadow:none}
-html[data-skin="pro"][data-look][data-tone] :is(.attn-item,.empty,.adam-bar,.private-box){background:var(--gbg2);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] .tiles .tile{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
-html[data-skin="pro"][data-look][data-tone] .tiles .tile:hover{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
+  background:var(--card);-webkit-backdrop-filter:none;backdrop-filter:none;border-color:var(--gline);box-shadow:inset 0 1px 0 var(--gtop)}
+html[data-skin="pro"][data-look][data-tone] .panel :is(.tiles,.card,.where button,.match-item){background:var(--card2);box-shadow:none}
+html[data-skin="pro"][data-look][data-tone] :is(.attn-item,.empty,.adam-bar,.private-box){background:var(--card2);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .tiles .tile,html[data-skin="pro"][data-look][data-tone] .tiles .tile:hover{box-shadow:1px 0 0 var(--gline),0 1px 0 var(--gline)}
 html[data-skin="pro"][data-look][data-tone] .where button[aria-selected="true"]{background:var(--accent-soft)}
-html[data-skin="pro"][data-look][data-tone] :is(select,input,textarea){background:var(--gbg2);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] .btn{background:var(--gbg2);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] :is(.btn.primary,.seg .btn.on){background:var(--accent);border-color:var(--accent)}
+html[data-skin="pro"][data-look][data-tone] :is(select,input,textarea){background:var(--card2);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] select option{background:var(--surface);color:var(--fg)}
+html[data-skin="pro"][data-look][data-tone] .btn{background:var(--card);border-color:var(--gline)}
+html[data-skin="pro"][data-look][data-tone] .btn:hover{background:var(--sunk);border-color:var(--muted)}
+/* the main action is a solid light pill: the one thing on the glass that isn't see-through */
+html[data-skin="pro"][data-look][data-tone="dark"] :is(.btn.primary,.seg .btn.on){background:#f6f1ec;color:#1c1512;border-color:#f6f1ec;font-weight:600}
+html[data-skin="pro"][data-look][data-tone="light"] :is(.btn.primary,.seg .btn.on){background:#1d1613;color:#fff;border-color:#1d1613;font-weight:600}
+html[data-skin="pro"][data-look][data-tone] .btn.primary:hover{filter:none;transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.28)}
 html[data-skin="pro"][data-look][data-tone] :is(td,.ov-ledger td){border-bottom-color:var(--gline)}
 html[data-skin="pro"][data-look][data-tone] .ov-places{border-top-color:var(--gline)}
 html[data-skin="pro"][data-look][data-tone] .tscroll thead th{background:var(--gsolid)}
-html[data-skin="pro"][data-look][data-tone] :is(header.top,#side,#dock){background:var(--gbg);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] header.top{border-bottom:1px solid var(--gline)}
 html[data-skin="pro"][data-look][data-tone] #side{border-right:1px solid var(--gline)}
-html[data-skin="pro"][data-look][data-tone] dialog{background:var(--gsolid);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border-color:var(--gline)}
-html[data-skin="pro"][data-look][data-tone] dialog::backdrop{background:rgba(6,8,12,.45);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html[data-skin="pro"][data-look][data-tone] #side .ind{background:rgba(255,255,255,.10);box-shadow:none}
+html[data-skin="pro"][data-look][data-tone="light"] #side .ind{background:rgba(60,40,30,.08)}
+html[data-skin="pro"][data-look][data-tone] #side .av{background:var(--card);color:var(--fg)}
+html[data-skin="pro"][data-look][data-tone] dialog::backdrop{background:rgba(10,6,5,.45);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 html[data-skin="pro"][data-look][data-tone] .dlg-head{background:transparent}
 html[data-skin="pro"][data-look][data-tone] :is(.hbar,.chart-tip){background:var(--gsolid)}
-@media (prefers-reduced-transparency:reduce){ html[data-skin="pro"][data-look][data-tone] :is(.panel,.sync,.tiles,.login-card,.where button,.card,.match-item,header.top,#side,#dock){background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none} }
+/* desktop: a floating window with the wallpaper around it */
+@media (min-width:980px){
+  html[data-skin="pro"][data-look][data-tone] #side{top:20px;bottom:20px;left:20px;border-radius:18px 0 0 18px;border:1px solid var(--gline);border-right-color:transparent;padding-top:18px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+  html[data-skin="pro"][data-look][data-tone] #app{position:fixed;top:20px;right:20px;bottom:20px;left:260px;padding-left:0;overflow-y:auto;overflow-x:hidden;border-radius:0 18px 18px 0;
+    background:var(--win);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border:1px solid var(--gline);border-left-color:var(--gline);box-shadow:0 30px 80px rgba(0,0,0,.35);
+    scrollbar-width:thin;scrollbar-color:var(--gline) transparent}
+  html[data-skin="pro"][data-look][data-tone] header.top{top:0;background:var(--gsolid)}
+  html[data-skin="pro"][data-look][data-tone] .tscroll{max-height:calc(100vh - 200px)}
+}
+/* phone: no window frame; the whole wallpaper is frosted once, behind everything */
+@media (max-width:979px){
+  html[data-skin="pro"][data-look][data-tone]::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:var(--win);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur)}
+  html[data-skin="pro"][data-look][data-tone] header.top{background:var(--gsolid)}
+}
+@media (prefers-reduced-transparency:reduce){ html[data-skin="pro"][data-look][data-tone] :is(#side,#dock,dialog,#app){background:var(--gsolid);-webkit-backdrop-filter:none;backdrop-filter:none} }
 </style>
 </head>
 <body>
@@ -1293,6 +1309,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Johannesburg"});   // SA date, also just after midnight
 
+{ const _st=window.scrollTo.bind(window); window.scrollTo=(...a)=>{ _st(...a); const el=document.getElementById("app"); if(el && getComputedStyle(el).position==="fixed") el.scrollTo(...a); }; }
 let adjustments=null, appState={}, units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
@@ -1416,7 +1433,7 @@ $("#tiles").addEventListener("click",e=>{ const t=e.target.closest("[data-go]");
 { const LOOKS=["pro-dark","pro","aero-dark"], LN={"pro-dark":"Dark","pro":"Light","aero-dark":"Glass (old)","aero":"Glass light (old)"};
   const cur=()=>{ const d=document.documentElement; return (d.dataset.skin==="pro"?"pro":"aero")+(d.dataset.tone==="dark"?"-dark":""); };
   const setLookBtn=()=>{ const l=cur(); $("#lookBtn").textContent="Look: "+(LN[l]||"Dark");
-    document.querySelector('meta[name="theme-color"]').content=l==="pro-dark"?"#0e1116":l==="pro"?"#f2f3f5":l==="aero-dark"?"#0c0a1d":"#ece8fb"; }; setLookBtn();
+    document.querySelector('meta[name="theme-color"]').content=l==="pro-dark"?"#1f4a63":l==="pro"?"#4f8597":l==="aero-dark"?"#0c0a1d":"#ece8fb"; }; setLookBtn();
   $("#lookBtn").addEventListener("click",()=>{ const n=LOOKS[(LOOKS.indexOf(cur())+1)%LOOKS.length], d=document.documentElement;
     d.dataset.look="aero"; d.dataset.tone=n.endsWith("-dark")?"dark":"light"; if(n.startsWith("pro")) d.dataset.skin="pro"; else delete d.dataset.skin;
     try{localStorage.setItem("sr-look4",n);}catch(e){} setLookBtn(); renderChart(); window.dispatchEvent(new Event("resize")); }); }
@@ -2545,7 +2562,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v143)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v144)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
