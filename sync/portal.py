@@ -859,7 +859,95 @@ def _read_live(page, plid, offer_id, mine):
             others.append(("bb:" + str(i.get("sponsored_ads_seller_id") or "?"), float(i["price"])))
     other_min = min([p for pid, p in others if pid != str(offer_id)] + ([price] if seller != mine else []), default=None)
     sig = f"{seller}:{price}|" + ",".join(f"{pid}:{p}" for pid, p in sorted(others))
-    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot}
+    # what Takealot shows about each other seller's stock: "In stock" / "Only 2 left" / "Ships in 4 - 6 work days" and from which warehouses
+    comp = {}
+    try:
+        def _sa(x):
+            sa = x.get("stock_availability") or {}
+            return {"status": str(sa.get("status") or "")[:40], "lt": bool(sa.get("is_leadtime")) or "ships in" in str(sa.get("status") or "").lower(),
+                    "dcs": sorted(str(d.get("text") or "") for d in (sa.get("distribution_centres") or []) if d.get("text"))}
+        mine_n = "".join(ch for ch in mine if ch.isdigit())
+        for i in items:
+            sid = "".join(ch for ch in str(i.get("sponsored_ads_seller_id") or "") if ch.isdigit())
+            if sid and sid != mine_n:
+                sd = j.get("seller_detail") or {}
+                comp[sid] = {**_sa(i), "price": float(i.get("price") or 0),
+                             "name": str(sd.get("display_name") or "")[:40] if str(sd.get("seller_id") or "") == sid else ""}
+        for c in ((j.get("other_offers") or {}).get("conditions") or []):
+            for o in c.get("items") or []:
+                if str(o.get("product_id") or "") == str(offer_id):
+                    continue
+                sl = o.get("seller") or {}
+                sid = "".join(ch for ch in str(sl.get("seller_id") or sl.get("id") or "") if ch.isdigit()) or str(sl.get("display_name") or o.get("product_id") or "")
+                if sid == mine_n:
+                    continue
+                comp[sid] = {**_sa(o), "price": float(o.get("price") or 0), "name": str(sl.get("display_name") or "")[:40]}
+    except Exception:
+        comp = None
+    return {"seller": seller, "price": price, "mine": mine_live, "other_min": other_min, "sig": sig, "slot": slot, "comp": comp}
+
+
+def _comp_watch(cfgn, sku, title, live, my_price, log):
+    """Competitor stock watch for a listing you're fighting on. Takealot doesn't publish other sellers' quantities, only
+    "In stock" / "Only N left" and the warehouses, so that is what's tracked: tell the phone when a competitor with warehouse
+    stock runs low, sells out at a warehouse, sells out everywhere, or a new one arrives. A change must be seen on 3 reads in a row."""
+    comp = live.get("comp")
+    if comp is None:
+        return
+    import time as _t
+    tm = _tload()
+    st = tm.setdefault("comp", {}).setdefault(sku, {})
+    sig = json.dumps({k: [v["status"], v["lt"], v["dcs"]] for k, v in sorted(comp.items())})
+    if st.get("sig") == sig:
+        if st.get("pend"):
+            st.pop("pend", None)
+            _tsave(tm)
+        return
+    pend = st.get("pend") or {}
+    pend = {"sig": sig, "n": pend.get("n", 0) + 1} if pend.get("sig") == sig else {"sig": sig, "n": 1}
+    if pend["n"] < 3 and st.get("sig") is not None:
+        st["pend"] = pend
+        _tsave(tm)
+        return
+    prev = st.get("comp")
+    st.update(sig=sig, comp=comp, at=int(_t.time()))
+    st.pop("pend", None)
+    _tsave(tm)
+    try:
+        import stockrecon_sync as S
+        db = S.DB(cfgn["url"], cfgn["key"])
+        got = db.select("app_state", "select=value&key=eq.comp_watch")
+        allv = (got[0].get("value") or {}) if got else {}
+        allv[sku] = {"at": datetime.utcnow().isoformat() + "Z", "title": title, "comp": comp}
+        _app_state(cfgn, "comp_watch", allv)
+    except Exception:
+        pass
+    if prev is None:
+        return                                          # first look: remember, don't announce
+    who = lambda k, v: (v.get("name") or f"seller {k}")
+    alerts = []
+    for k, was in prev.items():
+        if was.get("lt"):
+            continue                                    # only sellers who had stock in a Takealot warehouse matter here
+        now = comp.get(k)
+        if now is None or now.get("lt"):
+            alerts.append(("🏁 Competitor sold out at Takealot", f"{title}: {who(k, was)} has no warehouse stock left"
+                           + (" (now only on lead time)" if now else " (listing gone)") + f". You're at R{my_price:,.0f}."))
+        else:
+            lost = [d for d in was.get("dcs", []) if d not in now.get("dcs", [])]
+            if lost:
+                alerts.append(("📦 Competitor sold out at " + ", ".join(lost), f"{title}: {who(k, now)} still has stock at {', '.join(now.get('dcs') or ['?'])} · R{now['price']:,.0f}"))
+            elif now.get("status") != was.get("status"):
+                alerts.append(("📉 Competitor stock: " + now["status"], f"{title}: {who(k, now)} was \"{was.get('status')}\" · R{now['price']:,.0f}"))
+    for k, now in comp.items():
+        if not now.get("lt") and (k not in prev or prev[k].get("lt")):
+            alerts.append(("🆕 Competitor has warehouse stock", f"{title}: {who(k, now)} · {now['status']} at {', '.join(now.get('dcs') or ['?'])} · R{now['price']:,.0f}"))
+    for t, b in alerts:
+        try:
+            notify(cfgn, t, b, url="./?view=price", topic="price", log=log, tag=f"comp-{sku}")
+            log(f"Competitor watch: {t}: {b}")
+        except Exception as e:
+            log("Competitor watch notification failed: " + repr(e)[:120])
 
 
 
@@ -1040,6 +1128,10 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     upd = {"last_checked": nowiso, "bb_price": bb_price, "bb_seller": bb_seller, "winning": winning,
            "floor_used": floor, "my_price": my_price}
     cfgn = {"url": db.base.replace("/rest/v1/", ""), "key": db.h["apikey"]}
+    try:
+        _comp_watch(cfgn, sku, title, live, my_price, log)
+    except Exception as e:
+        log("Competitor watch: " + repr(e)[:150])
     alerts = []
     # three states: the Buy Box (Fastest Delivery), the Best Price box (cheapest, but on lead time), or neither
     state = "win" if winning else "best" if live.get("slot") == "lowest_priced" else "lost"
