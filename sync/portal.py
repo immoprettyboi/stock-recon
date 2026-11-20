@@ -935,8 +935,9 @@ def _comp_count(page, cfgn, sku, title, live, my_price, log):
         if q == 0:
             return True
         al = ((j.get("cart_items") or [{}])[0].get("allocations") or [{}])[0]
-        if q and al.get("unit_price") and abs(float(al["unit_price"]) - float(live["price"])) > 0.5:
-            raise RuntimeError("the cart picked a different seller's offer")      # the box moved while we were asking
+        cs = "".join(ch for ch in str(((j.get("products") or [{}])[0]).get("sponsored_ads_seller_id") or "") if ch.isdigit())
+        if cs and cs != sid:                             # the cart holds another seller's offer (the box moved, or a different one wins for this visitor)
+            raise RuntimeError(f"the cart picked seller {cs} at R{al.get('unit_price')}, not {sid} at R{live['price']} (q={q})")
         ok = not (j.get("quantity_warnings") or {})
         if ok:                                           # "more than currently available at our warehouse (current stock = 8)": the rest is his lead-time stock
             seen["wh"] = q
