@@ -1682,13 +1682,24 @@ function renderPayout(){
   const dn=d=>{ const x=new Date(d+"T12:00:00Z"); return x.toLocaleDateString("en-ZA",{weekday:"short",timeZone:"UTC"})+" "+fd(d); };
   const nx=(v.next||[]).filter(x=>x.date>=today());
   el.hidden=false;
-  el.innerHTML=`<div class="sec-head"><h2>💰 Takealot payouts</h2><p>Takealot pays on Thursdays for what was recorded up to the Sunday before · updated ${esc(String(v.at||"").slice(11,16))}</p></div>
-    <div class="tiles">${nx.slice(0,2).map((x,i)=>`<div class="tile${i?"":" hero"}"><span class="lbl">${i?"After that":"Next payout"}</span><span class="val">${R0(x.amount)}</span><span class="sub">${dn(x.date)} · ${x.n} transaction${x.n===1?"":"s"}</span></div>`).join("")||`<div class="tile"><span class="lbl">Next payout</span><span class="val">–</span><span class="sub">nothing waiting yet</span></div>`}
-      <div class="tile"><span class="lbl">On your account</span><span class="val">${R0(+v.current||0)}</span><span class="sub">held back ${R0(+v.held_back||0)} · available ${R0(+v.available||0)}</span></div>
+  // Takealot pays out exactly the Available balance when the payout runs (Thursday, about 01:30): checked to the cent against real payouts.
+  // So the estimate is: what's Available now, plus how much Available grew from this same moment last week until that week's payout.
+  const est=(()=>{ const rows=(appState.balance_hist||{}).rows||[], lp=v.last_payout, av=+v.available||0;
+    if(!rows.length||!lp) return null;
+    const t7=new Date(Date.now()-7*864e5+2*36e5).toISOString().slice(0,19);            // rows are in SA time (+2h)
+    const near=rows.reduce((b,r)=>Math.abs(new Date(r[0])-new Date(t7))<Math.abs(new Date(b[0])-new Date(t7))?r:b, rows[0]);
+    if(Math.abs(new Date(near[0])-new Date(t7))>4*36e5) return null;
+    const grow=lp.amount-(+near[3]||0); if(!(grow>=0)) return null;
+    return {amount:av+grow, grow, av}; })();
+  const nextDate=nx[0]?nx[0].date:null, nextAmt=est?est.amount:(nx[0]?nx[0].amount:0);
+  el.innerHTML=`<div class="sec-head"><h2>💰 Takealot payouts</h2><p>Every Thursday at about 01:30 Takealot pays whatever is Available on your account at that moment · updated ${esc(String(v.at||"").slice(11,16))}</p></div>
+    <div class="tiles"><div class="tile hero"><span class="lbl">Next payout, estimate</span><span class="val">${nextAmt?R0(nextAmt):"–"}</span><span class="sub">${nextDate?dn(nextDate)+" · ":""}${est?`${R0(est.av)} available now + about ${R0(est.grow)} still to be released, going by last week`:"from Takealot's transactions"}</span></div>
+      <div class="tile"><span class="lbl">Available now</span><span class="val">${R0(+v.available||0)}</span><span class="sub">would be paid if the payout ran today</span></div>
+      <div class="tile"><span class="lbl">Held back</span><span class="val">${R0(+v.held_back||0)}</span><span class="sub">recent sales Takealot hasn't released yet · on your account ${R0(+v.current||0)}</span></div>
       ${v.last_payout?`<div class="tile"><span class="lbl">Last payout</span><span class="val">${R0(v.last_payout.amount)}</span><span class="sub">${dn(v.last_payout.date)}</span></div>`:""}</div>
-    <p class="note" style="margin:0">An estimate from Takealot's transactions; refunds or fees added before Sunday change it.</p>
+    <p class="note" style="margin:0">The estimate moves as Takealot releases held-back sales; the Available figure is the certain part.</p>
     ${(()=>{ const owed=allInvoices().filter(i=>i.open>0.005), oT=owed.reduce((a,i)=>a+i.open,0), dT=ledger?[...new Set([...units.map(u=>u.supplier).filter(Boolean), ...ledger.map(r=>r.supplier)].map(x=>x.trim()))].reduce((a,n)=>a+Math.max(0,supplierOwed(n).bal),0):0;
-      const nxt=nx[0]?nx[0].amount:0, owe=Math.max(oT,dT);
+      const nxt=nextAmt, owe=Math.max(oT,dT);
       return `<div class="sec-head" style="margin-top:6px"><h2>Cash flow</h2><p>next payout less what you owe suppliers</p></div>
       <div class="tiles"><div class="tile"><span class="lbl">Coming in</span><span class="val">${R0(nxt)}</span><span class="sub">${nx[0]?dn(nx[0].date):"next payout"}</span></div>
         <div class="tile"><span class="lbl">Owed to suppliers</span><span class="val">${R0(owe)}</span><span class="sub">${owed.length?`${owed.length} open invoice${owed.length>1?"s":""}`:"from Debtors"}</span></div>
@@ -2622,7 +2633,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v150)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v151)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
