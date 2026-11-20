@@ -686,7 +686,7 @@ html[data-skin="pro"][data-look][data-tone] .sync .sync2{font-size:12.5px;margin
 /* ---- frosted glass over a desert wallpaper: the app is one smoked-glass window; the wallpaper shows sharp around it and soft through it ---- */
 html:root[data-skin="pro"][data-look="aero"][data-tone]{ background:#2a1712 url(wallpaper.svg) center/cover fixed no-repeat }
 html:root[data-skin="pro"][data-look="aero"][data-tone="dark"]{
-  --win:rgba(26,22,22,.56); --card:rgba(255,255,255,.06); --card2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.12); --gtop:rgba(255,255,255,.16); --gsolid:rgba(40,33,31,.96);
+  --win:rgba(24,20,20,.70); --card:rgba(255,255,255,.06); --card2:rgba(255,255,255,.045); --gline:rgba(255,255,255,.12); --gtop:rgba(255,255,255,.16); --gsolid:rgba(40,33,31,.96);
   --surface:#2a2321; --sunk:rgba(255,255,255,.06); --line:rgba(255,255,255,.12); --fg:#f6f1ec; --muted:rgba(240,228,218,.64);
   --accent:#ff9a5c; --accent-ink:#1c120d; --accent-soft:rgba(255,154,92,.16);
   --ok:#5fdc9e; --ok-soft:rgba(95,220,158,.13); --warn:#f6c15a; --bad:#ff8a8a; }
@@ -724,14 +724,16 @@ html[data-skin="pro"][data-look][data-tone] #side .av{background:var(--card);col
 html[data-skin="pro"][data-look][data-tone] dialog::backdrop{background:rgba(10,6,5,.45);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 html[data-skin="pro"][data-look][data-tone] .dlg-head{background:transparent}
 html[data-skin="pro"][data-look][data-tone] :is(.hbar,.chart-tip){background:var(--gsolid)}
-/* desktop: a floating window with the wallpaper around it */
+/* desktop: a floating window with the wallpaper around it. One blurred layer; the side column and the page are columns inside it */
 @media (min-width:980px){
-  html[data-skin="pro"][data-look][data-tone] #side{top:20px;bottom:20px;left:20px;border-radius:18px 0 0 18px;border:1px solid var(--gline);border-right-color:transparent;padding-top:18px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
-  html[data-skin="pro"][data-look][data-tone] #app{position:fixed;top:20px;right:20px;bottom:20px;left:260px;padding-left:0;overflow-y:auto;overflow-x:hidden;border-radius:0 18px 18px 0;
-    background:var(--win);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border:1px solid var(--gline);border-left-color:var(--gline);box-shadow:0 30px 80px rgba(0,0,0,.35);
-    scrollbar-width:thin;scrollbar-color:var(--gline) transparent}
-  html[data-skin="pro"][data-look][data-tone] header.top{top:0;background:var(--gsolid)}
-  html[data-skin="pro"][data-look][data-tone] .tscroll{max-height:calc(100vh - 200px)}
+  html[data-skin="pro"][data-look][data-tone] #app{position:fixed;inset:20px;padding:0;display:grid;grid-template-columns:240px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);overflow:hidden;border-radius:18px;
+    background:var(--win);-webkit-backdrop-filter:var(--gblur);backdrop-filter:var(--gblur);border:1px solid var(--gline);box-shadow:0 30px 80px rgba(0,0,0,.4),inset 0 1px 0 var(--gtop)}
+  html[data-skin="pro"][data-look][data-tone] #side{position:relative;inset:auto;grid-column:1;grid-row:1/3;width:auto;height:auto;min-height:0;border-radius:0;background:rgba(0,0,0,.10);
+    -webkit-backdrop-filter:none;backdrop-filter:none;border:0;border-right:1px solid var(--gline);box-shadow:none;padding:18px 12px 14px;transform:none}
+  html[data-skin="pro"][data-look][data-tone] header.top{position:relative;top:auto;grid-column:2;grid-row:1;background:transparent;margin:0}
+  html[data-skin="pro"][data-look][data-tone] #app>.wrap{grid-column:2;grid-row:2;overflow-y:auto;overflow-x:hidden;max-width:none;min-height:0;scrollbar-width:thin;scrollbar-color:var(--gline) transparent}
+  html[data-skin="pro"][data-look][data-tone] #app>.wrap>main{max-width:1320px;margin-inline:auto}
+  html[data-skin="pro"][data-look][data-tone] .tscroll{max-height:calc(100vh - 210px)}
 }
 /* phone: no window frame; the whole wallpaper is frosted once, behind everything */
 @media (max-width:979px){
@@ -1309,7 +1311,7 @@ const ago = t => { if(!t) return ""; const m=Math.round((Date.now()-new Date(t))
 const num = v => (v===null||v===undefined||v==="") ? null : Number(v);
 const today = () => new Date().toLocaleDateString("en-CA",{timeZone:"Africa/Johannesburg"});   // SA date, also just after midnight
 
-{ const _st=window.scrollTo.bind(window); window.scrollTo=(...a)=>{ _st(...a); const el=document.getElementById("app"); if(el && getComputedStyle(el).position==="fixed") el.scrollTo(...a); }; }
+{ const _st=window.scrollTo.bind(window); window.scrollTo=(...a)=>{ _st(...a); const el=document.querySelector("#app>.wrap"); if(el && getComputedStyle(el).overflowY==="auto") el.scrollTo(...a); }; }
 let adjustments=null, appState={}, units=[], sales=[], products=[], lastRun=null, me=null, pipeline=[], ships=[], expenses=[], pos=[], rets=[], recons=[], talStatus={}, talTime={}, ltReqs=[], ledger=null, pfRules=null;
 // when the customer ordered on Takealot, in South African time
 const soldWhen = u => { const t=talTime[u.order_id]||(String(u.sold_date||"").length>10?u.sold_date:null); if(!t) return fd(u.sold_date); const d=new Date(t); if(isNaN(d)) return fd(u.sold_date);
@@ -2562,7 +2564,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v144)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v145)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
