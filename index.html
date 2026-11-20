@@ -1777,7 +1777,8 @@ function renderOverview(){
   units.filter(u=>u.source==="sync" && !Number(u.cost) && !u.flag).forEach(u=>items.push({u, tag:"Details", t:`Enter supplier and cost · ${u.product}`, d:u.comment||""}));
   { const G={}; units.filter(snNeeded).forEach(u=>{ const k=snKey(u); (G[k]=G[k]||[]).push(u); });
     Object.entries(G).forEach(([k,L])=>items.push({snkey:k, tag:"Serials", t:`Add serial numbers · ${L.length} × ${L[0].product}${L[0].invoice_no?` (${L[0].invoice_no})`:""}`,
-      d:`Paid upfront${L[0].location==="INBOUND"?" · on the way to you (not on Takealot lead time yet)":""}${L[0].received?` · bought ${fd(L[0].received)}`:""}. When it arrives, tap here and scan each serial: that books it in at HOME.`})); }
+      d:/Paid upfront/.test(L[0].comment||"") ? `Paid upfront${L[0].location==="INBOUND"?" · on the way to you (not on Takealot lead time yet)":""}${L[0].received?` · bought ${fd(L[0].received)}`:""}. When it arrives, tap here and scan each serial: that books it in at HOME.`
+        : `Added without serial numbers${L[0].supplier?` · ${L[0].supplier}`:""}${L[0].received?` · ${fd(L[0].received)}`:""}. Tap here and scan each serial.`})); }
   units.filter(u=>u.flag && !(u.status==="return_me" && u.location==="HOME")).forEach(u=>items.push({u, tag:"Check", t:`Check · ${u.product}`, d:u.comment||""}));
   recons.filter(r=>r.claim_status==="open" && r.missing_units>0).forEach(r=>items.push({go:"check", tag:"Claim", t:`Claim lost stock from Takealot · ${MONL[+r.month.slice(5)-1]} ${r.month.slice(0,4)}`, d:`${r.missing_units} unit${r.missing_units>1?"s":""} missing in Takealot's Stock Recon · claim ${R(Number(r.claim_value))}. Download the recon and e-mail it to Takealot.`}));
   removalRows().filter(z=>z.st.startsWith("Arrived")).forEach(z=>items.push({go:"removals", tag:"Removal", t:`Removal order arrived · ${z.r.title}`, d:`Order ${z.r.order_id} · ${z.r.reason||""}. Check it, then Back in stock (used) or Faulty.`}));
@@ -2621,7 +2622,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v149)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v150)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -3474,7 +3475,7 @@ $("#addForm").addEventListener("submit", async e=>{
     ...(noinv?{}:{invoice_no:inv}) };
   // paid upfront = usually not here yet: units without a serial get a reminder to add it when the stock arrives
   const upfrontNoSn=$("#a-paid").value==="upfront";
-  const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||"", ...(upfrontNoSn&&!sns[i]?{comment:"[serial needed] Paid upfront: add the serial number when it arrives."}:{})}));
+  const rows=Array.from({length:qty},(_,i)=>({...base, sn:sns[i]||"", ...(!sns[i]?{comment:upfrontNoSn?"[serial needed] Paid upfront: add the serial number when it arrives.":"[serial needed]"}:{})}));   // any unit saved without a serial gets a reminder
   const how=$("#a-paid").value, total=qty*base.cost;
   // "paid upfront": the money went before the stock came. If that payment isn't in Debtors yet, record it now (dated before
   // today's stock), so the stock is set against it and nothing shows as owed
