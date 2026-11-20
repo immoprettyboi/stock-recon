@@ -592,6 +592,9 @@ html[data-skin="pro"][data-look][data-tone] .sl-day td{background:var(--sunk)}
 html[data-skin="pro"][data-look][data-tone] .tscroll::-webkit-scrollbar-thumb{background:var(--line)}
 html[data-skin="pro"][data-look][data-tone] .tscroll{scrollbar-color:var(--line) transparent}
 html[data-skin="pro"][data-look][data-tone] .pill{font-weight:500}
+html[data-skin="pro"][data-look][data-tone] .where .w-l{font:500 12.5px var(--body);text-transform:none;letter-spacing:0}
+html[data-skin="pro"][data-look][data-tone] .where .w-n{font:600 28px/1.15 var(--display);font-variant-numeric:tabular-nums}
+html[data-skin="pro"][data-look][data-tone] .where button{padding:12px 14px;text-align:left}
 /* overlays */
 html[data-skin="pro"][data-look][data-tone] dialog{background:var(--surface);-webkit-backdrop-filter:none;backdrop-filter:none;border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
 html[data-skin="pro"][data-look][data-tone] dialog::backdrop{background:rgba(6,8,12,.6);-webkit-backdrop-filter:none;backdrop-filter:none}
@@ -2436,7 +2439,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v136)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v137)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
