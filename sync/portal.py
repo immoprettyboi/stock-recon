@@ -4095,9 +4095,46 @@ def fetch_takealot_pos(ctx, cfg, auth, log):
             return
     log(f"Takealot shipments: {len(rows)} PO(s) saved ({len(ships)} read).")
     try:
+        archive_received(ctx, cfg, auth, rows, log)
+    except Exception as e:
+        log("Archiving received shipments failed: " + repr(e)[:200])
+    try:
         allocate_po_units(cfg, rows, log)
     except Exception as e:
         log("Allocating units to new shipments failed: " + repr(e)[:200])
+
+
+def archive_received(ctx, cfg, auth, rows, log):
+    """Tidy the Seller Portal's Shipments page: a shipment Takealot has received in full is archived there
+    (the portal's own Archive button: PUT v1/shipment/archived?shipment_ids=..&status=true). It can be un-archived on the portal.
+    Each shipment is archived once (debug/archived_done.json); the app keeps its own record of the PO either way."""
+    dfile = DEBUG_DIR / "archived_done.json"
+    try:
+        done = set(json.loads(dfile.read_text(encoding="utf-8")))
+    except Exception:
+        done = set()
+    todo = [r for r in rows if str(r.get("status") or "").strip().lower() == "received full quantity"
+            and r.get("qty_sending") and r.get("qty_received") is not None and r["qty_received"] >= r["qty_sending"]
+            and str(r["shipment_id"]) not in done
+            and not ((r.get("raw") or {}).get("archived") or (r.get("raw") or {}).get("is_archived"))]
+    if not todo:
+        return
+    ok_pos = []
+    for i in range(0, len(todo), 20):
+        part = todo[i:i + 20]
+        qs = "&".join(f"shipment_ids={quote(str(r['shipment_id']))}" for r in part) + "&status=true"
+        r = ctx.request.put(f"https://{API_HOST}/v1/shipment/archived?{qs}", headers={**auth, "content-type": "application/json"}, timeout=60_000)
+        if not r.ok:
+            log(f"Archiving shipments: Takealot answered {r.status}: {r.text()[:150]}")
+            _app_state(cfg, "archive_status", {"at": datetime.utcnow().isoformat() + "Z", "ok": False, "status": r.status, "text": r.text()[:200]})
+            break
+        done |= {str(x["shipment_id"]) for x in part}
+        ok_pos += [x["po"] for x in part]
+    if ok_pos:
+        DEBUG_DIR.mkdir(exist_ok=True)
+        dfile.write_text(json.dumps(sorted(done)), encoding="utf-8")
+        log(f"Archived {len(ok_pos)} fully received shipment(s) on the Seller Portal: PO {', '.join(ok_pos[:8])}{'…' if len(ok_pos) > 8 else ''}.")
+        _app_state(cfg, "archive_status", {"at": datetime.utcnow().isoformat() + "Z", "ok": True, "n": len(ok_pos), "pos": ok_pos[:60]})
 
 
 def mark_collected_shipped(ctx, cfg, auth, log):
