@@ -4116,7 +4116,8 @@ def archive_received(ctx, cfg, auth, rows, log):
     todo = [r for r in rows if str(r.get("status") or "").strip().lower() == "received full quantity"
             and r.get("qty_sending") and r.get("qty_received") is not None and r["qty_received"] >= r["qty_sending"]
             and str(r["shipment_id"]) not in done
-            and not ((r.get("raw") or {}).get("archived") or (r.get("raw") or {}).get("is_archived"))]
+            and str(r.get("due_date") or "") >= (date.today() - timedelta(days=21)).isoformat()      # recent ones only: older ones were archived by hand long ago
+            and not any((r.get("raw") or {}).get(k) for k in ("archived", "is_archived", "isArchived"))]
     if not todo:
         return
     ok_pos = []
