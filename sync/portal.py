@@ -1418,7 +1418,17 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     # During a fast fight, won / lost / lowered / raised would fire every few seconds and the phone mutes the app.
     # Those are rolled into one update at most every 15 minutes; the important ones (floor, ceiling, refused) always go.
     routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered", "➡️")
-    alerts = [(t, b) for t, b in alerts if not t.startswith(routine)]
+    # ...but the FIRST one after a quiet spell goes out straight away, so a single undercut-and-win-back is not silent.
+    tmq = _tload()
+    said = (tmq.get("last_said") or {}).get(sku, 0)
+    first = [(t, b) for t, b in alerts if t.startswith(routine)]
+    if first and _time.time() - said >= 15 * 60:
+        tmq.setdefault("last_said", {})[sku] = int(_time.time())
+        tmq.setdefault("last_routine", {})[sku] = int(_time.time())      # the 15-minute summary counts from here
+        _tsave(tmq)
+        alerts = [(t, b) for t, b in alerts if not t.startswith(routine)] + first[-2:]
+    else:
+        alerts = [(t, b) for t, b in alerts if not t.startswith(routine)]
     # time-based summary: how much of the last 15 minutes you held the Buy Box, sent when things are settled
     tm = _tload()
     st = tm.setdefault("held", {}).setdefault(sku, {"seen": 0, "win": 0, "tot": 0})
@@ -1433,11 +1443,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     last = (tm.get("last_routine") or {}).get(sku, 0)
     if not last:
         tm.setdefault("last_routine", {})[sku] = int(nowt)
-    elif nowt - last >= 15 * 60 and target is None and not waiting_live and st["tot"] > 60:
+    elif st["tot"] > 60 and ((nowt - last >= 15 * 60 and target is None and not waiting_live) or nowt - last >= 20 * 60):
         pct = round(100 * st["win"] / st["tot"])
         bpct = round(100 * st["best"] / st["tot"])
         try:
-            n = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised)&at=gt.{(datetime.utcnow() - timedelta(minutes=15)).isoformat()}Z"))
+            n = len(db.select("price_log", f"select=id&sku=eq.{sku}&action=in.(lowered,raised)&at=gt.{datetime.utcfromtimestamp(last).isoformat()}Z"))
         except Exception:
             n = 0
         # quiet when nothing happened: held the Buy Box the whole time, or sat in the Best Price box the whole time
@@ -1447,9 +1457,11 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
             head = (f"✅ Buy Box: you held it {pct}% of the time" if pct >= 50 else
                     f"🏷️ Buy Box {pct}%, Best Price box {bpct}% of the time" if bpct else
                     f"❌ Buy Box: you held it only {pct}% of the time")
-            alerts.insert(0, (head, f"{title}: last 15 min · now {now_s} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
+            alerts.insert(0, (head, f"{title}: last {max(15, round((nowt - last) / 60))} min · now {now_s} at R{bb_price:,.0f}" + (f" · {n} price changes" if n else "")))
             # (so the phone doesn't get 20 "100%" messages an hour and start muting the app)
         tm["last_routine"][sku] = int(nowt)
+        if alerts:
+            tm.setdefault("last_said", {})[sku] = int(nowt)
         st["win"], st["tot"], st["best"] = 0, 0, 0
     # regular "still fine" update for listings you asked it for (app_state pf_updates: {sku: hours}): sent when the
     # listing has been quiet that long, between 07:00 and 21:00
