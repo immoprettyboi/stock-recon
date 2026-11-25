@@ -2334,7 +2334,8 @@ function renderAdam(){
 }
 function undeliveredPOs(){
   const recorded=new Set(expenses.filter(e=>/^(adam_delivery|delivery_other)$/.test(e.category)).map(e=>(e.raw||{}).po).filter(Boolean));
-  return pos.filter(p=>p.due_date>="2026-10-01" && /ship|receiv/i.test(p.status||"") && !courierFor(p.po) && !recorded.has(p.po));
+  const old=new Date(Date.now()-30*864e5).toISOString().slice(0,10);   // older shipments are long done: not worth asking about
+  return pos.filter(p=>p.due_date>"2026-10-01" && p.due_date>=old && /ship|receiv/i.test(p.status||"") && !courierFor(p.po) && !recorded.has(p.po));
 }
 $("#adamAdd").addEventListener("click",()=>openAdam(""));
 $("#adamAdd2").addEventListener("click",()=>openAdam(""));
@@ -2633,7 +2634,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v153)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v154)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
