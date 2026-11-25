@@ -2875,13 +2875,13 @@ def inter_dc_fix(cfg, log):
                                                "fees": u.get("fees"), "status": u.get("status"), "sku": u.get("sku") or v.get("sku"),
                                                "product": u.get("product"), "match_method": "inter-dc",
                                                "comment": (note + " " + (v.get("comment") or "")).strip()})
-        db.patch("units", f"id=eq.{u['id']}", {"order_id": None, "sold_date": None, "gross": None, "fees": None, "status": "in_stock",
+        db.patch("units", f"id=eq.{u['id']}", {"order_id": "", "sold_date": None, "gross": None, "fees": None, "status": "in_stock",
                                                "match_method": None})
         try:
             db.patch("takealot_sales", f"order_id=eq.{s['order_id']}", {"unit_id": v["id"]})
         except Exception:
             pass
-        v.update(order_id=u["order_id"], status=u.get("status")); u.update(order_id=None, status="in_stock")
+        v.update(order_id=u["order_id"], status=u.get("status")); u.update(order_id="", status="in_stock")
         log(f"Inter DC transfer, order {s['order_id']}: Takealot took the unit from {D}, not {L}. Sale moved to a {D} unit; the {L} unit is back In stock.")
 
 
