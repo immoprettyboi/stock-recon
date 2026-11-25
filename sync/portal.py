@@ -1419,16 +1419,38 @@ def _fight_one(ctx, page, db, rule, prod, auth, log):
     # Those are rolled into one update at most every 15 minutes; the important ones (floor, ceiling, refused) always go.
     routine = ("✅ You won", "❌ You lost", "🔺 Price raised", "🔻 Price lowered", "➡️")
     # ...but the FIRST one after a quiet spell goes out straight away, so a single undercut-and-win-back is not silent.
+    # A "lost" is held back for up to 3 minutes: the fighter usually answers and has the box back within seconds, and a
+    # "you lost" message for a box you are already holding again is just wrong. One message tells the whole story instead.
     tmq = _tload()
+    nowq = _time.time()
     said = (tmq.get("last_said") or {}).get(sku, 0)
+    lp = tmq.setdefault("lost_pending", {})
     first = [(t, b) for t, b in alerts if t.startswith(routine)]
-    if first and _time.time() - said >= 15 * 60:
-        tmq.setdefault("last_said", {})[sku] = int(_time.time())
-        tmq.setdefault("last_routine", {})[sku] = int(_time.time())      # the 15-minute summary counts from here
-        _tsave(tmq)
-        alerts = [(t, b) for t, b in alerts if not t.startswith(routine)] + first[-2:]
-    else:
-        alerts = [(t, b) for t, b in alerts if not t.startswith(routine)]
+    alerts = [(t, b) for t, b in alerts if not t.startswith(routine)]
+    out = []
+    pend_l = lp.get(sku)
+    if pend_l:
+        if winning:
+            secs = int(nowq - pend_l["at"])
+            took = f"{secs}s" if secs < 90 else f"{round(secs / 60)} min"
+            out = [("✅ Buy Box won back", f"{title}: competitor went to R{pend_l.get('bb', 0):,.0f}, you are now at R{my_price:,.0f} "
+                                          f"and have the Buy Box again (took {took})")]
+            lp.pop(sku, None)
+        elif nowq - pend_l["at"] >= 180:
+            where = " · you have the Best Price box" if live.get("slot") == "lowest_priced" else ""
+            out = [("❌ You lost the Buy Box", f"{title} · Buy Box R{bb_price:,.0f} (you R{my_price:,.0f}){where} · not back after 3 minutes")]
+            lp.pop(sku, None)
+    elif first and nowq - said >= 15 * 60:
+        if any(t.startswith("❌ You lost") for t, _ in first) or (not winning and live.get("slot") != "lowest_priced"
+                                                                 and any(t.startswith("🔻") for t, _ in first)):
+            lp[sku] = {"at": int(nowq), "bb": bb_price}           # wait and see whether the fighter takes it back
+        else:
+            out = first[-2:]
+    if out:
+        tmq.setdefault("last_said", {})[sku] = int(nowq)
+        tmq.setdefault("last_routine", {})[sku] = int(nowq)      # the 15-minute summary counts from here
+        alerts += out
+    _tsave(tmq)
     # time-based summary: how much of the last 15 minutes you held the Buy Box, sent when things are settled
     tm = _tload()
     st = tm.setdefault("held", {}).setdefault(sku, {"seen": 0, "win": 0, "tot": 0})
