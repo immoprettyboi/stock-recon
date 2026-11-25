@@ -2405,6 +2405,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Morning summary failed: " + repr(e)[:200])
             try:
+                inter_dc_fix(cfg, log)
+            except Exception as e:
+                log("Inter DC check failed: " + repr(e)[:200])
+            try:
                 coming_back_watch(cfg, log)
             except Exception as e:
                 log("Coming-back watch failed: " + repr(e)[:200])
@@ -2815,6 +2819,70 @@ def sale_watch(ctx, cfg, log):
         if _t.time() - getattr(S, "_SALE_WATCH_ERR", 0) > 3600:
             S._SALE_WATCH_ERR = _t.time()
             log("Sale watch failed: " + repr(e)[:150])
+
+
+def inter_dc_fix(cfg, log):
+    """An "Inter DC Transfer" sale ships a unit from another warehouse than the one the sale is booked on. The matcher
+    takes a unit at the sale's own warehouse when there is one, which leaves the stock check one out at two warehouses.
+    Takealot's own stock figures show where the unit really left from: move the sale onto a unit there."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    DCS = ("JHB", "CPT", "DBN")
+    since = (datetime.utcnow() - timedelta(days=10)).strftime("%Y-%m-%d")
+    sales = db.select("takealot_sales", f"select=order_id,sku,qty,fulfilment_dc,sale_status&sale_status=ilike.*inter%20dc*&order_date=gte.{since}")
+    if not sales:
+        return
+    prods = db.select("products", "select=sku,product,takealot_title,takealot_stock")
+    units = db.select("units", "select=id,product,sku,location,status,order_id,received,sold_date,gross,fees,comment,match_method,po")
+    tg, sku_g = {}, {}
+    for p in prods:
+        if p.get("product"):
+            tg[p.get("takealot_title")] = p["product"]; tg[p["product"]] = p["product"]; sku_g[str(p.get("sku"))] = p["product"]
+    grp = lambda n: tg.get(n, n)
+    for s in sales:
+        if int(s.get("qty") or 1) != 1:
+            continue
+        linked = [u for u in units if str(u.get("order_id") or "") == str(s["order_id"])]
+        if len(linked) != 1:
+            continue
+        u = linked[0]
+        L = u.get("location")
+        if L not in DCS or "Inter DC transfer" in (u.get("comment") or ""):
+            continue
+        g = sku_g.get(str(s.get("sku"))) or grp(u.get("product"))
+        tal, app = {}, {}
+        for p in prods:
+            if p.get("product") == g and p.get("takealot_stock"):
+                for dc in DCS:
+                    w = p["takealot_stock"].get(dc) or {}
+                    tal[dc] = tal.get(dc, 0) + int(w.get("qty") or 0) + int(w.get("on_way") or 0) + int(w.get("receiving") or 0)
+        for x in units:
+            if x.get("status") == "in_stock" and x.get("location") in DCS and grp(x.get("product")) == g:
+                app[x["location"]] = app.get(x["location"], 0) + 1
+        if app.get(L, 0) >= tal.get(L, 0):
+            continue                                   # Takealot isn't holding one more than the app here: nothing to fix
+        src = [dc for dc in DCS if dc != L and app.get(dc, 0) > tal.get(dc, 0)]
+        if len(src) != 1:
+            continue                                   # not clear which warehouse it left from: leave it for a person
+        D = src[0]
+        cand = sorted([x for x in units if x.get("status") == "in_stock" and x.get("location") == D and not x.get("order_id")
+                       and grp(x.get("product")) == g], key=lambda x: (x.get("received") or "9999", x.get("id")))
+        if not cand:
+            continue
+        v = cand[0]
+        note = f"Inter DC transfer: Takealot shipped it from {D} for order {s['order_id']} (booked on {L})."
+        db.patch("units", f"id=eq.{v['id']}", {"order_id": u["order_id"], "sold_date": u.get("sold_date"), "gross": u.get("gross"),
+                                               "fees": u.get("fees"), "status": u.get("status"), "sku": u.get("sku") or v.get("sku"),
+                                               "product": u.get("product"), "match_method": "inter-dc",
+                                               "comment": (note + " " + (v.get("comment") or "")).strip()})
+        db.patch("units", f"id=eq.{u['id']}", {"order_id": None, "sold_date": None, "gross": None, "fees": None, "status": "in_stock",
+                                               "match_method": None})
+        try:
+            db.patch("takealot_sales", f"order_id=eq.{s['order_id']}", {"unit_id": v["id"]})
+        except Exception:
+            pass
+        v.update(order_id=u["order_id"], status=u.get("status")); u.update(order_id=None, status="in_stock")
+        log(f"Inter DC transfer, order {s['order_id']}: Takealot took the unit from {D}, not {L}. Sale moved to a {D} unit; the {L} unit is back In stock.")
 
 
 def soldout_check(cfg, offers, log):
