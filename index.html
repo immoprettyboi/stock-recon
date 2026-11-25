@@ -2633,7 +2633,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v152)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v153)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
@@ -3068,7 +3068,7 @@ function renderCheck(){
   const grp=n=>titleGroup[n]||n;
   const G={};
   for(const p of live){ const g=G[p.product]=G[p.product]||{tal:{},way:{},app:{}};
-    for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); } }
+    for(const dc of DCS){ const w=p.takealot_stock[dc]||{}; g.tal[dc]=(g.tal[dc]||0)+(w.qty||0); g.way[dc]=(g.way[dc]||0)+(w.on_way||0)+(w.receiving||0); g.recv=g.recv||{}; g.recv[dc]=(g.recv[dc]||0)+(w.receiving||0); } }
   units.filter(u=>u.status==="in_stock" && DCS.includes(u.location)).forEach(u=>{ const g=G[grp(u.product)]; if(g) g.app[u.location]=(g.app[u.location]||0)+1; });
   // units on a shipment Takealot rejected: Takealot keeps counting them "on the way" until it closes the PO
   // (counted until Takealot closes the PO, also after the units are back home)
@@ -3102,6 +3102,10 @@ function renderCheck(){
       if(!d && owNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">${owNote} on ${owNote>1?"their":"its"} way on PO ${esc([...new Set(OW.map(u=>u.po))].join(", "))}; Takealot adds ${owNote>1?"them":"it"} to stock on arrival</div></td>`;
       const RT=units.filter(u=>u.status==="return_takealot" && u.location===dc && ((products.find(p=>p.sku===u.sku)||{}).product||grpName(u.product))===n).length, retNote = d<0 && RT>0 ? Math.min(RT,-d) : 0; d+=retNote;
       if(!d && retNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">${retNote} customer return${retNote>1?"s":""} already back in Takealot's stock; the app puts ${retNote>1?"them":"it"} back In stock when Takealot finalises the return</div></td>`;
+      // Takealot says a unit is "being received" but nothing of yours is on its way there: it is Takealot moving or
+      // processing a unit itself (a transfer between warehouses, a return or a refused unit). Nothing to add.
+      const RC=(g.recv||{})[dc]||0, ghost = d<0 && RC>0 && !OW.length && !L ? Math.min(RC,-d) : 0; d+=ghost;
+      if(!d && ghost) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} being received</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px;white-space:normal;max-width:220px">Takealot is processing ${ghost} unit${ghost>1?"s":""} here itself (a transfer, return or refused unit), not a shipment of yours. Nothing to do: if ${ghost>1?"they land":"it lands"} in stock, the check will show it</div></td>`;
       if(!d && rejNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${rejNote} rejected by Takealot and sent back to you (Takealot still shows ${rejNote>1?"them":"it"} on the way)</div></td>`;
       if(!d && leadNote) return `<td class="num"><div>${a} <span class="muted">app</span> · ${t}${w?`<span class="muted">+${w} on way</span>`:""} <span class="muted">TAL</span></div><span class="pill s-settled">matches</span><div class="muted" style="font-size:12px">${leadNote} sold on a lead-time order, on its way</div></td>`;
       const Q=(g.q||{})[dc]||0, qNote=Q?`<div class="muted" style="font-size:12px">${Q} under query with Takealot</div>`:"";
