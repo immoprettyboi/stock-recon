@@ -2405,6 +2405,10 @@ def fetch_all(cfg, headless, profile_dir: Path, downloads: Path, log):
             except Exception as e:
                 log("Morning summary failed: " + repr(e)[:200])
             try:
+                leadtime_cancel_watch(cfg, log)
+            except Exception as e:
+                log("Lead-time cancel watch failed: " + repr(e)[:200])
+            try:
                 inter_dc_fix(cfg, log)
             except Exception as e:
                 log("Inter DC check failed: " + repr(e)[:200])
@@ -2808,6 +2812,10 @@ def sale_watch(ctx, cfg, log):
         rows = (r.json() or {}).get("sales") or []
         sale_alerts(cfg, rows, log)
         try:
+            leadtime_cancel_watch(cfg, log, rows)
+        except Exception as e:
+            log("Lead-time cancel watch: " + repr(e)[:150])
+        try:
             leadtime_on_sale(ctx, cfg, rows, {"Authorization": f"Key {key}", "Accept": "application/json"}, log)
         except Exception as e:
             log("Lead time after a sale: " + repr(e)[:150])
@@ -2883,6 +2891,76 @@ def inter_dc_fix(cfg, log):
             pass
         v.update(order_id=u["order_id"], status=u.get("status")); u.update(order_id="", status="in_stock")
         log(f"Inter DC transfer, order {s['order_id']}: Takealot took the unit from {D}, not {L}. Sale moved to a {D} unit; the {L} unit is back In stock.")
+
+
+def leadtime_cancel_watch(cfg, log, rows=None):
+    """A lead-time order the customer cancels before it is shipped must not be packed. Remember the open lead-time orders;
+    when one of them turns up cancelled, tell the phone at once, take it off the app's list (takealot_sales status) and
+    list it for the app as cancelled (app_state lt_cancelled).
+    rows: Takealot's latest sales from the 2-minute sale watch (last two days). Without them: from the database (each sync)."""
+    import stockrecon_sync as S
+    db = S.DB(cfg["url"], cfg["key"])
+    OPEN = ("New Lead Time Order", "Confirmed Shipment")
+    seen = _seen_load() or {}
+    was = dict(seen.get("lt_open") or {})
+    status, fresh = {}, {}
+    if rows is not None:
+        for r in rows:
+            o, st = str(r.get("order_id") or ""), str(r.get("sale_status") or "").strip()
+            if not o:
+                continue
+            status[o] = st
+            if st in OPEN:
+                fresh[o] = {"title": str(r.get("product_title") or "")[:70], "dc": str(r.get("stock_source_region") or r.get("dc") or ""), "status": st}
+        now_open = {o: w for o, w in was.items() if o not in status}            # older than the feed's two days: keep as it was
+        now_open.update(fresh)
+        cancelled = [o for o in was if status.get(o, "").lower().startswith("cancel")]
+        is_new = [o for o in fresh if o not in was]
+    else:
+        cur = db.select("takealot_sales", "select=order_id,product_title,fulfilment_dc,sale_status&sale_status=in.(%22New%20Lead%20Time%20Order%22,%22Confirmed%20Shipment%22)")
+        now_open = {str(r["order_id"]): {"title": (r.get("product_title") or "")[:70], "dc": r.get("fulfilment_dc") or "", "status": r.get("sale_status")} for r in cur}
+        left = [o for o in was if o not in now_open]
+        cancelled, is_new = [], []
+        if left:
+            got = db.select("takealot_sales", f"select=order_id,sale_status&order_id=in.({','.join(left)})")
+            cancelled = [str(r["order_id"]) for r in got if str(r.get("sale_status") or "").lower().startswith("cancel")]
+    if cancelled:
+        try:
+            got = db.select("app_state", "select=value&key=eq.lt_cancelled")
+            lst = ((got[0].get("value") or {}).get("orders") or []) if got else []
+        except Exception:
+            lst = []
+        nowi = datetime.utcnow().isoformat() + "Z"
+        for o in cancelled:
+            w = was[o]
+            if any(x.get("order") == o for x in lst):
+                continue
+            confirmed = w.get("status") == "Confirmed Shipment"
+            lst.append({"order": o, "title": w.get("title"), "dc": w.get("dc"), "at": nowi, "confirmed": confirmed})
+            if rows is not None:
+                try:                                       # off the app's "to ship" list now, not at the next full sync
+                    db.patch("takealot_sales", f"order_id=eq.{o}", {"sale_status": status[o]})
+                except Exception:
+                    pass
+            try:
+                notify(cfg, "🚫 Lead-time order cancelled: don't pack it",
+                       f"{w.get('title')} · order {o}" + (f" · was for {w.get('dc')}" if w.get("dc") else "") +
+                       (". You had already confirmed the shipment: check the Seller Portal before sending anything." if confirmed
+                        else ". Cancelled by the customer before you confirmed the shipment."),
+                       url="./", topic="price", log=log, tag="ltc-" + o)
+            except Exception as e:
+                log("Lead-time cancel notification failed: " + repr(e)[:120])
+            log(f"Lead-time order {o} was cancelled by the customer before it shipped.")
+        cutoff = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
+        _app_state(cfg, "lt_cancelled", {"orders": [x for x in lst if str(x.get("at") or "") > cutoff][-20:]})
+    if rows is not None and (cancelled or is_new):
+        try:                                               # a full sync now: the unit goes back In stock / the new order shows in the app
+            db.insert("sync_runs", [{"requested": True, "message": "Requested from the app"}])
+        except Exception:
+            pass
+    if now_open != (seen.get("lt_open") or {}):
+        seen["lt_open"] = now_open
+        _seen_save(seen)
 
 
 def soldout_check(cfg, offers, log):

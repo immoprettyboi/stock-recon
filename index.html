@@ -860,6 +860,12 @@ html[data-skin="pro"][data-look][data-tone] .calc div{background:rgba(255,255,25
       <div class="sec-head"><h2>Needs you</h2><p id="attnSub"></p></div>
       <div class="attn" id="attn"></div>
     </div>
+    <div class="panel" id="ltPanel" hidden>
+      <div class="sec-head" style="justify-content:space-between"><div><h2>📦 Lead-time orders to ship</h2><p id="ltSub"></p></div>
+        <button class="btn small" type="button" id="ltCheck">Check Takealot now</button></div>
+      <div id="ltGone"></div>
+      <div class="tscroll"><table id="ltTable"></table></div>
+    </div>
     <div class="ov" id="tiles"></div>
     <div class="panel" id="payoutCard" hidden></div>
     <div class="panel">
@@ -1444,7 +1450,7 @@ async function loadAllNow(){
     ]);
     units=u.map(x=>({...x, gross:num(x.gross), fees:num(x.fees), cost:num(x.cost)||0}));
     sales=s; products=p; lastRun=r[0]||null; loaded=true;
-    { const {data,error}=await sb.from("takealot_sales").select("order_id,sku,qty,sale_status,fulfilment_dc")
+    { const {data,error}=await sb.from("takealot_sales").select("order_id,sku,qty,sale_status,fulfilment_dc,order_date,product_title,po,last_seen")
         .in("sale_status",["Shipped Shipment","Confirmed Shipment","New Lead Time Order","Inbound"]).neq("match_status","ignored");
       pipeline = error ? [] : data; }
     { const since=new Date(Date.now()-60*864e5).toISOString();
@@ -1714,8 +1720,33 @@ $("#watchForm").addEventListener("submit",async e=>{ e.preventDefault(); const u
   if(url && !/^https:\/\/[^\s]+$/.test(url)){ toast("Paste the full ping URL, starting with https://"); return; }
   const {error}=await sb.from("app_state").upsert({key:"healthcheck", value:{url, set_by:me?.email||null}, updated_at:new Date().toISOString()},{onConflict:"key"});
   if(error) toast(/app_state/.test(errMsg(error))?"Run 18_database_update.sql in Supabase first":"Couldn't save: "+errMsg(error)); else { toast(url?"Saved: the server checks in within 30 minutes":"Outage alert switched off"); loadAll(); } });
+// Lead-time orders still to ship. Only orders Takealot lists as open right now: one the customer cancels drops off at
+// the next check (and is shown struck through for two days, so a unit already put aside isn't packed).
+function ltDue(x){ const d=((appState.leadtime_due||{}).orders||[]).find(o=>o.order===x.order_id); if(d&&d.due) return d.due;
+  if(!x.order_date) return ""; let n=+((((products.find(p=>p.sku===x.sku)||{}).takealot_stock||{}).LEADTIME||{}).days)||4; if(n<1) n=4;
+  const t=new Date(new Date(x.order_date).getTime()+2*3600e3); while(n>0){ t.setUTCDate(t.getUTCDate()+1); const w=t.getUTCDay(); if(w!==0&&w!==6) n--; } return t.toISOString().slice(0,10); }
+function renderLeadOrders(){
+  const open=pipeline.filter(x=>["New Lead Time Order","Confirmed Shipment"].includes(x.sale_status)).map(x=>({...x, due:ltDue(x)})).sort((a,b)=>(a.due||"9").localeCompare(b.due||"9"));
+  const gone=((appState.lt_cancelled||{}).orders||[]).filter(o=>Date.now()-new Date(o.at)<48*3600e3 && !open.some(x=>x.order_id===o.order));
+  const P=$("#ltPanel"); P.hidden=!open.length && !gone.length; if(P.hidden) return;
+  const seen=open.map(x=>x.last_seen).filter(Boolean).sort().pop() || (lastRun&&(lastRun.finished_at||lastRun.started_at));
+  const nNew=open.filter(x=>x.sale_status==="New Lead Time Order").length;
+  $("#ltSub").textContent=(open.length?`${open.length} order${open.length>1?"s":""} to ship${nNew?` · ${nNew} not confirmed on the Seller Portal yet`:""}`:"Nothing to ship")+(seen?` · checked with Takealot ${ago(seen)}`:"");
+  $("#ltGone").innerHTML=gone.map(o=>`<div class="note" style="margin:0 0 8px;padding:10px 12px;border-radius:10px;background:var(--bad-soft);color:var(--bad)"><b>🚫 Cancelled, do not pack:</b> order ${esc(o.order)} · <s>${esc(o.title||"")}</s>${o.dc?` · was for ${esc(o.dc)}`:""} · cancelled ${ago(o.at)}</div>`).join("");
+  const booked=u=>u.po && (ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender","returned-to-hub"].includes(x.status)) || expenses.some(e=>e.category==="adam_delivery" && (e.raw||{}).po===u.po));
+  $("#ltTable").innerHTML=!open.length?"":`<thead><tr><th>Order</th><th>Product</th><th class="num">Qty</th><th>To</th><th>Ship by</th><th>Step</th><th>Unit to pack</th></tr></thead><tbody>${open.map(x=>{
+    const us=units.filter(u=>u.order_id===x.order_id), L=x.due?Math.round((new Date(x.due)-new Date(today()))/864e5):null;
+    const due=L==null?"":L<0?`<span class="pill s-return_me">${-L} day${L<-1?"s":""} late</span>`:L===0?`<span class="pill s-return_me">today</span>`:L===1?`<span class="pill s-awaiting_fees">tomorrow</span>`:`${fd(x.due)} <span class="muted">(${L} days)</span>`;
+    const isNew=x.sale_status==="New Lead Time Order", po=x.po||(us[0]||{}).po||"";
+    const step=isNew?`<span class="pill s-awaiting_fees">Confirm on Seller Portal</span>`:us.length&&us.every(booked)?`<span class="pill s-settled">Booked · PO ${esc(po)}</span>`:`<span class="pill s-return_me">Pack and send${po?` · PO ${esc(po)}`:""}</span>`;
+    const pack=us.length?us.map(u=>`<a href="#" data-ltu="${u.id}">${esc(u.sn||"no serial")}</a> <span class="muted">${esc(u.location||"")}</span>`).join("<br>"):`<span class="muted">not matched to a unit yet</span>`;
+    return `<tr><td>${esc(x.order_id)}<div class="muted" style="font-size:12px">${x.order_date?fd(x.order_date):""}</div></td><td style="min-width:200px">${esc(x.product_title||(us[0]||{}).product||"")}</td><td class="num"><b>${x.qty||1}</b></td><td>${esc(x.fulfilment_dc||"")}</td><td>${due}</td><td>${step}</td><td>${pack}</td></tr>`; }).join("")}</tbody>`;
+}
+document.addEventListener("click",e=>{ const a=e.target.closest("[data-ltu]"); if(a){ e.preventDefault(); openEdit(a.dataset.ltu); } });
+document.addEventListener("DOMContentLoaded",()=>{ const b=document.getElementById("ltCheck"); if(b) b.addEventListener("click",async()=>{ b.disabled=true; b.textContent="Checking…";
+  try{ await sb.from("sync_runs").insert({requested:true, message:"Requested from the app"}); }catch(e){} setTimeout(()=>{ b.disabled=false; b.textContent="Check Takealot now"; },90000); }); });
 function renderOverview(){
-  renderPayout(); renderWatch();
+  renderPayout(); renderWatch(); renderLeadOrders();
   const sold=units.filter(u=>SOLD.has(u.status) && inMonth(u));
   const G=sold.reduce((s,u)=>s+(u.gross||0),0), F=sold.reduce((s,u)=>s+(u.fees||0),0), C=sold.reduce((s,u)=>s+(u.cost||0),0), P=G-F-C;
   const awaiting=sold.filter(u=>u.status==="awaiting_fees").length;
@@ -2634,7 +2665,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v154)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v155)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
