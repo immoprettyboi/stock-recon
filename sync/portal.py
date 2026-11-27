@@ -2911,14 +2911,15 @@ def leadtime_cancel_watch(cfg, log, rows=None):
                 continue
             status[o] = st
             if st in OPEN:
-                fresh[o] = {"title": str(r.get("product_title") or "")[:70], "dc": str(r.get("stock_source_region") or r.get("dc") or ""), "status": st}
+                fresh[o] = {"title": str(r.get("product_title") or "")[:70], "dc": str(r.get("stock_source_region") or r.get("dc") or ""), "status": st,
+                            "po": str(r.get("po_number") or "") if r.get("po_number") not in (None, "", 0, "-") else ""}
         now_open = {o: w for o, w in was.items() if o not in status}            # older than the feed's two days: keep as it was
         now_open.update(fresh)
         cancelled = [o for o in was if status.get(o, "").lower().startswith("cancel")]
         is_new = [o for o in fresh if o not in was]
     else:
-        cur = db.select("takealot_sales", "select=order_id,product_title,fulfilment_dc,sale_status&sale_status=in.(%22New%20Lead%20Time%20Order%22,%22Confirmed%20Shipment%22)")
-        now_open = {str(r["order_id"]): {"title": (r.get("product_title") or "")[:70], "dc": r.get("fulfilment_dc") or "", "status": r.get("sale_status")} for r in cur}
+        cur = db.select("takealot_sales", "select=order_id,product_title,fulfilment_dc,sale_status,po&sale_status=in.(%22New%20Lead%20Time%20Order%22,%22Confirmed%20Shipment%22)")
+        now_open = {str(r["order_id"]): {"title": (r.get("product_title") or "")[:70], "dc": r.get("fulfilment_dc") or "", "status": r.get("sale_status"), "po": r.get("po") or ""} for r in cur}
         left = [o for o in was if o not in now_open]
         cancelled, is_new = [], []
         if left:
@@ -2936,23 +2937,28 @@ def leadtime_cancel_watch(cfg, log, rows=None):
             if any(x.get("order") == o for x in lst):
                 continue
             confirmed = w.get("status") == "Confirmed Shipment"
-            lst.append({"order": o, "title": w.get("title"), "dc": w.get("dc"), "at": nowi, "confirmed": confirmed})
+            lst.append({"order": o, "title": w.get("title"), "dc": w.get("dc"), "at": nowi, "confirmed": confirmed, "po": w.get("po") or ""})
             if rows is not None:
                 try:                                       # off the app's "to ship" list now, not at the next full sync
                     db.patch("takealot_sales", f"order_id=eq.{o}", {"sale_status": status[o]})
                 except Exception:
                     pass
             try:
-                notify(cfg, "🚫 Lead-time order cancelled: don't pack it",
-                       f"{w.get('title')} · order {o}" + (f" · was for {w.get('dc')}" if w.get("dc") else "") +
-                       (". You had already confirmed the shipment: check the Seller Portal before sending anything." if confirmed
-                        else ". Cancelled by the customer before you confirmed the shipment."),
-                       url="./", topic="price", log=log, tag="ltc-" + o)
+                if confirmed:                              # already confirmed: the shipment stands, Takealot books the unit into its own stock
+                    notify(cfg, "ℹ️ Lead-time order cancelled: still send it",
+                           f"{w.get('title')} · order {o}. You had already confirmed the shipment" + (f" (PO {w.get('po')})" if w.get("po") else "") +
+                           f", so send it as planned: Takealot puts it into your stock at {w.get('dc') or 'the warehouse'}.",
+                           url="./", topic="price", log=log, tag="ltc-" + o)
+                else:
+                    notify(cfg, "🚫 Lead-time order cancelled: don't pack it",
+                           f"{w.get('title')} · order {o}" + (f" · was for {w.get('dc')}" if w.get("dc") else "") +
+                           ". Cancelled by the customer before you confirmed the shipment.",
+                           url="./", topic="price", log=log, tag="ltc-" + o)
             except Exception as e:
                 log("Lead-time cancel notification failed: " + repr(e)[:120])
             log(f"Lead-time order {o} was cancelled by the customer before it shipped.")
-        cutoff = (datetime.utcnow() - timedelta(days=3)).isoformat() + "Z"
-        _app_state(cfg, "lt_cancelled", {"orders": [x for x in lst if str(x.get("at") or "") > cutoff][-20:]})
+        cutoff = (datetime.utcnow() - timedelta(days=10)).isoformat() + "Z"
+        _app_state(cfg, "lt_cancelled", {"orders": [x for x in lst if str(x.get("at") or "") > cutoff][-30:]})
     if rows is not None and (cancelled or is_new):
         try:                                               # a full sync now: the unit goes back In stock / the new order shows in the app
             db.insert("sync_runs", [{"requested": True, "message": "Requested from the app"}])

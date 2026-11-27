@@ -1727,12 +1727,16 @@ function ltDue(x){ const d=((appState.leadtime_due||{}).orders||[]).find(o=>o.or
   const t=new Date(new Date(x.order_date).getTime()+2*3600e3); while(n>0){ t.setUTCDate(t.getUTCDate()+1); const w=t.getUTCDay(); if(w!==0&&w!==6) n--; } return t.toISOString().slice(0,10); }
 function renderLeadOrders(){
   const open=pipeline.filter(x=>["New Lead Time Order","Confirmed Shipment"].includes(x.sale_status)).map(x=>({...x, due:ltDue(x)})).sort((a,b)=>(a.due||"9").localeCompare(b.due||"9"));
-  const gone=((appState.lt_cancelled||{}).orders||[]).filter(o=>Date.now()-new Date(o.at)<48*3600e3 && !open.some(x=>x.order_id===o.order));
-  const P=$("#ltPanel"); P.hidden=!open.length && !gone.length; if(P.hidden) return;
+  const all=((appState.lt_cancelled||{}).orders||[]).filter(o=>!open.some(x=>x.order_id===o.order));
+  const gone=all.filter(o=>!o.confirmed && Date.now()-new Date(o.at)<48*3600e3);
+  // cancelled after you confirmed the shipment: it still has to be sent (Takealot books it into stock), until the PO is on its way
+  const still=all.filter(o=>o.confirmed && Date.now()-new Date(o.at)<10*864e5 && !(o.po && /ship|receiv|clos|cancel/i.test((pos.find(p=>p.po===o.po)||{}).status||"")));
+  const P=$("#ltPanel"); P.hidden=!open.length && !gone.length && !still.length; if(P.hidden) return;
   const seen=open.map(x=>x.last_seen).filter(Boolean).sort().pop() || (lastRun&&(lastRun.finished_at||lastRun.started_at));
   const nNew=open.filter(x=>x.sale_status==="New Lead Time Order").length;
   $("#ltSub").textContent=(open.length?`${open.length} order${open.length>1?"s":""} to ship${nNew?` · ${nNew} not confirmed on the Seller Portal yet`:""}`:"Nothing to ship")+(seen?` · checked with Takealot ${ago(seen)}`:"");
-  $("#ltGone").innerHTML=gone.map(o=>`<div class="note" style="margin:0 0 8px;padding:10px 12px;border-radius:10px;background:var(--bad-soft);color:var(--bad)"><b>🚫 Cancelled, do not pack:</b> order ${esc(o.order)} · <s>${esc(o.title||"")}</s>${o.dc?` · was for ${esc(o.dc)}`:""} · cancelled ${ago(o.at)}</div>`).join("");
+  $("#ltGone").innerHTML=gone.map(o=>`<div class="note" style="margin:0 0 8px;padding:10px 12px;border-radius:10px;background:var(--bad-soft);color:var(--bad)"><b>🚫 Cancelled, do not pack:</b> order ${esc(o.order)} · <s>${esc(o.title||"")}</s>${o.dc?` · was for ${esc(o.dc)}`:""} · cancelled ${ago(o.at)}</div>`).join("")
+    +still.map(o=>`<div class="note" style="margin:0 0 8px;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn)"><b>Still send it:</b> order ${esc(o.order)} · ${esc(o.title||"")} was cancelled after you confirmed the shipment${o.po?` (PO ${esc(o.po)})`:""}. Takealot puts it into your stock at ${esc(o.dc||"the warehouse")}.</div>`).join("");
   const booked=u=>u.po && (ships.some(x=>x.direction==="to_takealot" && poOf(x)===u.po && !["cancelled","returned-to-sender","returned-to-hub"].includes(x.status)) || expenses.some(e=>e.category==="adam_delivery" && (e.raw||{}).po===u.po));
   $("#ltTable").innerHTML=!open.length?"":`<thead><tr><th>Order</th><th>Product</th><th class="num">Qty</th><th>To</th><th>Ship by</th><th>Step</th><th>Unit to pack</th></tr></thead><tbody>${open.map(x=>{
     const us=units.filter(u=>u.order_id===x.order_id), L=x.due?Math.round((new Date(x.due)-new Date(today()))/864e5):null;
@@ -2665,7 +2669,7 @@ async function pushState(){
     const j=r?await r.json():null;
     const line = !j ? "This phone has not received any notification yet (since this update)."
       : `Last notification received by this phone: ${new Date(j.at).toLocaleString("en-ZA")} — ${j.shown?"shown":"NOT shown: "+(j.error||"")}`;
-    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v155)`;
+    $("#pushLast").textContent = `📱 ${line} (Permission: ${Notification.permission}, ${sub?"subscribed":"not subscribed"}, app v156)`;
   }catch(_){}
 }
 $("#pushBtn").addEventListener("click",async()=>{
